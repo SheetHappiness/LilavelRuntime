@@ -7,7 +7,14 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .contracts import EnvironmentAdapter, NeverWakePolicy, ToolSpec, WakePolicy, WorldEvent
+from .contracts import (
+    EnvironmentAdapter,
+    EventRouter,
+    NeverWakePolicy,
+    ToolSpec,
+    WakePolicy,
+    WorldEvent,
+)
 
 
 class RuntimeState(StrEnum):
@@ -72,8 +79,8 @@ _STOP_INGRESS = _StopIngress()
 class LilavelRuntime:
     """Top-level owner of Lilavel's process lifecycle.
 
-    Phase 2 deliberately stops at observation classification. A wake decision
-    never starts a conversation, model generation, tool call, or side effect.
+    The kernel classifies observations and, when configured, owns their routing
+    to a conversational subsystem and back to the source environment.
     """
 
     def __init__(
@@ -81,6 +88,7 @@ class LilavelRuntime:
         *,
         event_queue_size: int = 128,
         wake_policy: WakePolicy | None = None,
+        event_router: EventRouter | None = None,
         shutdown_timeout: float = 5.0,
     ) -> None:
         if event_queue_size <= 0:
@@ -92,6 +100,7 @@ class LilavelRuntime:
             maxsize=event_queue_size
         )
         self._wake_policy = wake_policy or NeverWakePolicy()
+        self._event_router = event_router
         self._shutdown_timeout = shutdown_timeout
         self._environments: dict[str, EnvironmentAdapter] = {}
         self._tools: dict[str, ToolSpec] = {}
@@ -104,6 +113,8 @@ class LilavelRuntime:
         self._supervisor: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._adapter_tasks: tuple[asyncio.Task[None], ...] = ()
+        self._route_tasks: set[asyncio.Task[None]] = set()
+        self._route_failure: BaseException | None = None
         self._failure: BaseException | None = None
         self._pending_submissions = 0
         self._accepted_events = 0
@@ -113,6 +124,14 @@ class LilavelRuntime:
     @property
     def state(self) -> RuntimeState:
         return self._state
+
+    @property
+    def active_route_count(self) -> int:
+        return len(self._route_tasks)
+
+    @property
+    def failure(self) -> BaseException | None:
+        return self._failure or self._route_failure
 
     def register_environment(self, adapter: EnvironmentAdapter) -> None:
         self._ensure_registration_open()
@@ -214,6 +233,7 @@ class LilavelRuntime:
         await asyncio.shield(shutdown_task)
 
     async def _settle_shutdown(self, supervisor: asyncio.Task[None]) -> None:
+        router_error: BaseException | None = None
         try:
             async with asyncio.timeout(self._shutdown_timeout):
                 for task in self._adapter_tasks:
@@ -222,6 +242,16 @@ class LilavelRuntime:
                     await asyncio.gather(*self._adapter_tasks, return_exceptions=True)
                 await self._submissions_settled.wait()
                 await self._queue.join()
+                route_tasks = tuple(self._route_tasks)
+                for task in route_tasks:
+                    task.cancel()
+                if route_tasks:
+                    await asyncio.gather(*route_tasks, return_exceptions=True)
+                if self._event_router is not None:
+                    try:
+                        await self._event_router.close()
+                    except BaseException as error:
+                        router_error = error
                 await self._queue.put(_STOP_INGRESS)
                 self._stop_requested.set()
                 await supervisor
@@ -233,6 +263,13 @@ class LilavelRuntime:
             raise RuntimeShutdownTimeout(
                 "runtime tasks did not settle before shutdown deadline"
             ) from error
+
+        if router_error is not None:
+            self._failure = router_error
+            self._state = RuntimeState.FAILED
+            if isinstance(router_error, Exception):
+                raise router_error
+            raise RuntimeFailed("conversation router shutdown failed") from router_error
 
         if self.health().state is RuntimeState.FAILED:
             raise RuntimeFailed("runtime failed during shutdown") from self._failure
@@ -248,7 +285,7 @@ class LilavelRuntime:
             accepted_events=self._accepted_events,
             processed_events=self._processed_events,
             wake_decisions=self._wake_decisions,
-            failure_code=type(self._failure).__name__ if self._failure is not None else None,
+            failure_code=type(self.failure).__name__ if self.failure is not None else None,
         )
 
     async def __aenter__(self) -> LilavelRuntime:
@@ -271,7 +308,7 @@ class LilavelRuntime:
     async def _supervise(self) -> None:
         try:
             async with asyncio.TaskGroup() as group:
-                group.create_task(self._consume_events(), name="lilavel-runtime-ingress")
+                group.create_task(self._consume_events(group), name="lilavel-runtime-ingress")
                 self._adapter_tasks = tuple(
                     group.create_task(
                         self._run_adapter(adapter),
@@ -295,13 +332,21 @@ class LilavelRuntime:
         else:
             if self.health().state is RuntimeState.STOPPING:
                 self._state = RuntimeState.STOPPED
+        finally:
+            if self._event_router is not None:
+                try:
+                    await self._event_router.close()
+                except BaseException as error:
+                    if self._failure is None:
+                        self._failure = error
+                        self._state = RuntimeState.FAILED
 
     async def _run_adapter(self, adapter: EnvironmentAdapter) -> None:
         await adapter.run(self.submit)
         if self._state is RuntimeState.RUNNING:
             raise RuntimeFailed(f"environment {adapter.environment_id!r} stopped unexpectedly")
 
-    async def _consume_events(self) -> None:
+    async def _consume_events(self, group: asyncio.TaskGroup) -> None:
         while True:
             item = await self._queue.get()
             try:
@@ -311,5 +356,26 @@ class LilavelRuntime:
                 self._processed_events += 1
                 if decision.wake:
                     self._wake_decisions += 1
+                    if self._event_router is None:
+                        continue
+                    adapter = self._environments.get(item.source.environment)
+                    if adapter is None:
+                        raise RuntimeFailed(
+                            f"no registered environment for {item.source.environment!r}"
+                        )
+                    task = group.create_task(
+                        self._event_router.route(item, adapter.execute),
+                        name=f"lilavel-route-{item.event_id}",
+                    )
+                    self._route_tasks.add(task)
+                    task.add_done_callback(self._route_done)
             finally:
                 self._queue.task_done()
+
+    def _route_done(self, task: asyncio.Task[None]) -> None:
+        self._route_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self._route_failure = error

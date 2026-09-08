@@ -370,6 +370,7 @@ def test_duplicate_message_id_creates_exactly_one_core_turn() -> None:
         await edge.wait_idle()
 
         assert len(runtime.requests) == 1
+        assert edge.observation_count == 1
         assert runtime.requests[0].messages == (ContextMessage("user", "hello"),)
         assert edge.session_count == 1
         assert edge.conversation_key_for_channel(channel.id) is not None
@@ -862,7 +863,7 @@ def test_presenter_sink_failure_propagates_without_leaving_response_task_waiting
         await wait_until(lambda: len(channel.messages) == 1)
         generation.emit(TextDelta(generation.generation_id, generation.epoch, " second"))
 
-        with pytest.raises(RuntimeError, match="synthetic edit failure"):
+        with pytest.raises(RuntimeError, match="Discord runtime routing failed"):
             await edge.wait_idle()
         assert runtime.cancelled_ids == [generation.generation_id]
         await edge.close()
@@ -989,9 +990,8 @@ def test_default_dm_wires_cognition_and_preserves_history() -> None:
                 ContextMessage("assistant", "First reply."),
                 ContextMessage("user", "Next turn"),
             )
-            session = edge._sessions[channel.id]  # pyright: ignore[reportPrivateUsage]
             assert runtime.requests[1].messages is not None
-            assert session.core.history == (
+            assert edge.conversation_history_for_channel(channel.id) == (
                 *runtime.requests[1].messages,
                 ContextMessage("assistant", "Second reply."),
             )

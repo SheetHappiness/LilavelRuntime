@@ -6,11 +6,13 @@ requires-python = ">=3.12"
 dependencies = [
     "discord.py==2.7.1",
     "lilavel-core",
+    "lilavel-runtime",
     "regex==2026.9.3",
 ]
 
 [tool.uv.sources]
 lilavel-core = { path = "../core", editable = true }
+lilavel-runtime = { path = "../runtime", editable = true }
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -26,7 +28,7 @@ dev = [
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-extraPaths = ["../core/src"]
+extraPaths = ["../core/src", "../runtime/src"]
 venvPath = "."
 venv = ".venv"
 

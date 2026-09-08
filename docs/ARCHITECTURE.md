@@ -8,10 +8,11 @@ adapter. Future autonomous capabilities are not implied by this kernel.
 ## Top-level product boundary
 
 The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
-event ingress, registered environment tasks, structural tool registration, and
-wake classification. It deliberately has no conversation, model, tool
-execution, scheduling, action, memory, or persistence behavior. No speculative
-world model, attention loop, or tool authority is introduced.
+event ingress, registered environment tasks, wake classification,
+conversation routing, Core/ModelRuntime session lifecycle, and selection of
+the source environment for typed presentation actions. It adds no autonomous
+scheduling, attention loop, world model, memory, or model-selected tool
+authority.
 
 The intended direction is:
 
@@ -19,29 +20,31 @@ The intended direction is:
 world observations
         │
         ▼
-environment adapters ──► LilavelRuntime kernel
-        │                              │
-        │                              ├── bounded event ingress
-        │                              ├── inert wake classification
-        │                              └── tool registry (structural only)
-        │
-        └──── approved conversational action
-                         │
-                         ▼
-                  ConversationCore
+Discord adapter ──► WorldEvent ──► LilavelRuntime
+                                      │
+                                      ├── deterministic DM wake
+                                      ├── conversation route/session
+                                      ▼
+                               ConversationCore
                          │
                          ▼
                    ModelRuntime
                          │
                          ▼
                   model-sidecar
+                         │
+                         ▼
+             typed presentation actions
+                         │
+                         ▼
+                 Discord adapter
 ```
 
 ## Ownership map
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, structural tool registration, and wake classification | Conversations, model calls, tool execution, scheduling, memory, persistence, provider sessions, or adapter-specific identity |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, and action destination selection | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, and fail-closed runtime state | Canonical agent memory, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, and version-two JSONL host behavior | Semantic conversation history, agent identity, tools/MCP, or the top-level runtime |
@@ -107,8 +110,8 @@ or restart proof.
 
 ## Persistent kernel lifecycle
 
-`LilavelRuntime` is a separate Python package with no runtime dependency on
-Core, Discord, Neuro, the model sidecar, or a provider. Its normal lifecycle is
+`LilavelRuntime` is a separate Python package that depends on provider-neutral
+Core but not on Discord, Neuro, the model sidecar, or a provider. Its normal lifecycle is
 `new → starting → running → stopping → stopped`; stopped and failed instances
 cannot be restarted. It owns registered adapter coroutines through an
 `asyncio.TaskGroup`. An unexpected owned-task failure fails the kernel closed.
@@ -123,23 +126,25 @@ the same clean shutdown path.
 
 `WorldEvent` payloads are deep-frozen JSON-compatible values and are untrusted
 by default. Observation does not promote an event into memory or canonical
-conversation history. `ToolSpec`, `ToolCall`, and `ToolResult` are structural
-provider-neutral envelopes only: no Phase 2 path authorizes or executes a
-tool. A positive `WakeDecision` is bounded health evidence only and starts no
-conversation or model generation.
+conversation history. The deterministic direct-message policy routes only the
+typed `direct_message` kind. The Core router converts semantic run events into
+trusted runtime-generated presentation `ToolCall`s and checks `ToolResult`s;
+this grants no authority to model-selected tools.
 
 ## Environment adapter boundary
 
-The Discord implementation lives at `apps/discord-adapter` and depends on
-`lilavel-core`; Core has no Discord dependency. The Python import namespace
+The Discord implementation lives at `apps/discord-adapter` and depends on the
+runtime composition boundary; Core has no Discord dependency. The Python import namespace
 `lilavel_discord_edge` is retained as a compatibility detail of the migrated
 package, while the directory name expresses its environment-adapter role.
 
-The current adapter admits only human-authored one-to-one DM
-`MESSAGE_CREATE` events. It maps channel metadata to an opaque process-local
-session key and a Core conversation, then consumes semantic run events for
-typing, sends, coalesced edits, continuations, and terminal presentation. A
-Discord channel/message/author ID never enters Core history or a model request.
+The adapter admits only human-authored one-to-one DM `MESSAGE_CREATE` events.
+It deduplicates the Discord message, retains channel/message objects locally,
+maps the channel to an opaque process-local subject, and submits a `WorldEvent`
+containing only that opaque subject and user text. Runtime routing owns the
+Core conversation and returns typed open/bind/delta/terminal presentation
+actions. Discord channel/message/author IDs never enter Core history or a
+model request.
 
 The adapter's bounded message deduplication and session map are edge-local
 delivery concerns, not durable agent identity or memory. Adapter restarts do
@@ -164,14 +169,14 @@ outside this component.
 
 The static guard in `scripts/check_architecture.py` checks the current cheap
 regressions: Core cannot import Discord or the top-level runtime, the runtime
-cannot import Discord or Neuro implementations, and the Discord adapter cannot
-import Core's persistence ownership.
+cannot import Discord or Neuro implementations, and the Discord environment
+cannot import Core persistence or perform Core lifecycle operations.
 
 ## Deferred boundaries
 
 The following are intentionally `DEFERRED` rather than implied: a durable
 agent-state model, scheduler or timer source, autonomous model wake loop,
-attention/decision policy, tool authorization/execution/action lifecycle,
-retrieval or memory semantics, conversation orchestration, and production
+attention/decision policy, model tool authorization/execution,
+retrieval or memory semantics, and production
 non-Discord environment adapters. Each needs an explicit decision and
 proportionate validation before code is added.

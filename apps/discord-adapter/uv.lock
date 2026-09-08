@@ -343,6 +343,7 @@ source = { editable = "." }
 dependencies = [
     { name = "discord-py" },
     { name = "lilavel-core" },
+    { name = "lilavel-runtime" },
     { name = "regex" },
 ]
 
@@ -357,6 +358,7 @@ dev = [
 requires-dist = [
     { name = "discord-py", specifier = "==2.7.1" },
     { name = "lilavel-core", editable = "../core" },
+    { name = "lilavel-runtime", editable = "../runtime" },
     { name = "regex", specifier = "==2026.9.3" },
 ]
 
@@ -364,6 +366,25 @@ requires-dist = [
 dev = [
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.9" },
+]
+
+[[package]]
+name = "lilavel-runtime"
+version = "0.1.0"
+source = { editable = "../runtime" }
+dependencies = [
+    { name = "lilavel-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "lilavel-core", editable = "../core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=1" },
     { name = "ruff", specifier = ">=0.9" },
 ]
 

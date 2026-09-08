@@ -9,5 +9,5 @@ def test_package_version_matches_installed_metadata() -> None:
     assert lilavel_runtime.__version__ == version("lilavel-runtime")
 
 
-def test_runtime_has_no_required_distribution_dependencies() -> None:
-    assert metadata("lilavel-runtime").get_all("Requires-Dist") is None
+def test_runtime_depends_only_on_provider_neutral_core() -> None:
+    assert metadata("lilavel-runtime").get_all("Requires-Dist") == ["lilavel-core"]

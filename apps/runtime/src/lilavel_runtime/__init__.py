@@ -1,7 +1,10 @@
 """Public package boundary for the Lilavel persistent-agent kernel."""
 
 from .contracts import (
+    ActionExecutor,
+    DirectMessageWakePolicy,
     EnvironmentAdapter,
+    EventRouter,
     EventSource,
     EventSubmitter,
     EventTrust,
@@ -13,6 +16,17 @@ from .contracts import (
     WakeDecision,
     WakePolicy,
     WorldEvent,
+)
+from .conversation_router import (
+    PRESENTATION_ABORT,
+    PRESENTATION_BIND,
+    PRESENTATION_COMPLETE,
+    PRESENTATION_DELTA,
+    PRESENTATION_FAILED,
+    PRESENTATION_INTERRUPTED,
+    PRESENTATION_OPEN,
+    PRESENTATION_WATCH,
+    CoreConversationRouter,
 )
 from .kernel import (
     DuplicateEnvironment,
@@ -30,9 +44,13 @@ from .kernel import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "ActionExecutor",
+    "CoreConversationRouter",
+    "DirectMessageWakePolicy",
     "DuplicateEnvironment",
     "DuplicateTool",
     "EnvironmentAdapter",
+    "EventRouter",
     "EventSource",
     "EventSubmitter",
     "EventTrust",
@@ -41,6 +59,14 @@ __all__ = [
     "LilavelRuntimeError",
     "LilavelRuntimeHealth",
     "NeverWakePolicy",
+    "PRESENTATION_ABORT",
+    "PRESENTATION_BIND",
+    "PRESENTATION_COMPLETE",
+    "PRESENTATION_DELTA",
+    "PRESENTATION_FAILED",
+    "PRESENTATION_INTERRUPTED",
+    "PRESENTATION_OPEN",
+    "PRESENTATION_WATCH",
     "RuntimeFailed",
     "RuntimeNotRunning",
     "RuntimeRegistrationClosed",

@@ -53,9 +53,10 @@ uv run --locked pytest
 
 These checks cover the zero-environment lifecycle, bounded observation
 backpressure, deterministic task settlement, environment/tool registration,
-provider-neutral immutable contracts, and fail-closed owned-task behavior.
-They do not exercise conversations, model generation, tool execution, live
-providers, Discord, Neuro, scheduling, or memory.
+provider-neutral immutable contracts, deterministic direct-message wake, and
+single-route dispatch to the source action boundary. Core-backed routing is
+exercised through the Discord adapter suite. They do not prove live providers,
+live Discord, Neuro, scheduling, model-selected tools, or memory.
 
 ### Core
 
@@ -98,8 +99,9 @@ uv run --locked pyright
 uv run --locked pytest
 ```
 
-These checks cover the replaceable DM adapter, deterministic presenter,
-transport, diagnostics, scenario runner, and semantic-streaming tests.
+These checks cover the replaceable DM adapter, the complete
+`WorldEvent → runtime → Core → action` path, deterministic presenter,
+transport, diagnostics, scenario runner, supersession, and semantic streaming.
 
 ### Shared protocol boundary
 

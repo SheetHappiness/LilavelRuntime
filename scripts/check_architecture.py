@@ -32,6 +32,7 @@ ADAPTER_FORBIDDEN_NAMES = {
     "EvidenceRecord",
     "SQLiteConversationStore",
 }
+ADAPTER_FORBIDDEN_CORE_OPERATIONS = {"start_turn", "generate", "cancel"}
 
 
 def _module_name(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
@@ -79,6 +80,38 @@ def _adapter_violations() -> list[str]:
     return violations
 
 
+def _discord_environment_violations() -> list[str]:
+    path = DISCORD_SOURCE / "lilavel_discord_edge" / "edge.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    environment = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "_DiscordEnvironment"
+        ),
+        None,
+    )
+    if environment is None:
+        return ["apps/discord-adapter: Discord environment boundary is missing"]
+
+    violations: list[str] = []
+    names = {node.id for node in ast.walk(environment) if isinstance(node, ast.Name)}
+    if "WorldEvent" not in names:
+        violations.append("apps/discord-adapter: Discord observations bypass WorldEvent")
+    if "ToolResult" not in names:
+        violations.append("apps/discord-adapter: Discord actions bypass ToolResult")
+    for name in ("ConversationCore", "ModelRuntime"):
+        if name in names:
+            violations.append(f"apps/discord-adapter: Discord environment owns {name}")
+    for node in ast.walk(environment):
+        if isinstance(node, ast.Attribute) and node.attr in ADAPTER_FORBIDDEN_CORE_OPERATIONS:
+            violations.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}: Discord environment owns Core operation "
+                f"{node.attr}"
+            )
+    return violations
+
+
 def _runtime_violations() -> list[str]:
     violations: list[str] = []
     for path in sorted(RUNTIME_SOURCE.rglob("*.py")):
@@ -95,7 +128,12 @@ def _runtime_violations() -> list[str]:
 
 
 def main() -> int:
-    violations = [*_core_violations(), *_runtime_violations(), *_adapter_violations()]
+    violations = [
+        *_core_violations(),
+        *_runtime_violations(),
+        *_adapter_violations(),
+        *_discord_environment_violations(),
+    ]
     if violations:
         print("ARCHITECTURE_GUARD=FAIL")
         print("\n".join(violations))
@@ -103,7 +141,8 @@ def main() -> int:
     print("ARCHITECTURE_GUARD=PASS")
     print(
         "Core has no Discord/runtime dependency; runtime has no Discord/Neuro dependency; "
-        "Discord adapter has no Core persistence ownership."
+        "Discord adapter has no Core persistence/lifecycle ownership and uses typed "
+        "WorldEvent/action boundaries."
     )
     return 0
 

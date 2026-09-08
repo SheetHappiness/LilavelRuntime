@@ -8,11 +8,11 @@ implemented.
 
 ## Product model
 
-Lilavel's top-level runtime now owns persistent process lifecycle, bounded
-world-event ingress, registered environment tasks, structural tool
-registration, and wake classification. Scheduling, model/tool execution,
-attention/decision, actions, and cross-environment state remain deferred until
-their contracts are designed and validated.
+Lilavel's top-level runtime owns persistent process lifecycle, bounded
+world-event ingress, registered environment tasks, deterministic explicit-DM
+wake/routing, Core conversation-session lifecycle, and typed environment
+presentation actions. Autonomous scheduling, model-selected tools,
+attention/decision, and cross-environment state remain deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -33,23 +33,26 @@ environment adapter ──► LilavelRuntime kernel
                                     model-sidecar
 ```
 
-The currently implemented path is narrower:
+The implemented Discord path is:
 
 ```text
 Discord one-to-one DM
   → apps/discord-adapter
+  → WorldEvent
+  → LilavelRuntime wake/route
   → ConversationCore
   → ModelRuntime
   → apps/model-sidecar
-  → Discord presentation
+  → typed presentation action
+  → apps/discord-adapter
 ```
 
 ## Current foundation
 
-- `apps/runtime` contains the provider-neutral persistent kernel and its
-  `WorldEvent`, `EnvironmentAdapter`, tool-envelope, and wake-policy contracts.
-  It starts without any environment, conversation, model runtime, sidecar, or
-  provider and performs no autonomous work.
+- `apps/runtime` contains the persistent kernel, provider-neutral observation
+  and action contracts, deterministic explicit-DM policy, and the Core-backed
+  conversation router. It still starts cleanly with zero environments and
+  performs no autonomous work.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,
@@ -96,7 +99,7 @@ prerequisite is reported as `BLOCKED`, not as a migration failure.
 
 ## Explicitly deferred
 
-The current kernel does not add a scheduler, model wake loop, attention policy,
-world model, tool execution, MCP integration, voice/guild behavior, retrieval,
-or memory semantics. Each of those is future scope requiring an explicit
-decision and validation.
+The current runtime does not add a scheduler, autonomous model wake loop,
+attention policy, world model, model-selected tool execution, MCP integration,
+voice/guild behavior, retrieval, or memory semantics. Each remains future
+scope requiring an explicit decision and validation.

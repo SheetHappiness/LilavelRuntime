@@ -71,6 +71,7 @@ The following tracked source items were deliberately omitted:
 ```text
 LilavelRuntime/
 ├── apps/
+│   ├── runtime/
 │   ├── core/
 │   ├── discord-adapter/
 │   └── model-sidecar/
@@ -83,10 +84,11 @@ LilavelRuntime/
 └── .gitignore
 ```
 
-No speculative scheduler, wake system, attention loop, tool runtime, world
-model, or cross-environment state package was introduced. The repository
-boundary is ready for those future owners without pretending that they are
-implemented.
+The post-migration Phase 2 kernel and Phase 3 Discord environment route now
+live in `apps/runtime`. Explicit DMs cross `WorldEvent`, deterministic wake,
+Core routing, and typed presentation-action boundaries. No speculative
+scheduler, ambient wake system, attention loop, model tool runtime, world
+model, or cross-environment state package has been introduced.
 
 ## Migration risks and unknowns
 

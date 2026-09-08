@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from lilavel_runtime import EventSource, EventTrust, ToolCall, ToolResult, ToolSpec, WorldEvent
+from lilavel_runtime import (
+    DirectMessageWakePolicy,
+    EventSource,
+    EventTrust,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    WorldEvent,
+)
 
 
 def test_world_event_is_untrusted_and_deeply_immutable_by_default() -> None:
@@ -39,3 +47,20 @@ def test_contract_identifiers_must_be_non_empty(value: str) -> None:
 def test_contract_payload_rejects_non_json_objects() -> None:
     with pytest.raises(TypeError):
         WorldEvent("event-1", EventSource("fixture"), "bad", {"value": object()})
+
+
+@pytest.mark.asyncio
+async def test_direct_message_wake_policy_is_deterministic_and_non_llm() -> None:
+    policy = DirectMessageWakePolicy()
+
+    direct = await policy.decide(
+        WorldEvent("event-1", EventSource("fixture", "opaque-subject"), "direct_message")
+    )
+    noise = await policy.decide(
+        WorldEvent("event-2", EventSource("fixture", "opaque-subject"), "ambient_message")
+    )
+
+    assert direct.wake is True
+    assert direct.reason == "explicit_direct_message"
+    assert noise.wake is False
+    assert noise.reason == "not_direct_message"

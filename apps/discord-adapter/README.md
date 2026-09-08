@@ -1,10 +1,11 @@
 # Lilavel Discord environment adapter
 
-This package is a replaceable, DM-only Discord environment adapter. It is a
-sensor+action boundary for the current conversational foundation: it depends on
-`lilavel-core`; Core does not depend on Discord or `discord.py`. The Python
-import namespace remains `lilavel_discord_edge` as a compatibility detail of
-the migrated package.
+This package is a replaceable, DM-only Discord environment adapter and the
+application composition root for its live process. Its environment component
+owns Discord observation/presentation only; `LilavelRuntime` owns routing and
+Core/ModelRuntime session lifecycle. Core does not depend on Discord or
+`discord.py`. The Python import namespace remains `lilavel_discord_edge` as a
+compatibility detail of the migrated package.
 
 ## Stage A: isolated transport probe
 
@@ -40,24 +41,25 @@ probe closes the client after the transport exercise. discord.py owns gateway
 reconnect/resume behavior; this one-shot probe reports whether a reconnect or
 resume event actually occurred, but does not manufacture a disconnect.
 
-## Stage B: Core-backed DM adapter
+## Stage B: Runtime-backed DM environment
 
-Normal DM sessions use Core-owned `production_cognition.create_conversation`.
-Every turn receives the current canonical Character v0 guidance plus neutral
-current behavior controls. This is a wiring control, not a scenario classifier
-or a claim that the top-level autonomous runtime is implemented.
-Injected custom `core_factory` values remain responsible for their own guidance.
+Normal DM sessions follow
+`Discord → WorldEvent → LilavelRuntime → ConversationCore → ModelRuntime →
+typed presentation action → Discord`. Runtime composition uses Core-owned
+`production_cognition.create_conversation`; injected custom `core_factory`
+values remain responsible for their own guidance. This is explicit interaction
+routing, not autonomous behavior.
 
 ```powershell
 uv run --locked python scripts/run_edge.py
 ```
 
-Each direct-message channel is kept as edge metadata and maps to a private,
-opaque session identity and its own `ConversationCore`. The Discord channel
-ID is never placed in Core history or a `ModelRequest`. The default session
-runtime is the existing `ModelRuntime`, using the persistent Bun/Luna sidecar
-path already owned by Core. No provider continuation or new provider state is
-added.
+Each direct-message channel remains adapter metadata and maps to a private,
+opaque runtime subject. Only the opaque subject and message text enter the
+`WorldEvent`; Discord channel, message, and author IDs stay adapter-local and
+never enter Core history or a `ModelRequest`. Runtime maps that subject to its
+own `ConversationCore`/`ModelRuntime` session. No provider continuation or new
+provider state is added.
 
 Only `MESSAGE_CREATE` is handled. Bot/self-authored messages, guild messages,
 group DMs, edits, deletes, and imported Discord history are ignored. A bounded
@@ -68,8 +70,10 @@ Discord idempotency store in this slice.
 
 Core remains responsible for canonical history, successful assistant commit,
 one active run per conversation, supersession, and physical cancellation.
-The edge consumes only semantic run events. It starts typing before Core/model
-work and gives each response an owned presenter pump. The first meaningful
+Runtime consumes semantic run events and issues trusted presentation
+`ToolCall`s to the source environment; these are not model-selected tools.
+The adapter starts typing before Core/model work and gives each response an
+owned presenter pump. The first meaningful
 delta materializes a message as soon as practical; later deltas update one
 latest-text snapshot. At most one Discord reconciliation is in flight, and a
 configurable minimum interval (currently `1.0` second by default) between

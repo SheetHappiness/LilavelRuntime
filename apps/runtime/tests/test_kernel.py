@@ -8,10 +8,13 @@ from dataclasses import dataclass, field
 import pytest
 
 from lilavel_runtime import (
+    ActionExecutor,
+    DirectMessageWakePolicy,
     DuplicateEnvironment,
     DuplicateTool,
     EventSource,
     EventSubmitter,
+    EventTrust,
     LilavelRuntime,
     LilavelRuntimeError,
     RuntimeFailed,
@@ -19,10 +22,20 @@ from lilavel_runtime import (
     RuntimeRegistrationClosed,
     RuntimeShutdownTimeout,
     RuntimeState,
+    ToolCall,
+    ToolResult,
     ToolSpec,
     WakeDecision,
     WorldEvent,
 )
+
+
+def _world_events() -> list[WorldEvent]:
+    return []
+
+
+def _tool_calls() -> list[ToolCall]:
+    return []
 
 
 def _event(number: int) -> WorldEvent:
@@ -189,6 +202,9 @@ class _FixtureAdapter:
         finally:
             self.stopped.set()
 
+    async def execute(self, call: ToolCall) -> ToolResult:
+        return ToolResult(call.call_id, None)
+
 
 @pytest.mark.asyncio
 async def test_registered_environment_is_runtime_owned_and_settled() -> None:
@@ -215,6 +231,9 @@ class _FailingAdapter:
     async def run(self, submit: EventSubmitter) -> None:
         del submit
         raise ValueError("fixture failure")
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        return ToolResult(call.call_id, None)
 
 
 @pytest.mark.asyncio
@@ -262,3 +281,95 @@ async def test_ingress_rejects_events_outside_running_state() -> None:
     await runtime.stop()
     with pytest.raises(RuntimeNotRunning):
         await runtime.submit(_event(2))
+
+
+@dataclass(slots=True)
+class _RecordingRouter:
+    events: list[WorldEvent] = field(default_factory=_world_events)
+    closed: bool = False
+
+    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None:
+        self.events.append(event)
+        result = await execute(
+            ToolCall(
+                "action-1",
+                "conversation.presentation.complete",
+                {"event_id": event.event_id, "text": "reply"},
+                trust=EventTrust.TRUSTED,
+            )
+        )
+        assert result.error is None
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@dataclass(slots=True)
+class _RecordingEnvironment:
+    actions: list[ToolCall] = field(default_factory=_tool_calls)
+    stopped: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def environment_id(self) -> str:
+        return "fixture-environment"
+
+    async def run(self, submit: EventSubmitter) -> None:
+        try:
+            await submit(
+                WorldEvent(
+                    "event-1",
+                    EventSource(self.environment_id, "opaque-subject"),
+                    "direct_message",
+                    {"text": "hello"},
+                )
+            )
+            await asyncio.Event().wait()
+        finally:
+            self.stopped.set()
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        self.actions.append(call)
+        return ToolResult(call.call_id, {"status": "ok"})
+
+
+@pytest.mark.asyncio
+async def test_positive_wake_routes_once_to_source_environment_action_boundary() -> None:
+    router = _RecordingRouter()
+    adapter = _RecordingEnvironment()
+    runtime = LilavelRuntime(
+        wake_policy=DirectMessageWakePolicy(),
+        event_router=router,
+    )
+    runtime.register_environment(adapter)
+
+    await runtime.start()
+    while not adapter.actions:
+        await asyncio.sleep(0)
+    await runtime.stop()
+
+    assert [event.event_id for event in router.events] == ["event-1"]
+    assert [call.tool_name for call in adapter.actions] == ["conversation.presentation.complete"]
+    assert adapter.actions[0].trust is EventTrust.TRUSTED
+    assert adapter.stopped.is_set()
+    assert router.closed is True
+
+
+@dataclass(slots=True)
+class _CloseFailingRouter:
+    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None:
+        del event, execute
+
+    async def close(self) -> None:
+        raise ValueError("fixture router close failure")
+
+
+@pytest.mark.asyncio
+async def test_router_shutdown_failure_settles_supervisor_and_fails_closed() -> None:
+    runtime = LilavelRuntime(event_router=_CloseFailingRouter())
+    await runtime.start()
+
+    with pytest.raises(ValueError, match="fixture router close failure"):
+        await runtime.stop()
+
+    assert runtime.state is RuntimeState.FAILED
+    assert runtime.health().failure_code == "ValueError"

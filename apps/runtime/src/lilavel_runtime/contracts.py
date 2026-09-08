@@ -61,10 +61,11 @@ class WorldEvent:
 
 
 type EventSubmitter = Callable[[WorldEvent], Awaitable[None]]
+type ActionExecutor = Callable[[ToolCall], Awaitable[ToolResult]]
 
 
 class EnvironmentAdapter(Protocol):
-    """A runtime-owned source of observations.
+    """A runtime-owned observation source and environment action executor.
 
     ``run`` is a long-lived coroutine. Returning before cancellation is an
     adapter failure; the runtime owns and cancels the task during shutdown.
@@ -74,6 +75,8 @@ class EnvironmentAdapter(Protocol):
     def environment_id(self) -> str: ...
 
     async def run(self, submit: EventSubmitter) -> None: ...
+
+    async def execute(self, call: ToolCall) -> ToolResult: ...
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -149,12 +152,29 @@ class WakePolicy(Protocol):
     async def decide(self, event: WorldEvent) -> WakeDecision: ...
 
 
+class EventRouter(Protocol):
+    """Route a positively classified event without owning its destination adapter."""
+
+    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None: ...
+
+    async def close(self) -> None: ...
+
+
 class NeverWakePolicy:
     """Safe default for a kernel with no autonomous behavior."""
 
     async def decide(self, event: WorldEvent) -> WakeDecision:
         del event
         return WakeDecision(wake=False)
+
+
+class DirectMessageWakePolicy:
+    """Deterministically wake only for an explicit one-to-one message."""
+
+    async def decide(self, event: WorldEvent) -> WakeDecision:
+        if event.kind == "direct_message":
+            return WakeDecision(wake=True, reason="explicit_direct_message")
+        return WakeDecision(wake=False, reason="not_direct_message")
 
 
 def _require_text(value: str, name: str) -> None:

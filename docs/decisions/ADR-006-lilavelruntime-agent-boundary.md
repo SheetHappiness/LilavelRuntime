@@ -34,13 +34,13 @@ generation and provider/process transport boundaries.
 
 ## Current implementation state
 
-`apps/runtime` now implements the smallest top-level process owner: explicit
-start/stop, bounded provider-neutral event ingress, registered environment task
-ownership, structural tool registration, and an inert wake-policy seam. It can
-remain healthy with zero environments, conversations, or model calls. It does
-not implement a scheduler, autonomous model wake loop, attention/decision
-system, tool execution/actions, world model, memory, or durable
-cross-environment agent state.
+`apps/runtime` implements the top-level process owner and now realizes the
+explicit Discord DM route: bounded `WorldEvent` ingress, deterministic wake,
+Core/ModelRuntime conversation sessions, and trusted runtime-generated
+presentation actions back to the source adapter. It remains healthy with zero
+environments and does not implement a scheduler, autonomous model wake loop,
+attention/decision system, model-selected tools, world model, memory, or
+durable cross-environment agent state.
 
 ## Rationale status
 

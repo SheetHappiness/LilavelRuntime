@@ -3,7 +3,10 @@ name = "lilavel-runtime"
 version = "0.1.0"
 description = "The provider-neutral persistent agent kernel for Lilavel."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["lilavel-core"]
+
+[tool.uv.sources]
+lilavel-core = { path = "../core", editable = true }
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -20,6 +23,7 @@ dev = [
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
+extraPaths = ["../core/src"]
 venvPath = "."
 venv = ".venv"
 
