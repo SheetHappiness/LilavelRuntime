@@ -1,0 +1,350 @@
+{
+  "format_version": 1,
+  "description": "Small Protocol V2 examples consumed by the Python parser and the TypeScript parser or event encoder. Cases are test evidence, not a normative schema.",
+  "cases": [
+    {
+      "id": "command-generate-prompt",
+      "surface": "command",
+      "purpose": "legacy single-prompt generation",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-prompt\",\"epoch\":7,\"prompt\":\"Reply exactly OK.\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "generate",
+          "generation_id": "gen-prompt",
+          "epoch": 7,
+          "prompt": "Reply exactly OK."
+        }
+      }
+    },
+    {
+      "id": "command-generate-context-guidance",
+      "surface": "command",
+      "purpose": "structured context with separate trusted guidance",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-context\",\"epoch\":8,\"messages\":[{\"role\":\"user\",\"text\":\"Remember quartz.\"},{\"role\":\"assistant\",\"text\":\"ACK_1\"},{\"role\":\"user\",\"text\":\"What was the word?\"}],\"system_prompt\":[\"trusted identity\",\"trusted behavior\"]}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "generate",
+          "generation_id": "gen-context",
+          "epoch": 8,
+          "messages": [
+            { "role": "user", "text": "Remember quartz." },
+            { "role": "assistant", "text": "ACK_1" },
+            { "role": "user", "text": "What was the word?" }
+          ],
+          "system_prompt": ["trusted identity", "trusted behavior"]
+        }
+      }
+    },
+    {
+      "id": "command-cancel-epoch-zero",
+      "surface": "command",
+      "purpose": "cancel accepts the lower epoch boundary",
+      "frame": "{\"protocol_version\":2,\"type\":\"cancel\",\"generation_id\":\"gen-cancel\",\"epoch\":0}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "cancel",
+          "generation_id": "gen-cancel",
+          "epoch": 0
+        }
+      }
+    },
+    {
+      "id": "command-health",
+      "surface": "command",
+      "purpose": "local health command",
+      "frame": "{\"protocol_version\":2,\"type\":\"health\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "health"
+        }
+      }
+    },
+    {
+      "id": "command-shutdown",
+      "surface": "command",
+      "purpose": "local shutdown command",
+      "frame": "{\"protocol_version\":2,\"type\":\"shutdown\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "shutdown"
+        }
+      }
+    },
+    {
+      "id": "event-ready",
+      "surface": "event",
+      "purpose": "sidecar readiness identity",
+      "frame": "{\"protocol_version\":2,\"type\":\"ready\",\"provider\":\"openai-codex\",\"model_id\":\"gpt-5.6-luna\",\"api\":\"openai-codex-responses\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "ready",
+          "provider": "openai-codex",
+          "model_id": "gpt-5.6-luna",
+          "api": "openai-codex-responses"
+        }
+      }
+    },
+    {
+      "id": "event-health",
+      "surface": "event",
+      "purpose": "busy health state",
+      "frame": "{\"protocol_version\":2,\"type\":\"health\",\"state\":\"busy\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "health",
+          "state": "busy"
+        }
+      }
+    },
+    {
+      "id": "event-accepted",
+      "surface": "event",
+      "purpose": "generation admission identity",
+      "frame": "{\"protocol_version\":2,\"type\":\"accepted\",\"generation_id\":\"gen-prompt\",\"epoch\":7}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "accepted",
+          "generation_id": "gen-prompt",
+          "epoch": 7
+        }
+      }
+    },
+    {
+      "id": "event-text-delta-utf8",
+      "surface": "event",
+      "purpose": "nonterminal UTF-8 delta",
+      "frame": "{\"protocol_version\":2,\"type\":\"text_delta\",\"generation_id\":\"gen-prompt\",\"epoch\":7,\"delta\":\"Привіт 🌙\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "text_delta",
+          "generation_id": "gen-prompt",
+          "epoch": 7,
+          "delta": "Привіт 🌙"
+        }
+      }
+    },
+    {
+      "id": "event-completed",
+      "surface": "event",
+      "purpose": "successful terminal frame",
+      "frame": "{\"protocol_version\":2,\"type\":\"completed\",\"generation_id\":\"gen-prompt\",\"epoch\":7}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "completed",
+          "generation_id": "gen-prompt",
+          "epoch": 7
+        }
+      }
+    },
+    {
+      "id": "event-cancelled",
+      "surface": "event",
+      "purpose": "cancelled terminal frame",
+      "frame": "{\"protocol_version\":2,\"type\":\"cancelled\",\"generation_id\":\"gen-cancel\",\"epoch\":0}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "cancelled",
+          "generation_id": "gen-cancel",
+          "epoch": 0
+        }
+      }
+    },
+    {
+      "id": "event-failed-scoped",
+      "surface": "event",
+      "purpose": "generation-scoped failure code",
+      "frame": "{\"protocol_version\":2,\"type\":\"failed\",\"generation_id\":\"gen-prompt\",\"epoch\":7,\"code\":\"cleanup_timeout\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "failed",
+          "generation_id": "gen-prompt",
+          "epoch": 7,
+          "code": "cleanup_timeout"
+        }
+      }
+    },
+    {
+      "id": "event-failed-startup",
+      "surface": "event",
+      "purpose": "process-scoped failure code without generation identity",
+      "frame": "{\"protocol_version\":2,\"type\":\"failed\",\"code\":\"startup_error\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "failed",
+          "code": "startup_error"
+        }
+      }
+    },
+    {
+      "id": "event-shutdown",
+      "surface": "event",
+      "purpose": "clean shutdown acknowledgement",
+      "frame": "{\"protocol_version\":2,\"type\":\"shutdown\"}",
+      "expected": {
+        "accepted": true,
+        "semantic": {
+          "protocol_version": 2,
+          "type": "shutdown"
+        }
+      }
+    },
+    {
+      "id": "command-version-one",
+      "surface": "command",
+      "purpose": "older protocol version is rejected",
+      "frame": "{\"protocol_version\":1,\"type\":\"health\"}",
+      "expected": { "accepted": false, "reason": "unsupported_version" }
+    },
+    {
+      "id": "command-version-three",
+      "surface": "command",
+      "purpose": "future protocol version is rejected",
+      "frame": "{\"protocol_version\":3,\"type\":\"health\"}",
+      "expected": { "accepted": false, "reason": "unsupported_version" }
+    },
+    {
+      "id": "command-version-noninteger",
+      "surface": "command",
+      "purpose": "non-integer version is rejected without asserting implementation-specific taxonomy",
+      "frame": "{\"protocol_version\":2.0,\"type\":\"health\"}",
+      "expected": { "accepted": false }
+    },
+    {
+      "id": "command-unknown-field",
+      "surface": "command",
+      "purpose": "strict command fields",
+      "frame": "{\"protocol_version\":2,\"type\":\"health\",\"extra\":true}",
+      "expected": { "accepted": false, "reason": "unknown_field" }
+    },
+    {
+      "id": "command-duplicate-field",
+      "surface": "command",
+      "purpose": "duplicate JSON object keys are rejected before normalization",
+      "frame": "{\"protocol_version\":2,\"type\":\"health\",\"type\":\"health\"}",
+      "expected": { "accepted": false, "reason": "duplicate_field" }
+    },
+    {
+      "id": "command-malformed",
+      "surface": "command",
+      "purpose": "malformed JSON is rejected",
+      "frame": "not-json",
+      "expected": { "accepted": false, "reason": "malformed" }
+    },
+    {
+      "id": "command-fractional-epoch",
+      "surface": "command",
+      "purpose": "epoch must be an integer",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-fraction\",\"epoch\":1.0,\"prompt\":\"x\"}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "command-mixed-prompt-messages",
+      "surface": "command",
+      "purpose": "legacy and structured payloads cannot be mixed",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-mixed\",\"epoch\":1,\"prompt\":\"legacy\",\"messages\":[{\"role\":\"user\",\"text\":\"ambiguous\"}]}",
+      "expected": { "accepted": false, "reason": "unknown_field" }
+    },
+    {
+      "id": "command-invalid-role",
+      "surface": "command",
+      "purpose": "structured context has only user and assistant roles",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-role\",\"epoch\":1,\"messages\":[{\"role\":\"developer\",\"text\":\"not supported\"}]}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "command-invalid-id-byte-bound",
+      "surface": "command",
+      "purpose": "identity uses a UTF-8 byte bound",
+      "frame": "{\"protocol_version\":2,\"type\":\"cancel\",\"generation_id\":\"🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙🌙\",\"epoch\":1}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "command-missing-cancel-identity",
+      "surface": "command",
+      "purpose": "generation identity is required for cancel",
+      "frame": "{\"protocol_version\":2,\"type\":\"cancel\",\"epoch\":1}",
+      "expected": { "accepted": false, "reason": "unknown_field" }
+    },
+    {
+      "id": "command-duplicate-guidance",
+      "surface": "command",
+      "purpose": "trusted guidance blocks must be unique and non-empty",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"gen-guidance\",\"epoch\":1,\"messages\":[{\"role\":\"user\",\"text\":\"hello\"}],\"system_prompt\":[\"same\",\"same\"]}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "event-invalid-health-state",
+      "surface": "event",
+      "purpose": "health state is a closed set",
+      "frame": "{\"protocol_version\":2,\"type\":\"health\",\"state\":\"unknown\"}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "event-empty-delta",
+      "surface": "event",
+      "purpose": "text deltas are non-empty",
+      "frame": "{\"protocol_version\":2,\"type\":\"text_delta\",\"generation_id\":\"gen-prompt\",\"epoch\":7,\"delta\":\"\"}",
+      "expected": { "accepted": false, "reason": "invalid_field" }
+    },
+    {
+      "id": "event-unknown-field",
+      "surface": "event",
+      "purpose": "strict event fields",
+      "frame": "{\"protocol_version\":2,\"type\":\"ready\",\"provider\":\"openai-codex\",\"model_id\":\"gpt-5.6-luna\",\"api\":\"openai-codex-responses\",\"extra\":true}",
+      "expected": { "accepted": false, "reason": "unknown_field" }
+    },
+    {
+      "id": "event-partial-failure-identity",
+      "surface": "event",
+      "purpose": "scoped failure identity is all-or-none",
+      "frame": "{\"protocol_version\":2,\"type\":\"failed\",\"generation_id\":\"gen-prompt\",\"code\":\"provider_error\"}",
+      "expected": { "accepted": false, "reason": "unknown_field" }
+    },
+    {
+      "id": "event-array-failure-code",
+      "surface": "event",
+      "purpose": "reject non-string enum fields without leaking native exceptions",
+      "frame": "{\"protocol_version\":2,\"type\":\"failed\",\"code\":[]}",
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_field"
+      }
+    },
+    {
+      "id": "command-array-role",
+      "surface": "command",
+      "purpose": "reject non-string enum fields without leaking native exceptions",
+      "frame": "{\"protocol_version\":2,\"type\":\"generate\",\"generation_id\":\"x\",\"epoch\":1,\"messages\":[{\"role\":[],\"text\":\"hello\"}]}",
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_field"
+      }
+    }
+  ]
+}

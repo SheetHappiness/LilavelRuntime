@@ -1,0 +1,42 @@
+[project]
+name = "lilavel-discord-edge"
+version = "0.1.0"
+description = "The replaceable DM-first Discord environment adapter for LilavelRuntime."
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py==2.7.1",
+    "lilavel-core",
+    "regex==2026.9.3",
+]
+
+[tool.uv.sources]
+lilavel-core = { path = "../core", editable = true }
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1",
+    "pytest>=8",
+    "ruff>=0.9",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+extraPaths = ["../core/src"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

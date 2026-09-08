@@ -1,0 +1,22 @@
+{
+  "name": "@lilavel/model-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "smoke": "bun run src/cli.ts",
+    "probe": "bun run src/cli.ts --probe",
+    "protocol": "bun run src/protocol-cli.ts"
+  },
+  "dependencies": {
+    "@oh-my-pi/pi-ai": "18.1.2",
+    "@oh-my-pi/pi-catalog": "18.1.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "7.0.2"
+  }
+}

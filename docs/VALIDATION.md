@@ -1,0 +1,124 @@
+# Validation
+
+This document indexes authoritative checks and their interpretation. It records
+what a command can establish; it does not claim that a check has been run.
+There is no aggregate root package command because the repository contains
+independently locked Python and Bun components.
+
+## Result vocabulary
+
+- `PASS` — the named check completed successfully for its stated scope.
+- `FAIL` — the named check ran and found a failure.
+- `BLOCKED` — a required credential, host capability, platform, or external
+  service was unavailable. `BLOCKED` is neither `PASS` nor `FAIL`.
+- `UNVERIFIED` — no authoritative check or committed evidence establishes the
+  claim.
+
+Reports must name the package, command, host/platform, and scope. Do not turn a
+deterministic fixture result into live-provider, restart, Windows, or Discord
+evidence.
+
+## Migration and static checks
+
+From the repository root:
+
+```powershell
+python scripts/check_architecture.py
+git diff --check
+```
+
+The architecture guard is a small standard-library check: Core source must not
+import Discord, and the Discord adapter must not import Core persistence
+ownership. `git diff --check` covers whitespace errors in the destination
+diff. Neither command proves live behavior or autonomous runtime behavior.
+
+## Deterministic package checks
+
+Run the applicable package-local commands from the package directory.
+
+### Core
+
+```powershell
+Set-Location apps/core
+uv sync --locked
+uv lock --check
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv run --locked pytest
+```
+
+These checks cover Core conversation semantics, Character v0 fixtures and
+evaluation harnesses, persistence/evidence, runtime lifecycle, protocol
+fixtures, and process-containment tests selected by the host platform.
+
+### Model sidecar
+
+```powershell
+Set-Location apps/model-sidecar
+npx --yes bun@1.4.0 install --frozen-lockfile
+npx --yes bun@1.4.0 run check
+npx --yes bun@1.4.0 test
+```
+
+These checks cover the TypeScript/Bun sidecar API, protocol parsing, provider
+adapter fixtures, cleanup, and lifecycle tests without requiring a live
+provider.
+
+### Discord adapter
+
+```powershell
+Set-Location apps/discord-adapter
+uv sync --locked
+uv lock --check
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv run --locked pytest
+```
+
+These checks cover the replaceable DM adapter, deterministic presenter,
+transport, diagnostics, scenario runner, and semantic-streaming tests.
+
+### Shared protocol boundary
+
+Run both the Core and model-sidecar command sets when validating the shared
+JSONL boundary. Core covers the Python schema/runtime side; the sidecar covers
+the TypeScript host/provider-adapter side. This remains deterministic evidence,
+not live-provider evidence.
+
+## Platform-specific checks
+
+The Core pytest suite includes Windows-only checks for the real `npx` → Bun
+launcher, process containment, and the Windows protocol path. A Windows run of
+the same Core pytest command is required for a Windows `PASS`. On other
+platforms, marked tests may be skipped; a skip is not a Windows `PASS`.
+The POSIX fallback does not establish the Windows descendant-containment
+guarantee.
+
+## Live, provider, and credential-dependent checks
+
+These commands require supported authentication or an external service and
+must be reported separately from deterministic checks:
+
+- Core Luna probe: from `apps/core`,
+  `uv run --locked python scripts/conversation_live.py`.
+- Sidecar smoke and probes: from `apps/model-sidecar`,
+  `npx --yes bun@1.4.0 run smoke -- "Reply exactly STREAM_OK."`,
+  `npx --yes bun@1.4.0 run probe -- cancel-recovery`, and
+  `npx --yes bun@1.4.0 run probe -- isolation`.
+- Discord Stage A transport probe: from `apps/discord-adapter`,
+  `uv run --locked python scripts/transport_probe.py`.
+- Discord Stage B Core-backed adapter: from `apps/discord-adapter`,
+  `uv run --locked python scripts/run_edge.py`.
+
+Discord probes require the supported `LILAVEL_DISCORD_BOT_TOKEN` mechanism and
+an actual Discord interaction. Missing credentials produce `BLOCKED`, not live
+evidence. Live Core and sidecar checks require the provider's supported
+auth-discovery setup. Do not extract, replay, or persist credentials to make a
+check run. A sidecar `ready` or `health` event describes local state; it does
+not prove provider endpoint availability, quota, entitlement, or successful
+live interaction.
+
+No live/provider result is claimed unless the exact command and result are
+separately executed and recorded. This migration does not require live checks.

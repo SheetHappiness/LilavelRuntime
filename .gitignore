@@ -1,0 +1,39 @@
+# Python environments and caches
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+
+# JavaScript/Bun dependencies and build output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+
+# Local runtime state and diagnostic output
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.jsonl
+diagnostics/
+**/diagnostics/
+uv-cache/
+pytest-temp*/
+
+# Local credentials and authentication material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.token
