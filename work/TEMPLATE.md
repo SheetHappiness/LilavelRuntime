@@ -1,48 +1,45 @@
-# Phase/task record
+# PHASE N — Name
 
-Copy this file once for each bounded phase or task. Keep the record concise;
-tracked code, canonical docs, and Git state remain authoritative.
-
-## Phase
-
-<!-- Example: PHASE 0 / P0-CLOSE -->
-
-## Baseline SHA
-
-<!-- Exact starting commit. -->
+Status: `OPEN` | `CLOSED` | `BLOCKED`
+Baseline SHA: `<exact starting commit>`
+Implementation SHA at exit: `<last implementation state; baseline if unchanged>`
 
 ## Goal
 
-<!-- One sentence describing the intended outcome. -->
+<!-- One sentence. -->
 
 ## Scope
 
-<!-- Included work only. -->
-
-## Owned paths
-
-<!-- Files/directories this task may change. -->
+<!-- Included paths and outcomes. -->
 
 ## Non-goals
 
-<!-- Explicitly excluded work. -->
+<!-- Explicit exclusions. -->
+
+## Decisions
+
+<!-- Conclusion first. Use stable verdicts such as USE, REJECT, COMPATIBLE, or UNKNOWN. -->
+
+## Architecture consequences
+
+<!-- Ownership, invariants, and permitted follow-up. -->
 
 ## Inherited invariants
 
-<!-- Existing contracts that must remain true. -->
+<!-- Existing contracts that remain authoritative. -->
+
+## Evidence
+
+<!-- Facts, probes, paths, and exact result labels. -->
 
 ## Validation
 
-<!-- Commands and PASS/BLOCKED/UNVERIFIED results. -->
-
-## Result
-
-<!-- Concise outcome. -->
+<!-- Named checks with PASS, FAIL, BLOCKED, or UNVERIFIED. -->
 
 ## Unknowns
 
-<!-- Claims not established by this task, or NONE. -->
+<!-- Unestablished claims, or NONE. -->
 
-## Final SHA
+## Exit gate
 
-<!-- Exact commit after completion, or UNCOMMITTED. -->
+<!-- Required conditions and their result. -->

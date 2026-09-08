@@ -101,3 +101,16 @@ restart, external-service, and platform claims.
 Keep this file limited to recurring LilavelRuntime-specific rules. Move
 subsystem-specific guidance to a nearby scoped `AGENTS.md` only when recurring
 rules justify one; do not grow a second architecture document here.
+
+## Phase completion
+
+At phase close, the agent automatically updates durable repository
+documentation; the user does not manually author the phase record. A large
+phase must have a concise `work/` record containing decisions, evidence,
+validation, unknowns, exit gate, and implementation SHA. Add or update an ADR
+only for a consequential durable architecture decision. Update
+`docs/ARCHITECTURE.md` only when current implemented architecture truth
+changes, and `docs/VALIDATION.md` only when canonical commands or evidence
+semantics change. Update an existing canonical roadmap/status document when
+appropriate; do not create one solely for phase closure. Keep each truth in
+one canonical location and link or reference it elsewhere.

@@ -7,6 +7,7 @@ Status: CLOSED
 Repository: `C:\LilavelRuntime`
 Branch: `main`
 Baseline SHA: `9ad6a6fcb79661be542580b4ab3c629148063028`
+Implementation SHA at exit: `9ad6a6fcb79661be542580b4ab3c629148063028`
 
 Production repository state was unchanged during the capability spikes.
 
@@ -20,6 +21,16 @@ persistent Lilavel agent runtime:
 
 No production AgentRuntime, ToolRegistry, autonomy, MCP integration,
 or Discord redesign was in scope.
+
+## Scope
+
+- Pinned `@oh-my-pi/pi-ai@18.1.2` capability inspection and deterministic probe.
+- Neuro SDK WebSocket compatibility mapping and deterministic probe.
+
+## Non-goals
+
+Production AgentRuntime, ToolRegistry, autonomy, MCP integration, sidecar
+protocol v3, production Neuro adapter, or Discord redesign.
 
 ## Decisions
 
@@ -65,8 +76,9 @@ or ToolRegistry.
 Local pinned package inspection confirmed tool-call types,
 stream events, validation helpers, stop reason and tool-result continuation.
 
-Current production sidecar does not expose these capabilities:
-tool-call output is currently classified as `unsupported_output`.
+Current production sidecar is text-only protocol v2 and does not expose these
+capabilities; production protocol v3 is NOT IMPLEMENTED. Tool-call output is
+currently classified as `unsupported_output`.
 
 Deterministic probe result:
 
@@ -87,7 +99,7 @@ A deterministic compatibility probe completed:
 
 Result: PASS.
 
-## Architecture Consequences
+## Architecture consequences
 
 - Future AgentRuntime owns ToolRegistry.
 - AgentRuntime owns authorization, permissions and external side effects.
@@ -121,9 +133,10 @@ Result: PASS.
 - Live provider probe: UNVERIFIED
 - Live external Neuro server interoperability: UNVERIFIED
 
-## Exit State
+## Exit gate
 
 Production code changed: no.
 
-Implementation SHA at phase exit:
-`9ad6a6fcb79661be542580b4ab3c629148063028`
+Capability verdicts are recorded, production implementation is unchanged, and
+all deterministic checks passed. Live/provider and external interoperability
+claims remain `UNVERIFIED`.
