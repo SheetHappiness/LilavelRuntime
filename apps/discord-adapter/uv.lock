@@ -323,11 +323,29 @@ wheels = [
 ]
 
 [[package]]
+name = "lilavel-contracts"
+version = "0.1.0"
+source = { editable = "../contracts" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.9" },
+]
+
+[[package]]
 name = "lilavel-core"
 version = "0.1.0"
 source = { editable = "../core" }
+dependencies = [
+    { name = "lilavel-contracts" },
+]
 
 [package.metadata]
+requires-dist = [{ name = "lilavel-contracts", editable = "../contracts" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -342,6 +360,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "discord-py" },
+    { name = "lilavel-contracts" },
     { name = "lilavel-core" },
     { name = "lilavel-runtime" },
     { name = "regex" },
@@ -357,6 +376,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "discord-py", specifier = "==2.7.1" },
+    { name = "lilavel-contracts", editable = "../contracts" },
     { name = "lilavel-core", editable = "../core" },
     { name = "lilavel-runtime", editable = "../runtime" },
     { name = "regex", specifier = "==2026.9.3" },
@@ -374,11 +394,15 @@ name = "lilavel-runtime"
 version = "0.1.0"
 source = { editable = "../runtime" }
 dependencies = [
+    { name = "lilavel-contracts" },
     { name = "lilavel-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lilavel-core", editable = "../core" }]
+requires-dist = [
+    { name = "lilavel-contracts", editable = "../contracts" },
+    { name = "lilavel-core", editable = "../core" },
+]
 
 [package.metadata.requires-dev]
 dev = [

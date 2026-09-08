@@ -39,6 +39,21 @@ these commands proves live behavior or autonomous model/tool behavior.
 
 Run the applicable package-local commands from the package directory.
 
+### Shared contracts
+
+```powershell
+Set-Location apps/contracts
+uv sync --locked
+uv lock --check
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv run --locked pytest
+```
+
+These checks cover the immutable, bounded provider-neutral tool values. They
+do not establish authorization, execution, external effects, or history use.
+
 ### Persistent runtime
 
 ```powershell
@@ -84,8 +99,11 @@ npx --yes bun@1.4.0 test
 ```
 
 These checks cover the TypeScript/Bun sidecar API, protocol parsing, provider
-adapter fixtures, cleanup, and lifecycle tests without requiring a live
-provider.
+adapter fixtures, cleanup, lifecycle tests, the shared inactive V3 tool-frame
+corpus, generation-local ID/alias mapping, and pinned pi-ai raw-argument
+correspondence without requiring a live provider. They do not establish Luna
+tool selection, provider continuation, endpoint multi-call behavior,
+code-mode-only behavior, real-provider cancellation, or Discord effects.
 
 ### Discord adapter
 

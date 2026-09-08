@@ -10,6 +10,7 @@ from threading import Thread
 from typing import cast
 from uuid import uuid4
 
+from lilavel_contracts import ToolResultStatus
 from lilavel_core import (
     ConversationCancelled,
     ConversationCompleted,
@@ -22,7 +23,7 @@ from lilavel_core import (
 )
 from lilavel_core.production_cognition import create_conversation
 
-from .contracts import ActionExecutor, EventTrust, ToolCall, ToolResult, WorldEvent
+from .contracts import ActionExecutor, ToolCall, ToolResult, WorldEvent
 
 PRESENTATION_OPEN = "conversation.presentation.open"
 PRESENTATION_BIND = "conversation.presentation.bind"
@@ -164,7 +165,11 @@ class CoreConversationRouter:
                 )
                 if watch_task in done:
                     result = watch_task.result()
-                    raise RuntimeError(result.error or "presentation watcher stopped unexpectedly")
+                    if result.status is not ToolResultStatus.OK:
+                        raise RuntimeError(
+                            result.reason_code or "presentation watcher stopped unexpectedly"
+                        )
+                    raise RuntimeError("presentation watcher stopped unexpectedly")
                 item = event_task.result()
                 if isinstance(item, _BridgeEnd):
                     if item.error is not None:
@@ -316,15 +321,14 @@ class CoreConversationRouter:
             call_id=str(uuid4()),
             tool_name=action,
             arguments={"event_id": event_id, **arguments},
-            trust=EventTrust.TRUSTED,
         )
 
     async def _execute(
         self, execute: ActionExecutor, action: str, event_id: str, **arguments: object
     ) -> ToolResult:
         result = await execute(self._call(action, event_id, **arguments))
-        if result.error is not None:
-            raise RuntimeError(f"environment action {action!r} failed: {result.error}")
+        if result.status is not ToolResultStatus.OK:
+            raise RuntimeError(f"environment action {action!r} failed: {result.reason_code}")
         return result
 
     @staticmethod

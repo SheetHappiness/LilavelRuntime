@@ -14,7 +14,6 @@ from lilavel_runtime import (
     DuplicateTool,
     EventSource,
     EventSubmitter,
-    EventTrust,
     LilavelRuntime,
     LilavelRuntimeError,
     RuntimeFailed,
@@ -24,6 +23,7 @@ from lilavel_runtime import (
     RuntimeState,
     ToolCall,
     ToolResult,
+    ToolResultStatus,
     ToolSpec,
     WakeDecision,
     WorldEvent,
@@ -203,7 +203,7 @@ class _FixtureAdapter:
             self.stopped.set()
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        return ToolResult(call.call_id, None)
+        return ToolResult(call.call_id, ToolResultStatus.OK, None)
 
 
 @pytest.mark.asyncio
@@ -233,7 +233,7 @@ class _FailingAdapter:
         raise ValueError("fixture failure")
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        return ToolResult(call.call_id, None)
+        return ToolResult(call.call_id, ToolResultStatus.OK, None)
 
 
 @pytest.mark.asyncio
@@ -295,10 +295,9 @@ class _RecordingRouter:
                 "action-1",
                 "conversation.presentation.complete",
                 {"event_id": event.event_id, "text": "reply"},
-                trust=EventTrust.TRUSTED,
             )
         )
-        assert result.error is None
+        assert result.status is ToolResultStatus.OK
 
     async def close(self) -> None:
         self.closed = True
@@ -329,7 +328,7 @@ class _RecordingEnvironment:
 
     async def execute(self, call: ToolCall) -> ToolResult:
         self.actions.append(call)
-        return ToolResult(call.call_id, {"status": "ok"})
+        return ToolResult(call.call_id, ToolResultStatus.OK, {"status": "ok"})
 
 
 @pytest.mark.asyncio
@@ -349,7 +348,7 @@ async def test_positive_wake_routes_once_to_source_environment_action_boundary()
 
     assert [event.event_id for event in router.events] == ["event-1"]
     assert [call.tool_name for call in adapter.actions] == ["conversation.presentation.complete"]
-    assert adapter.actions[0].trust is EventTrust.TRUSTED
+    assert adapter.actions[0].model_trust == "untrusted"
     assert adapter.stopped.is_set()
     assert router.closed is True
 

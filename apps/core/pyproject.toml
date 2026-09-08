@@ -3,7 +3,10 @@ name = "lilavel-core"
 version = "0.1.0"
 description = "The provider-neutral Lilavel semantic core."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["lilavel-contracts"]
+
+[tool.uv.sources]
+lilavel-contracts = { path = "../contracts", editable = true }
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -19,6 +22,7 @@ dev = [
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
+extraPaths = ["src", "../contracts/src"]
 venvPath = "."
 venv = ".venv"
 

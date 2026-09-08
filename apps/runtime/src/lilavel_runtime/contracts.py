@@ -9,8 +9,25 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol, cast
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | tuple[JsonValue, ...] | Mapping[str, JsonValue]
+from lilavel_contracts import JsonValue, ToolCall, ToolResult, ToolSpec
+
+__all__ = [
+    "ActionExecutor",
+    "DirectMessageWakePolicy",
+    "EnvironmentAdapter",
+    "EventRouter",
+    "EventSource",
+    "EventSubmitter",
+    "EventTrust",
+    "JsonValue",
+    "NeverWakePolicy",
+    "ToolCall",
+    "ToolResult",
+    "ToolSpec",
+    "WakeDecision",
+    "WakePolicy",
+    "WorldEvent",
+]
 
 
 class EventTrust(StrEnum):
@@ -77,63 +94,6 @@ class EnvironmentAdapter(Protocol):
     async def run(self, submit: EventSubmitter) -> None: ...
 
     async def execute(self, call: ToolCall) -> ToolResult: ...
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ToolSpec:
-    """A provider-neutral capability description; it grants no authority."""
-
-    name: str
-    description: str
-    input_schema: Mapping[str, JsonValue]
-
-    def __init__(self, name: str, description: str, input_schema: Mapping[str, object]) -> None:
-        _require_text(name, "name")
-        _require_text(description, "description")
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "description", description)
-        object.__setattr__(self, "input_schema", _freeze_mapping(input_schema, "input_schema"))
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ToolCall:
-    """An unexecuted tool request. Arguments are untrusted by default."""
-
-    call_id: str
-    tool_name: str
-    arguments: Mapping[str, JsonValue]
-    trust: EventTrust = EventTrust.UNTRUSTED
-
-    def __init__(
-        self,
-        call_id: str,
-        tool_name: str,
-        arguments: Mapping[str, object],
-        trust: EventTrust = EventTrust.UNTRUSTED,
-    ) -> None:
-        _require_text(call_id, "call_id")
-        _require_text(tool_name, "tool_name")
-        object.__setattr__(self, "call_id", call_id)
-        object.__setattr__(self, "tool_name", tool_name)
-        object.__setattr__(self, "arguments", _freeze_mapping(arguments, "arguments"))
-        object.__setattr__(self, "trust", trust)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ToolResult:
-    """A provider-neutral result envelope; it is not canonical history."""
-
-    call_id: str
-    output: JsonValue
-    error: str | None = None
-
-    def __init__(self, call_id: str, output: object, error: str | None = None) -> None:
-        _require_text(call_id, "call_id")
-        if error is not None:
-            _require_text(error, "error")
-        object.__setattr__(self, "call_id", call_id)
-        object.__setattr__(self, "output", _freeze_json(output, "output"))
-        object.__setattr__(self, "error", error)
 
 
 @dataclass(frozen=True, slots=True)

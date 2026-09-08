@@ -9,7 +9,9 @@ from lilavel_runtime import (
     EventSource,
     EventTrust,
     ToolCall,
+    ToolEffect,
     ToolResult,
+    ToolResultStatus,
     ToolSpec,
     WorldEvent,
 )
@@ -30,11 +32,11 @@ def test_world_event_is_untrusted_and_deeply_immutable_by_default() -> None:
 def test_tool_contracts_freeze_structured_values_without_executing_them() -> None:
     spec = ToolSpec("lookup", "Look up a value", {"type": "object", "required": ["key"]})
     call = ToolCall("call-1", "lookup", {"key": "value"})
-    result = ToolResult("call-1", {"value": [1, 2]})
+    result = ToolResult("call-1", ToolResultStatus.OK, {"value": [1, 2]}, effect=ToolEffect.NONE)
 
     assert spec.input_schema["required"] == ("key",)
     assert call.arguments == {"key": "value"}
-    assert call.trust is EventTrust.UNTRUSTED
+    assert call.model_trust == "untrusted"
     assert result.output == {"value": (1, 2)}
 
 

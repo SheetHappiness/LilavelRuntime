@@ -1,5 +1,7 @@
 """Public package boundary for the Lilavel persistent-agent kernel."""
 
+from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus, ToolSpec
+
 from .contracts import (
     ActionExecutor,
     DirectMessageWakePolicy,
@@ -10,9 +12,6 @@ from .contracts import (
     EventTrust,
     JsonValue,
     NeverWakePolicy,
-    ToolCall,
-    ToolResult,
-    ToolSpec,
     WakeDecision,
     WakePolicy,
     WorldEvent,
@@ -73,7 +72,9 @@ __all__ = [
     "RuntimeShutdownTimeout",
     "RuntimeState",
     "ToolCall",
+    "ToolEffect",
     "ToolResult",
+    "ToolResultStatus",
     "ToolSpec",
     "WakeDecision",
     "WakePolicy",

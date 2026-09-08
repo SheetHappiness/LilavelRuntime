@@ -5,6 +5,7 @@ description = "The replaceable DM-first Discord environment adapter for LilavelR
 requires-python = ">=3.12"
 dependencies = [
     "discord.py==2.7.1",
+    "lilavel-contracts",
     "lilavel-core",
     "lilavel-runtime",
     "regex==2026.9.3",
@@ -12,6 +13,7 @@ dependencies = [
 
 [tool.uv.sources]
 lilavel-core = { path = "../core", editable = true }
+lilavel-contracts = { path = "../contracts", editable = true }
 lilavel-runtime = { path = "../runtime", editable = true }
 
 [build-system]
@@ -28,7 +30,7 @@ dev = [
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-extraPaths = ["../core/src", "../runtime/src"]
+extraPaths = ["../contracts/src", "../core/src", "../runtime/src"]
 venvPath = "."
 venv = ".venv"
 

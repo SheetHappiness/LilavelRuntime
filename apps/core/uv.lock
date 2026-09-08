@@ -21,9 +21,26 @@ wheels = [
 ]
 
 [[package]]
+name = "lilavel-contracts"
+version = "0.1.0"
+source = { editable = "../contracts" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.9" },
+]
+
+[[package]]
 name = "lilavel-core"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "lilavel-contracts" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -33,6 +50,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "lilavel-contracts", editable = "../contracts" }]
 
 [package.metadata.requires-dev]
 dev = [

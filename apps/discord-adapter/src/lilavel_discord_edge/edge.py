@@ -13,6 +13,7 @@ from typing import Any, Final, cast
 from uuid import uuid4
 
 import discord
+from lilavel_contracts import ToolResultStatus
 from lilavel_core import ConversationCore, ConversationRuntime, ModelRuntime
 from lilavel_core.production_cognition import create_conversation
 from lilavel_runtime import (
@@ -274,7 +275,9 @@ class _DiscordEnvironment:
                 state.presenter.start()
             elif call.tool_name == PRESENTATION_WATCH:
                 error = await self._presenter(event_id).wait_for_error()
-                return ToolResult(call.call_id, None, error=type(error).__name__)
+                return ToolResult(
+                    call.call_id, ToolResultStatus.FAILED, None, reason_code=type(error).__name__
+                )
             elif call.tool_name == PRESENTATION_DELTA:
                 self._presenter(event_id).append_delta(self._text_argument(call, "text"))
             elif call.tool_name == PRESENTATION_COMPLETE:
@@ -297,13 +300,17 @@ class _DiscordEnvironment:
                 if state is not None:
                     await self._cleanup(state)
             else:
-                return ToolResult(call.call_id, None, error="unsupported_action")
+                return ToolResult(
+                    call.call_id, ToolResultStatus.INVALID, None, reason_code="unsupported_action"
+                )
         except BaseException as error:
-            state = self._presentations.get(str(call.arguments.get("event_id", "")))
+            state = self._presentations.get(str((call.arguments or {}).get("event_id", "")))
             if state is not None:
                 await self._cleanup(state)
-            return ToolResult(call.call_id, None, error=type(error).__name__)
-        return ToolResult(call.call_id, {"status": "ok"})
+            return ToolResult(
+                call.call_id, ToolResultStatus.FAILED, None, reason_code=type(error).__name__
+            )
+        return ToolResult(call.call_id, ToolResultStatus.OK, {"status": "ok"})
 
     async def close(self) -> None:
         self._run_stopped.set()
@@ -363,14 +370,14 @@ class _DiscordEnvironment:
 
     @staticmethod
     def _text_argument(call: ToolCall, name: str) -> str:
-        value = call.arguments.get(name)
+        value = (call.arguments or {}).get(name)
         if not isinstance(value, str) or not value:
             raise ValueError(f"{name} must be non-empty text")
         return value
 
     @staticmethod
     def _optional_text_argument(call: ToolCall, name: str) -> str | None:
-        value = call.arguments.get(name)
+        value = (call.arguments or {}).get(name)
         if value is None:
             return None
         if not isinstance(value, str):

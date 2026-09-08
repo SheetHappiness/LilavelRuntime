@@ -299,3 +299,12 @@ uv run --locked ruff format --check .
 uv run --locked pyright
 uv run --locked pytest
 ```
+
+## P4-A V3 contract proof
+
+`protocol_v3.py` parses the shared strict V3 tool-frame corpus without making
+`ModelRuntime` expose tools. The shared `lilavel-contracts` dependency hosts
+immutable `ToolSpec`, model-untrusted `ToolCall`, and bounded `ToolResult`
+values; it owns no tool policy, authorization, execution, or canonical history.
+The active Core/sidecar runtime protocol remains V2 until a later continuation
+slice has deterministic end-to-end settlement evidence.

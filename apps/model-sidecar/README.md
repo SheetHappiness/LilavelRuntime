@@ -92,6 +92,23 @@ forward provider payloads, response IDs, usage, `sessionId`, or
 generation lifecycle and semantic state; this host owns provider and process
 transport state only.
 
+## P4-A V3 transport proof
+
+The sidecar contains an inactive V3 contract parser and a transport-only
+ordinary-function-tool adapter. It maps immutable Lilavel `ToolSpec` values to
+collision-checked provider aliases, retains raw Responses terminal function
+items only inside the active transport operation, and maps each provider call
+ID to a generation-local `call-N` ID. It independently parses the raw argument
+string, requires an exact match with pi-ai's finalized normalized object, and
+marks malformed JSON or non-object JSON non-executable. Missing, duplicate, or
+ambiguous correspondence fails the provider turn closed.
+
+The active JSONL host remains V2 in this slice. No Core request exposes tools,
+no tool result is continued to a provider, and no Discord model-selected action
+is available. The V3 fixture parser covers `generate.tools`, `tool_calls`, and
+`tool_results`; `ToolWaitState` accepts results only for the exact pending
+generation, epoch, round, and ordered call-ID set.
+
 When Core launches the host on Windows, it starts the default `npx` launcher
 with `CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP`, verifies Job Object
 containment, and resumes it only after the containment handle is attached.

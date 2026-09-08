@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "cases": [
+    {"id":"generate-no-tools","surface":"command","frame":"{\"protocol_version\":3,\"type\":\"generate\",\"generation_id\":\"g\",\"epoch\":1,\"prompt\":\"hello\"}","accepted":true},
+    {"id":"generate-tools","surface":"command","frame":"{\"protocol_version\":3,\"type\":\"generate\",\"generation_id\":\"g\",\"epoch\":1,\"prompt\":\"hello\",\"tools\":[{\"name\":\"discord.send_message\",\"description\":\"Send\",\"input_schema\":{\"type\":\"object\"}}]}","accepted":true},
+    {"id":"tool-calls","surface":"event","frame":"{\"protocol_version\":3,\"type\":\"tool_calls\",\"generation_id\":\"g\",\"epoch\":1,\"round\":1,\"calls\":[{\"local_call_id\":\"call-1\",\"tool_name\":\"discord.send_message\",\"arguments\":{\"body\":\"hello\"},\"argument_error\":null}]}","accepted":true},
+    {"id":"malformed-tool-schema","surface":"command","frame":"{\"protocol_version\":3,\"type\":\"generate\",\"generation_id\":\"g\",\"epoch\":1,\"prompt\":\"hello\",\"tools\":[{\"name\":\"x\",\"description\":\"x\",\"input_schema\":[]}]}","accepted":false},
+    {"id":"tool-results","surface":"command","frame":"{\"protocol_version\":3,\"type\":\"tool_results\",\"generation_id\":\"g\",\"epoch\":1,\"round\":1,\"results\":[{\"call_id\":\"call-1\",\"status\":\"ok\",\"reason_code\":null,\"output\":{\"sent\":true},\"effect\":\"confirmed\"}]}","accepted":true},
+    {"id":"invalid-version","surface":"command","frame":"{\"protocol_version\":2,\"type\":\"tool_results\",\"generation_id\":\"g\",\"epoch\":1,\"round\":1,\"results\":[]}","accepted":false},
+    {"id":"unknown-key","surface":"event","frame":"{\"protocol_version\":3,\"type\":\"tool_calls\",\"generation_id\":\"g\",\"epoch\":1,\"round\":1,\"calls\":[],\"extra\":true}","accepted":false},
+    {"id":"invalid-call-shape","surface":"event","frame":"{\"protocol_version\":3,\"type\":\"tool_calls\",\"generation_id\":\"g\",\"epoch\":1,\"round\":1,\"calls\":[{\"local_call_id\":\"call-1\",\"tool_name\":\"x\",\"arguments\":[],\"argument_error\":null}]}","accepted":false},
+    {"id":"unknown-event","surface":"event","frame":"{\"protocol_version\":3,\"type\":\"tool_call_delta\"}","accepted":false}
+  ]
+}

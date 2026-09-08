@@ -1,13 +1,8 @@
 [project]
-name = "lilavel-runtime"
+name = "lilavel-contracts"
 version = "0.1.0"
-description = "The provider-neutral persistent agent kernel for Lilavel."
+description = "Dependency-safe provider-neutral value contracts for LilavelRuntime."
 requires-python = ">=3.12"
-dependencies = ["lilavel-contracts", "lilavel-core"]
-
-[tool.uv.sources]
-lilavel-core = { path = "../core", editable = true }
-lilavel-contracts = { path = "../contracts", editable = true }
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -17,20 +12,17 @@ build-backend = "hatchling.build"
 dev = [
     "pyright>=1.1",
     "pytest>=8",
-    "pytest-asyncio>=1",
     "ruff>=0.9",
 ]
 
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-extraPaths = ["../contracts/src", "../core/src"]
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "strict"
 
 [tool.ruff]
 line-length = 100
