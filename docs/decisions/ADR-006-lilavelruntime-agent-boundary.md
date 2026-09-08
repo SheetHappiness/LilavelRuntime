@@ -34,11 +34,13 @@ generation and provider/process transport boundaries.
 
 ## Current implementation state
 
-This migration establishes the repository and documents the ownership
-boundary. The migrated implementation contains the proven conversational
-foundation and a DM-only Discord adapter at `apps/discord-adapter`. It does not
-implement a scheduler, wake loop, attention/decision system, tools/actions,
-world model, or durable cross-environment agent state.
+`apps/runtime` now implements the smallest top-level process owner: explicit
+start/stop, bounded provider-neutral event ingress, registered environment task
+ownership, structural tool registration, and an inert wake-policy seam. It can
+remain healthy with zero environments, conversations, or model calls. It does
+not implement a scheduler, autonomous model wake loop, attention/decision
+system, tool execution/actions, world model, memory, or durable
+cross-environment agent state.
 
 ## Rationale status
 
@@ -56,8 +58,8 @@ runtime behavior already exists.
 
 ## Consequences
 
-- Future observations and actions need a runtime-owned, provider-neutral seam;
-  Discord-specific details must stay at the adapter boundary.
+- Observations enter through the runtime-owned, provider-neutral `WorldEvent`
+  seam; Discord-specific details must stay at the adapter boundary.
 - Conversation history and assistant commit semantics remain governed by the
   existing Core decisions, not by a new top-level rewrite.
 - The absence of a runtime scheduler or world-state package is explicit,

@@ -1,0 +1,187 @@
+"""Provider-neutral contracts at the persistent-agent boundary."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Protocol, cast
+
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | tuple[JsonValue, ...] | Mapping[str, JsonValue]
+
+
+class EventTrust(StrEnum):
+    """Trust assigned by Lilavel, never inferred from an adapter payload."""
+
+    UNTRUSTED = "untrusted"
+    TRUSTED = "trusted"
+
+
+@dataclass(frozen=True, slots=True)
+class EventSource:
+    """Provider-neutral origin of an observation."""
+
+    environment: str
+    subject: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_text(self.environment, "environment")
+        if self.subject is not None:
+            _require_text(self.subject, "subject")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class WorldEvent:
+    """An immutable observation envelope; ingestion does not imply memory."""
+
+    event_id: str
+    source: EventSource
+    kind: str
+    payload: Mapping[str, JsonValue]
+    trust: EventTrust = EventTrust.UNTRUSTED
+
+    def __init__(
+        self,
+        event_id: str,
+        source: EventSource,
+        kind: str,
+        payload: Mapping[str, object] | None = None,
+        trust: EventTrust = EventTrust.UNTRUSTED,
+    ) -> None:
+        _require_text(event_id, "event_id")
+        _require_text(kind, "kind")
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "payload", _freeze_mapping(payload or {}, "payload"))
+        object.__setattr__(self, "trust", trust)
+
+
+type EventSubmitter = Callable[[WorldEvent], Awaitable[None]]
+
+
+class EnvironmentAdapter(Protocol):
+    """A runtime-owned source of observations.
+
+    ``run`` is a long-lived coroutine. Returning before cancellation is an
+    adapter failure; the runtime owns and cancels the task during shutdown.
+    """
+
+    @property
+    def environment_id(self) -> str: ...
+
+    async def run(self, submit: EventSubmitter) -> None: ...
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ToolSpec:
+    """A provider-neutral capability description; it grants no authority."""
+
+    name: str
+    description: str
+    input_schema: Mapping[str, JsonValue]
+
+    def __init__(self, name: str, description: str, input_schema: Mapping[str, object]) -> None:
+        _require_text(name, "name")
+        _require_text(description, "description")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "input_schema", _freeze_mapping(input_schema, "input_schema"))
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ToolCall:
+    """An unexecuted tool request. Arguments are untrusted by default."""
+
+    call_id: str
+    tool_name: str
+    arguments: Mapping[str, JsonValue]
+    trust: EventTrust = EventTrust.UNTRUSTED
+
+    def __init__(
+        self,
+        call_id: str,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        trust: EventTrust = EventTrust.UNTRUSTED,
+    ) -> None:
+        _require_text(call_id, "call_id")
+        _require_text(tool_name, "tool_name")
+        object.__setattr__(self, "call_id", call_id)
+        object.__setattr__(self, "tool_name", tool_name)
+        object.__setattr__(self, "arguments", _freeze_mapping(arguments, "arguments"))
+        object.__setattr__(self, "trust", trust)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ToolResult:
+    """A provider-neutral result envelope; it is not canonical history."""
+
+    call_id: str
+    output: JsonValue
+    error: str | None = None
+
+    def __init__(self, call_id: str, output: object, error: str | None = None) -> None:
+        _require_text(call_id, "call_id")
+        if error is not None:
+            _require_text(error, "error")
+        object.__setattr__(self, "call_id", call_id)
+        object.__setattr__(self, "output", _freeze_json(output, "output"))
+        object.__setattr__(self, "error", error)
+
+
+@dataclass(frozen=True, slots=True)
+class WakeDecision:
+    """A wake-policy outcome. Phase 2 records it but performs no model work."""
+
+    wake: bool
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.reason is not None:
+            _require_text(self.reason, "reason")
+
+
+class WakePolicy(Protocol):
+    async def decide(self, event: WorldEvent) -> WakeDecision: ...
+
+
+class NeverWakePolicy:
+    """Safe default for a kernel with no autonomous behavior."""
+
+    async def decide(self, event: WorldEvent) -> WakeDecision:
+        del event
+        return WakeDecision(wake=False)
+
+
+def _require_text(value: str, name: str) -> None:
+    if not value or not value.strip():
+        raise ValueError(f"{name} must be non-empty")
+
+
+def _freeze_mapping(value: Mapping[str, object], name: str) -> Mapping[str, JsonValue]:
+    frozen: dict[str, JsonValue] = {}
+    for key, item in value.items():
+        frozen[key] = _freeze_json(item, f"{name}.{key}")
+    return MappingProxyType(frozen)
+
+
+def _freeze_json(value: object, name: str) -> JsonValue:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must contain finite numbers")
+        return value
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        if not all(isinstance(key, str) for key in mapping):
+            raise TypeError(f"{name} keys must be strings")
+        return _freeze_mapping(cast(Mapping[str, object], mapping), name)
+    if isinstance(value, (list, tuple)):
+        sequence = cast(list[object] | tuple[object, ...], value)
+        return tuple(_freeze_json(item, name) for item in sequence)
+    raise TypeError(f"{name} must contain only JSON-compatible values")

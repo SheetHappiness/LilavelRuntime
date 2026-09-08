@@ -1,21 +1,17 @@
 # Architecture
 
 This document records the current ownership boundaries of the canonical
-`LilavelRuntime` repository. Lilavel is modeled as a persistent agent runtime,
-but this migration implements only the proven conversational foundation and a
-replaceable Discord environment adapter. Future autonomous capabilities are
-not implied by the product model.
+`LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
+the proven conversational foundation and a replaceable Discord environment
+adapter. Future autonomous capabilities are not implied by this kernel.
 
 ## Top-level product boundary
 
-The `LilavelRuntime` product boundary is the future owner of agent lifecycle,
-world observations, scheduling and wake, attention/decision, tools/actions, and
-cross-environment agent-state orchestration. No speculative scheduler, world
-model, attention loop, or tool authority is introduced by this migration.
-
-The current code has no separate top-level runtime package because there is no
-implemented contract to place there yet. The repository is prepared for that
-owner without pretending that the owner already exists in code.
+The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
+event ingress, registered environment tasks, structural tool registration, and
+wake classification. It deliberately has no conversation, model, tool
+execution, scheduling, action, memory, or persistence behavior. No speculative
+world model, attention loop, or tool authority is introduced.
 
 The intended direction is:
 
@@ -23,12 +19,11 @@ The intended direction is:
 world observations
         │
         ▼
-environment adapters ──► LilavelRuntime orchestration (future)
+environment adapters ──► LilavelRuntime kernel
         │                              │
-        │                              ├── scheduling / wake (future)
-        │                              ├── attention / decision (future)
-        │                              ├── tools / actions (future)
-        │                              └── agent-state orchestration (future)
+        │                              ├── bounded event ingress
+        │                              ├── inert wake classification
+        │                              └── tool registry (structural only)
         │
         └──── approved conversational action
                          │
@@ -46,7 +41,7 @@ environment adapters ──► LilavelRuntime orchestration (future)
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` product boundary | Future cross-environment agent lifecycle and orchestration | Current conversation history, provider sessions, or adapter-specific identity |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, structural tool registration, and wake classification | Conversations, model calls, tool execution, scheduling, memory, persistence, provider sessions, or adapter-specific identity |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, and fail-closed runtime state | Canonical agent memory, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, and version-two JSONL host behavior | Semantic conversation history, agent identity, tools/MCP, or the top-level runtime |
@@ -110,6 +105,29 @@ storing request text, delta content, credentials, provider payloads, or
 exception bodies. Evidence is not canonical history and is not a live-provider
 or restart proof.
 
+## Persistent kernel lifecycle
+
+`LilavelRuntime` is a separate Python package with no runtime dependency on
+Core, Discord, Neuro, the model sidecar, or a provider. Its normal lifecycle is
+`new → starting → running → stopping → stopped`; stopped and failed instances
+cannot be restarted. It owns registered adapter coroutines through an
+`asyncio.TaskGroup`. An unexpected owned-task failure fails the kernel closed.
+
+Observation ingress uses a bounded `asyncio.Queue`. `submit()` applies
+backpressure while the queue is full; it never silently drops or accumulates
+unbounded events. Shutdown closes admission, cancels environment tasks, drains
+accepted observations through the wake-policy seam, and settles the task group
+within a configured deadline. The zero-environment path starts the same event
+consumer, remains healthy without conversations or model activity, and follows
+the same clean shutdown path.
+
+`WorldEvent` payloads are deep-frozen JSON-compatible values and are untrusted
+by default. Observation does not promote an event into memory or canonical
+conversation history. `ToolSpec`, `ToolCall`, and `ToolResult` are structural
+provider-neutral envelopes only: no Phase 2 path authorizes or executes a
+tool. A positive `WakeDecision` is bounded health evidence only and starts no
+conversation or model generation.
+
 ## Environment adapter boundary
 
 The Discord implementation lives at `apps/discord-adapter` and depends on
@@ -144,15 +162,16 @@ outside this component.
 - Deterministic fixture evidence is reported separately from live provider,
   Discord, restart, and platform-specific evidence.
 
-The static guard in `scripts/check_architecture.py` checks the two cheapest
-regressions: Core cannot import Discord, and the Discord adapter cannot import
-Core's persistence ownership.
+The static guard in `scripts/check_architecture.py` checks the current cheap
+regressions: Core cannot import Discord or the top-level runtime, the runtime
+cannot import Discord or Neuro implementations, and the Discord adapter cannot
+import Core's persistence ownership.
 
 ## Deferred boundaries
 
 The following are intentionally `DEFERRED` rather than implied: a durable
-agent-state model, world/event schema, scheduling and wake policy,
-attention/decision policy, tool/action authority, retrieval or memory
-semantics, shared runtime scheduling, and non-Discord environment adapters.
-Each needs an explicit decision and proportionate validation before code is
-added.
+agent-state model, scheduler or timer source, autonomous model wake loop,
+attention/decision policy, tool authorization/execution/action lifecycle,
+retrieval or memory semantics, conversation orchestration, and production
+non-Discord environment adapters. Each needs an explicit decision and
+proportionate validation before code is added.

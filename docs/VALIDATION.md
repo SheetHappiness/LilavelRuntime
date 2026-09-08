@@ -30,14 +30,32 @@ git diff --check
 
 `check_docs.py` verifies local Markdown link targets and heading anchors, plus
 explicit `Set-Location`/`cd` paths in fenced command examples. The architecture
-guard is a small standard-library check: Core source must not import Discord,
-and the Discord adapter must not import Core persistence ownership.
+guard is a small standard-library check for the implemented Core/runtime,
+runtime/environment-specific, and adapter/persistence dependency directions.
 `git diff --check` covers whitespace errors in the destination diff. None of
-these commands proves live behavior or autonomous runtime behavior.
+these commands proves live behavior or autonomous model/tool behavior.
 
 ## Deterministic package checks
 
 Run the applicable package-local commands from the package directory.
+
+### Persistent runtime
+
+```powershell
+Set-Location apps/runtime
+uv sync --locked
+uv lock --check
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv run --locked pytest
+```
+
+These checks cover the zero-environment lifecycle, bounded observation
+backpressure, deterministic task settlement, environment/tool registration,
+provider-neutral immutable contracts, and fail-closed owned-task behavior.
+They do not exercise conversations, model generation, tool execution, live
+providers, Discord, Neuro, scheduling, or memory.
 
 ### Core
 

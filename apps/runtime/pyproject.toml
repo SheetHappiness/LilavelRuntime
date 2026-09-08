@@ -1,0 +1,36 @@
+[project]
+name = "lilavel-runtime"
+version = "0.1.0"
+description = "The provider-neutral persistent agent kernel for Lilavel."
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1",
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.9",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

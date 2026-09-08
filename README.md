@@ -1,16 +1,18 @@
 # LilavelRuntime
 
 LilavelRuntime is the canonical repository for Lilavel as a persistent agent
-runtime. This initial repository is a controlled migration of the proven
-conversational foundation from `C:\Lilavel-m4c-integration`; it is not a
-rewrite and it does not claim that autonomous behavior is implemented.
+runtime. It combines a small persistent-agent kernel with the controlled
+migration of the proven conversational foundation from
+`C:\Lilavel-m4c-integration`; it does not claim that autonomous behavior is
+implemented.
 
 ## Product model
 
-Lilavel's top-level runtime is the future owner of persistent agent lifecycle,
-world observations, scheduling and wake, attention/decision, tools/actions, and
-cross-environment state orchestration. Those capabilities are intentionally
-deferred until their contracts are designed and validated.
+Lilavel's top-level runtime now owns persistent process lifecycle, bounded
+world-event ingress, registered environment tasks, structural tool
+registration, and wake classification. Scheduling, model/tool execution,
+attention/decision, actions, and cross-environment state remain deferred until
+their contracts are designed and validated.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -19,7 +21,7 @@ such adapter, not the place where Lilavel lives:
 world observations
         │
         ▼
-environment adapter ──► future LilavelRuntime orchestration
+environment adapter ──► LilavelRuntime kernel
         │                                  │
         │                                  ▼
         └──── approved actions ◄── ConversationCore / tools
@@ -44,6 +46,10 @@ Discord one-to-one DM
 
 ## Current foundation
 
+- `apps/runtime` contains the provider-neutral persistent kernel and its
+  `WorldEvent`, `EnvironmentAdapter`, tool-envelope, and wake-policy contracts.
+  It starts without any environment, conversation, model runtime, sidecar, or
+  provider and performs no autonomous work.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,
@@ -90,7 +96,7 @@ prerequisite is reported as `BLOCKED`, not as a migration failure.
 
 ## Explicitly deferred
 
-This bootstrap does not add a scheduler, wake loop, attention policy, world
-model, tool runtime, MCP integration, voice/guild behavior, retrieval or
-memory semantics, or a new top-level runtime package. Each of those is future
-scope requiring an explicit decision and validation.
+The current kernel does not add a scheduler, model wake loop, attention policy,
+world model, tool execution, MCP integration, voice/guild behavior, retrieval,
+or memory semantics. Each of those is future scope requiring an explicit
+decision and validation.

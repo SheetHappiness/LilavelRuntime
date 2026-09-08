@@ -7,7 +7,7 @@ from pathlib import Path
 
 _CORE_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _CORE_SOURCE = _CORE_PROJECT_ROOT / "src" / "lilavel_core"
-_FORBIDDEN_IMPORT_ROOTS = ("discord", "lilavel_discord_edge")
+_FORBIDDEN_IMPORT_ROOTS = ("discord", "lilavel_discord_edge", "lilavel_runtime")
 
 
 def _is_forbidden_import(module: str) -> bool:
@@ -41,9 +41,11 @@ def _core_source_violations() -> list[str]:
     return violations
 
 
-def test_core_source_has_no_direct_discord_imports() -> None:
+def test_core_source_has_no_environment_or_parent_runtime_imports() -> None:
     violations = _core_source_violations()
-    assert not violations, "Core must remain independent of Discord:\n" + "\n".join(violations)
+    assert not violations, (
+        "Core must remain independent of adapters and parent runtime:\n" + "\n".join(violations)
+    )
 
 
 def test_forbidden_absolute_import_forms_are_rejected() -> None:
@@ -52,15 +54,17 @@ import discord
 from lilavel_discord_edge import DiscordTextEdge
 from discord.abc import Messageable
 from lilavel_discord_edge.transport import DiscordMessageSink
+from lilavel_runtime import LilavelRuntime
 """
 
     violations = _forbidden_imports(source, "<import-boundary-fixture>")
 
-    assert len(violations) == 4
+    assert len(violations) == 5
     assert any("import 'discord'" in violation for violation in violations)
     assert any("import 'lilavel_discord_edge'" in violation for violation in violations)
     assert any("import 'discord.abc'" in violation for violation in violations)
     assert any("import 'lilavel_discord_edge.transport'" in violation for violation in violations)
+    assert any("import 'lilavel_runtime'" in violation for violation in violations)
 
 
 def test_comments_strings_and_core_imports_are_not_violations() -> None:
