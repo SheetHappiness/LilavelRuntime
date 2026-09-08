@@ -48,7 +48,7 @@ current foundation.
 
 ## Evidence
 
-- [Architecture: semantic ownership](../ARCHITECTURE.md#semantic-ownership)
+- [Architecture: ownership map](../ARCHITECTURE.md#ownership-map)
 - [Core runtime README: local canonical persistence and raw evidence](../../apps/core/README.md#local-canonical-persistence-and-raw-evidence)
 - [Persistence implementation](../../apps/core/src/lilavel_core/persistence.py)
 

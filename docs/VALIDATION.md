@@ -23,14 +23,17 @@ evidence.
 From the repository root:
 
 ```powershell
+python scripts/check_docs.py
 python scripts/check_architecture.py
 git diff --check
 ```
 
-The architecture guard is a small standard-library check: Core source must not
-import Discord, and the Discord adapter must not import Core persistence
-ownership. `git diff --check` covers whitespace errors in the destination
-diff. Neither command proves live behavior or autonomous runtime behavior.
+`check_docs.py` verifies local Markdown link targets and heading anchors, plus
+explicit `Set-Location`/`cd` paths in fenced command examples. The architecture
+guard is a small standard-library check: Core source must not import Discord,
+and the Discord adapter must not import Core persistence ownership.
+`git diff --check` covers whitespace errors in the destination diff. None of
+these commands proves live behavior or autonomous runtime behavior.
 
 ## Deterministic package checks
 

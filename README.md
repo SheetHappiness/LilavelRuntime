@@ -73,6 +73,7 @@ implemented.
   migration truth.
 - [`docs/decisions/`](docs/decisions/) — accepted decisions, including the
   top-level runtime/adapter boundary.
+- [`work/TEMPLATE.md`](work/TEMPLATE.md) — minimal durable phase/task record.
 
 ## Validation
 

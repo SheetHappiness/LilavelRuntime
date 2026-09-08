@@ -47,7 +47,7 @@ boundary.
 
 ## Evidence
 
-- [Architecture: model transport](../ARCHITECTURE.md#model-transport)
+- [Architecture: generation and model boundary](../ARCHITECTURE.md#generation-and-model-boundary)
 - [Core runtime README: lifecycle and admission](../../apps/core/README.md#lifecycle-and-admission)
 - [ModelRuntime implementation](../../apps/core/src/lilavel_core/runtime.py)
 

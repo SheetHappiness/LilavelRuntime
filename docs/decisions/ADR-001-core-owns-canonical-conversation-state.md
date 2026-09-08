@@ -44,7 +44,7 @@ and replaceable delivery surfaces from creating divergent semantic histories.
 
 ## Evidence
 
-- [Architecture: semantic ownership](../ARCHITECTURE.md#semantic-ownership)
+- [Architecture: ownership map](../ARCHITECTURE.md#ownership-map)
 - [Core runtime README: semantic conversation layer](../../apps/core/README.md#semantic-conversation-layer)
 - [ConversationCore implementation](../../apps/core/src/lilavel_core/conversation.py)
 

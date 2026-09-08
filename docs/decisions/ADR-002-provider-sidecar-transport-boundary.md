@@ -45,8 +45,8 @@ memory.
 
 ## Evidence
 
-- [Architecture: model transport](../ARCHITECTURE.md#model-transport)
-- [Architecture: caller-owned structured text context](../ARCHITECTURE.md#caller-owned-structured-text-context)
+- [Architecture: generation and model boundary](../ARCHITECTURE.md#generation-and-model-boundary)
+- [Core README: structured caller-owned context](../../apps/core/README.md#structured-caller-owned-context)
 - [Model sidecar README](../../apps/model-sidecar/README.md)
 - [Sidecar protocol implementation](../../apps/model-sidecar/src/protocol.ts)
 

@@ -29,7 +29,7 @@ and the observable websocket to be closed. It does not treat an empty global
 `asyncio` task set as a shutdown contract.
 
 ```powershell
-Set-Location apps/discord-edge
+Set-Location apps/discord-adapter
 uv sync --locked
 uv lock --check
 uv run --locked python scripts/transport_probe.py
