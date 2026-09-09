@@ -31,6 +31,10 @@ type FakeToolExecutor = Callable[[ToolBatchCorrelation, ToolCall, threading.Even
 type FakeToolDecision = Callable[[ToolBatchCorrelation, ToolCall], bool]
 
 
+class _ToolSessionCancelled(RuntimeError):
+    """Stop sequential dispatch without manufacturing a partial result batch."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolSessionEvidence:
     sequence: int
@@ -81,6 +85,7 @@ class DeterministicToolSession(ApplicationToolSession):
         self._settled.set()
         self._settlement: ToolSessionSettlement = "idle"
         self._active_worker: threading.Thread | None = None
+        self._active_call_cancelled: threading.Event | None = None
         self._active_round: int | None = None
         self._last_round = 0
         self._evidence: list[ToolSessionEvidence] = []
@@ -135,6 +140,10 @@ class DeterministicToolSession(ApplicationToolSession):
                         "cancelled" if cancelled.is_set() or self._cancelled.is_set() else "settled"
                     )
             return tuple(results)
+        except _ToolSessionCancelled:
+            with self._lock:
+                self._settlement = "cancelled"
+            return tuple(results)
         except ToolSessionUncontained:
             with self._lock:
                 self._settlement = "uncontained"
@@ -151,8 +160,10 @@ class DeterministicToolSession(ApplicationToolSession):
                     self._settled.set()
 
     def cancel(self) -> None:
-        self._cancelled.set()
         with self._lock:
+            self._cancelled.set()
+            if self._active_call_cancelled is not None:
+                self._active_call_cancelled.set()
             if self._settlement == "idle":
                 self._settlement = "cancelled"
 
@@ -213,12 +224,13 @@ class DeterministicToolSession(ApplicationToolSession):
 
         executor = self._executors[call.tool_name]
         completed = threading.Event()
+        call_cancelled = threading.Event()
         outcome: list[ToolResult] = []
         errors: list[BaseException] = []
 
         def invoke() -> None:
             try:
-                outcome.append(executor(correlation, call, self._cancelled))
+                outcome.append(executor(correlation, call, call_cancelled))
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -230,57 +242,73 @@ class DeterministicToolSession(ApplicationToolSession):
             daemon=True,
         )
         with self._lock:
-            self._active_worker = worker
-        self._record(correlation, call, "execution_started")
-        worker.start()
-        started = monotonic()
-        while not completed.wait(0.01):
+            # Starting the executor and session cancellation share this lock. If
+            # cancellation wins, no external work can begin after the fence.
             if cancelled.is_set() or self._cancelled.is_set():
-                break
-            if monotonic() - started >= self._executor_deadline:
-                self._cancelled.set()
-                break
+                raise _ToolSessionCancelled
+            self._active_worker = worker
+            self._active_call_cancelled = call_cancelled
+            self._record(correlation, call, "execution_started")
+            worker.start()
 
-        if not completed.is_set():
-            if not completed.wait(self._containment_deadline):
+        timed_out = False
+        try:
+            started = monotonic()
+            while not completed.wait(0.01):
+                if cancelled.is_set() or self._cancelled.is_set():
+                    call_cancelled.set()
+                    break
+                if monotonic() - started >= self._executor_deadline:
+                    timed_out = True
+                    # The deadline belongs to this call, not the generation.
+                    call_cancelled.set()
+                    break
+
+            if not completed.is_set() and not completed.wait(self._containment_deadline):
                 self._record(correlation, call, "cleanup_uncontained")
                 raise ToolSessionUncontained("fake executor ignored bounded cancellation")
-            return self._settled_result(
-                correlation,
-                call,
-                ToolResult(
-                    call.call_id,
-                    ToolResultStatus.TIMED_OUT,
-                    None,
-                    reason_code="executor_timeout",
-                    effect=ToolEffect.NONE,
-                ),
-            )
-        if errors:
-            return self._settled_result(
-                correlation,
-                call,
-                ToolResult(
-                    call.call_id,
-                    ToolResultStatus.FAILED,
-                    None,
-                    reason_code="executor_failed",
-                    effect=ToolEffect.NONE,
-                ),
-            )
-        if len(outcome) != 1 or outcome[0].call_id != call.call_id:
-            return self._settled_result(
-                correlation,
-                call,
-                ToolResult(
-                    call.call_id,
-                    ToolResultStatus.FAILED,
-                    None,
-                    reason_code="invalid_executor_result",
-                    effect=ToolEffect.NONE,
-                ),
-            )
-        return self._settled_result(correlation, call, outcome[0])
+            if timed_out:
+                return self._settled_result(
+                    correlation,
+                    call,
+                    ToolResult(
+                        call.call_id,
+                        ToolResultStatus.TIMED_OUT,
+                        None,
+                        reason_code="executor_timeout",
+                        effect=ToolEffect.NONE,
+                    ),
+                )
+            if errors:
+                return self._settled_result(
+                    correlation,
+                    call,
+                    ToolResult(
+                        call.call_id,
+                        ToolResultStatus.FAILED,
+                        None,
+                        reason_code="executor_failed",
+                        effect=ToolEffect.NONE,
+                    ),
+                )
+            if len(outcome) != 1 or outcome[0].call_id != call.call_id:
+                return self._settled_result(
+                    correlation,
+                    call,
+                    ToolResult(
+                        call.call_id,
+                        ToolResultStatus.FAILED,
+                        None,
+                        reason_code="invalid_executor_result",
+                        effect=ToolEffect.NONE,
+                    ),
+                )
+            return self._settled_result(correlation, call, outcome[0])
+        finally:
+            with self._lock:
+                if self._active_worker is worker:
+                    self._active_worker = None
+                    self._active_call_cancelled = None
 
     def _settled_result(
         self, correlation: ToolBatchCorrelation, call: ToolCall, result: ToolResult

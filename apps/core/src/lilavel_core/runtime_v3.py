@@ -580,11 +580,16 @@ class ModelRuntimeV3(ModelRuntime):
         pending = self._active
         state = self._tool_state
         session = None if state is None else state.session
-        if pending is None or state is None or session is None or session.wait_settled(0):
+        if pending is None or state is None or session is None:
             return super()._fail_runtime_locked(failure)
 
+        # Fence an admitted executor thread before observing settlement.  The
+        # worker may have been started by the host but not yet entered the
+        # session, whose initial settlement is still ``idle``.
         state.cancelled.set()
         session.cancel()
+        if session.wait_settled(0):
+            return super()._fail_runtime_locked(failure)
         if state.deferred_failure is None:
             state.deferred_failure = failure
         if not state.failure_coordinator_started:
@@ -609,9 +614,12 @@ class ModelRuntimeV3(ModelRuntime):
     def _fail_pending_locked(self, failure: ModelRuntimeError) -> None:
         state = self._tool_state
         session = None if state is None else state.session
-        if state is not None and session is not None and not session.wait_settled(0):
-            self._fail_runtime_locked(failure)
-            return
+        if state is not None and session is not None:
+            state.cancelled.set()
+            session.cancel()
+            if not session.wait_settled(0):
+                self._fail_runtime_locked(failure)
+                return
         super()._fail_pending_locked(failure)
 
     def _settle_failed_join(self, pending: _PendingGeneration, state: _ToolGenerationState) -> None:

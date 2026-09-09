@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -24,9 +24,11 @@ from lilavel_core import (
     TextDelta,
     ToolBatchCorrelation,
     ToolExecutorUncontained,
+    ToolGenerationContext,
+    ToolSessionSettlement,
 )
 
-from lilavel_runtime import DeterministicToolSessionFactory
+from lilavel_runtime import DeterministicToolSession, DeterministicToolSessionFactory
 
 FIXTURE = Path(__file__).parents[2] / "core" / "tests" / "fixtures" / "fake_v3_sidecar.py"
 SPEC = ToolSpec(
@@ -257,6 +259,41 @@ def test_h_executor_timeout_with_confirmed_settlement_returns_timed_out() -> Non
         assert model.generate(ModelRequest("timeout")).wait(2.0).text == "explained"
         assert sessions.sessions[0].evidence()[-1].status_code == "timed_out"
         assert sessions.sessions[0].wait_settled(0)
+        assert model.ready
+    finally:
+        close(model)
+
+
+def test_call_timeout_preserves_exact_batch_and_allows_later_round() -> None:
+    order: list[str] = []
+
+    def first_times_out(
+        correlation: ToolBatchCorrelation, call: ToolCall, cancelled: threading.Event
+    ) -> ToolResult:
+        del correlation
+        order.append(call.call_id)
+        if call.call_id == "call-1":
+            cancelled.wait(1.0)
+        return ToolResult(call.call_id, ToolResultStatus.OK, None)
+
+    sessions = factory(first_times_out, executor_deadline=0.03, containment_deadline=0.2)
+    model = runtime("multi-call-round", sessions)
+    model.start()
+    try:
+        assert model.generate(ModelRequest("bounded timeout")).wait(2.0).text == "middle after"
+        assert order == ["call-1", "call-2", "call-3"]
+        settled = [
+            record
+            for record in sessions.sessions[0].evidence()
+            if record.kind == "execution_settled"
+        ]
+        assert [(record.call_id, record.status_code) for record in settled] == [
+            ("call-1", "timed_out"),
+            ("call-2", "ok"),
+            ("call-3", "ok"),
+        ]
+        consumed = [record for record in model.tool_evidence() if record.kind == "result_consumed"]
+        assert [(record.round, record.call_count) for record in consumed] == [(1, 2), (2, 1)]
         assert model.ready
     finally:
         close(model)
@@ -533,6 +570,75 @@ def test_o_sidecar_failure_while_executor_outstanding_settles_application_first(
         with pytest.raises(RuntimeNotReady):
             model.generate(ModelRequest("blocked"))
     close(model)
+
+
+def test_runtime_failure_fences_admitted_executor_before_session_entry() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    exited = threading.Event()
+    executed_after_failure = threading.Event()
+
+    def must_not_execute(
+        correlation: ToolBatchCorrelation, call: ToolCall, cancelled: threading.Event
+    ) -> ToolResult:
+        del correlation, cancelled
+        executed_after_failure.set()
+        return ToolResult(call.call_id, ToolResultStatus.OK, None)
+
+    class GatedSession:
+        def __init__(self, context: ToolGenerationContext) -> None:
+            self._inner = DeterministicToolSession(
+                context,
+                (SPEC,),
+                {SPEC.name: must_not_execute},
+            )
+
+        @property
+        def specs(self) -> tuple[ToolSpec, ...]:
+            return self._inner.specs
+
+        @property
+        def settlement(self) -> ToolSessionSettlement:
+            return self._inner.settlement
+
+        def execute_batch(
+            self,
+            correlation: ToolBatchCorrelation,
+            calls: Sequence[ToolCall],
+            cancelled: threading.Event,
+        ) -> tuple[ToolResult, ...]:
+            entered.set()
+            release.wait(1.0)
+            try:
+                return self._inner.execute_batch(correlation, calls, cancelled)
+            finally:
+                exited.set()
+
+        def cancel(self) -> None:
+            self._inner.cancel()
+
+        def wait_settled(self, timeout: float | None = None) -> bool:
+            return self._inner.wait_settled(timeout)
+
+    class GatedFactory:
+        def create(self, context: ToolGenerationContext) -> GatedSession:
+            return GatedSession(context)
+
+    model = runtime("one-tool", GatedFactory())  # type: ignore[arg-type]
+    model.start()
+    handle = model.generate(ModelRequest("race"))
+    assert entered.wait(1.0)
+    model._fail_runtime(ProtocolViolation("fixture failure"))  # pyright: ignore[reportPrivateUsage]
+    release.set()
+    try:
+        with pytest.raises(ProtocolViolation):
+            handle.wait(2.0)
+        assert exited.wait(1.0)
+        assert not executed_after_failure.is_set()
+        assert model.health().state == "failed"
+    finally:
+        release.set()
+        close(model)
 
 
 @pytest.mark.parametrize(

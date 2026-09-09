@@ -116,7 +116,11 @@ def main() -> int:
                 continue
             if mode == "pre-tool-text":
                 emit({**identity("text_delta", generation_id, epoch), "delta": "before "})
-            batch = [call("call-1"), call("call-2")] if mode == "multi-call" else [call("call-1")]
+            batch = (
+                [call("call-1"), call("call-2")]
+                if mode in {"multi-call", "multi-call-round"}
+                else [call("call-1")]
+            )
             tool_calls(generation_id, epoch, 1, batch)
         elif command_type == "tool_results" and active is not None:
             generation_id, epoch = active
@@ -128,6 +132,12 @@ def main() -> int:
                 next_round = 2
                 emit({**identity("text_delta", generation_id, epoch), "delta": "middle "})
                 tool_calls(generation_id, epoch, 2, [call("call-2")])
+                continue
+            if mode == "multi-call-round" and next_round == 1:
+                assert len(command["results"]) == 2
+                next_round = 2
+                emit({**identity("text_delta", generation_id, epoch), "delta": "middle "})
+                tool_calls(generation_id, epoch, 2, [call("call-3")])
                 continue
             if mode == "wait-after-results":
                 emit({**identity("text_delta", generation_id, epoch), "delta": "continuing"})
