@@ -203,12 +203,11 @@ def _capture(
         raise RuntimeError("expected_one_tool_factory")
     factory = proof_records[0]
     sessions = factory["sessions"]
-    if not isinstance(sessions, tuple) or len(cast(tuple[object, ...], sessions)) != 1:
+    if not isinstance(sessions, tuple) or not sessions:
         raise RuntimeError("expected_one_tool_session")
-    records = cast(tuple[object, ...], sessions)[0]
-    if not isinstance(records, tuple):
+    records = cast(tuple[object, ...], sessions)
+    if not all(isinstance(record, dict) for record in records):
         raise RuntimeError("invalid_tool_evidence")
-    records = cast(tuple[object, ...], records)
     lifecycle = runtime.tool_evidence()
     requested = [record for record in lifecycle if record.kind == "tool_requested"]
     consumed = [record for record in lifecycle if record.kind == "result_consumed"]
@@ -236,9 +235,11 @@ def _capture(
     session_records = [
         cast(dict[str, object], record) for record in records if isinstance(record, dict)
     ]
+    started = [record for record in session_records if record.get("kind") == "execution_started"]
     execution = [record for record in session_records if record.get("kind") == "execution_settled"]
-    if len(execution) != 1:
+    if len(started) != 1 or len(execution) != 1:
         raise RuntimeError("executor_settlement")
+    authorization = started[0].get("authorization")
     evidence = {
         "status": "PASS",
         "token_present": True,
@@ -250,7 +251,7 @@ def _capture(
         "finalized_tool_call_count": requested[0].call_count,
         "finalized_tool_name": DISCORD_SEND_MESSAGE_NAME,
         "raw_correspondence": requested[0].raw_correspondence,
-        "authorization": execution[0].get("authorization"),
+        "authorization": authorization,
         "destination": "trusted_application_bound",
         "discord_send_attempt_count": factory["send_attempt_count"],
         "executor_settlement": execution[0].get("status_code"),

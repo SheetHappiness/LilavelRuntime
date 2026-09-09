@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from queue import Queue
 from types import ModuleType
+from typing import cast
 
 from lilavel_core import (
     ConversationCore,
@@ -15,8 +16,11 @@ from lilavel_core import (
     GenerationCompleted,
     GenerationEvent,
     ModelRequest,
+    ModelRuntimeV3,
+    PhysicalGenerationEvidenceRecord,
     SQLiteConversationStore,
     TextDelta,
+    ToolLifecycleEvidenceRecord,
 )
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "run_live_tool_proof.py"
@@ -67,6 +71,61 @@ class _Edge:
 
     async def close(self) -> None:
         return
+
+
+class _ProofEdge:
+    def __init__(self, evidence: tuple[dict[str, object], ...]) -> None:
+        self._evidence = evidence
+
+    def tool_proof_evidence(self) -> tuple[dict[str, object], ...]:
+        return self._evidence
+
+
+class _ProofRuntime:
+    def __init__(self, generation_id: str) -> None:
+        self._tool_evidence = (
+            ToolLifecycleEvidenceRecord(
+                sequence=1,
+                kind="tool_requested",
+                generation_id=generation_id,
+                epoch=1,
+                round=1,
+                call_count=1,
+                raw_correspondence="pass",
+            ),
+            ToolLifecycleEvidenceRecord(
+                sequence=2,
+                kind="execution_settled",
+                generation_id=generation_id,
+                epoch=1,
+                round=1,
+                call_count=1,
+                result_code="settled",
+            ),
+            ToolLifecycleEvidenceRecord(
+                sequence=3,
+                kind="result_consumed",
+                generation_id=generation_id,
+                epoch=1,
+                round=1,
+                call_count=1,
+            ),
+        )
+        self._physical_evidence = (
+            PhysicalGenerationEvidenceRecord(
+                sequence=1,
+                kind="generation_terminal",
+                generation_id=generation_id,
+                epoch=1,
+                result="completed",
+            ),
+        )
+
+    def tool_evidence(self) -> tuple[ToolLifecycleEvidenceRecord, ...]:
+        return self._tool_evidence
+
+    def physical_evidence(self) -> tuple[PhysicalGenerationEvidenceRecord, ...]:
+        return self._physical_evidence
 
 
 def _completed_core(path: Path) -> tuple[ConversationCore, SQLiteConversationStore]:
@@ -145,3 +204,57 @@ def test_post_provider_presentation_failure_keeps_history_auditable(tmp_path: Pa
     assert audit["tool_result_in_canonical_history"] is False
     assert audit["discord_metadata_in_canonical_history"] is False
     assert audit["discord_metadata_in_trusted_guidance"] is False
+
+
+def test_capture_accepts_actual_flat_session_evidence_shape(tmp_path: Path) -> None:
+    module = _proof_module()
+    path = tmp_path / "capture.sqlite3"
+    core, store = _completed_core(path)
+    generation_id = "generation-proof"
+    edge = _ProofEdge(
+        (
+            {
+                "exposed_tools": ("discord.send_message",),
+                "send_attempt_count": 1,
+                "sessions": (
+                    {
+                        "kind": "requested",
+                        "generation_id": generation_id,
+                        "epoch": 1,
+                        "round": 1,
+                    },
+                    {
+                        "kind": "execution_started",
+                        "generation_id": generation_id,
+                        "epoch": 1,
+                        "round": 1,
+                        "authorization": "allowed",
+                    },
+                    {
+                        "kind": "execution_settled",
+                        "generation_id": generation_id,
+                        "epoch": 1,
+                        "round": 1,
+                        "status_code": "ok",
+                        "effect": "confirmed",
+                    },
+                ),
+            },
+        )
+    )
+    runtime = _ProofRuntime(generation_id)
+
+    try:
+        evidence = module._capture(
+            cast(object, edge),
+            [core],
+            [cast(ModelRuntimeV3, runtime)],
+        )
+    finally:
+        store.close()
+
+    assert evidence["status"] == "PASS"
+    assert evidence["authorization"] == "allowed"
+    assert evidence["discord_send_attempt_count"] == 1
+    assert evidence["tool_result_status"] == "ok"
+    assert evidence["tool_result_effect"] == "confirmed"
