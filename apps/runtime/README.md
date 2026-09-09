@@ -57,8 +57,26 @@ after a contained per-call timeout.
 Session evidence contains only generation/epoch/round/call correlation and safe
 lifecycle/status/reason/effect codes. It excludes raw arguments, raw results,
 provider payloads, external identifiers, credentials, and exception bodies.
-This seam is not activated by the production kernel or Discord adapter and
-grants no real model-selected external effect.
+This seam is not activated by the default production kernel or ordinary
+Discord composition. P4-D adds one explicit adapter-owned composition path
+for a scoped deterministic Discord proof; it does not change the default
+V2/no-tool route or grant general model-selected external authority.
+
+## P4-D route-specific composition seam
+
+`CoreConversationRouter` retains its zero-argument runtime factory for the
+ordinary path and also supports a trusted route-keyed runtime factory plus a
+session configurator. `DiscordTextEdge(tool_enabled=True)` uses that seam only
+for an explicitly enabled run: the adapter resolves the already admitted
+opaque DM subject to its local channel reference, creates the one-tool
+`DiscordToolSessionFactory`, constructs the explicit V3 runtime, and binds the
+factory to the newly created Core scope before generation. The trusted channel
+reference and Core scope never enter model history or the provider request.
+
+The route-specific seam is composition, not policy discovery. It exposes only
+the application-selected snapshot supplied by the adapter, while the existing
+P4-B joined provider/executor settlement, cancellation barrier, and stale-result
+fencing remain authoritative.
 
 `submit()` waits when the bounded queue is full. It does not drop, overwrite,
 or silently accumulate observations. Events are rejected before startup and

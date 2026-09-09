@@ -124,6 +124,42 @@ one runtime with each mapped Core session preserves that existing boundary and
 isolates histories; a future shared-runtime scheduler would be a separate
 design decision.
 
+## P4-D explicit Discord tool proof
+
+The default `DiscordTextEdge` remains V2/no-tool. The only model-facing
+capability in the explicit P4-D composition is:
+
+```text
+discord.send_message({"text": string})
+```
+
+Its schema requires only non-empty text bounded to Discord's 2000-character
+message limit and rejects additional properties. The provider alias
+`discord_send_message` is a sidecar transport detail; it is not an authority
+or registry key. The adapter binds the executor to the current admitted
+one-to-one DM's local channel reference through the opaque runtime subject and
+the Core scope. The model can select the action and supply text, but cannot
+select a channel, user, recipient, or other authority.
+
+The executor sends at most once for one accepted `ToolCall`, always passes
+`AllowedMentions.none()`, and returns only bounded typed outcome metadata. A
+known pre-send failure is `failed/effect=none`; a confirmed client success is
+`ok/effect=confirmed`; an HTTP rejection is `failed/effect=none`; and a timeout,
+cancellation during an in-flight request, or opaque post-submit failure is
+`failed/effect=unknown`. Unknown delivery is never retried and cancellation is
+never described as rollback. Tool calls/results, Discord IDs, payloads, and
+exception text remain outside canonical history, trusted guidance, and model
+evidence.
+
+The deterministic D1 proof uses the real registry, immutable exposure,
+authorization, adapter executor, fake Discord transport, and explicit V3
+fixture. It covers allowed, unexposed, wrong-scope, injected-destination,
+oversized, mention-like, pre-send, ambiguous, cancellation, no-retry, history
+separation, and provider continuation behavior. A provider-backed/live D2 DM
+is not part of the deterministic package suite and remains `UNVERIFIED` unless
+the supported provider and Discord credentials are deliberately available for
+one scoped test DM.
+
 ## Thin deterministic JSONL scenario runner
 
 The repo-local runner exposes the existing deterministic evidence surfaces in
@@ -171,8 +207,8 @@ uv run --locked pytest
 ```
 
 The package deliberately contains no guild ambient listening, slash commands,
-voice, DAVE, persistence, memory, character behavior, tools, MCP, or
-`AgentSession` integration.
+voice, DAVE, persistence, memory, character behavior beyond the single
+explicit P4-D proof tool, MCP, or `AgentSession` integration.
 
 ## Optional HTTP diagnostics
 

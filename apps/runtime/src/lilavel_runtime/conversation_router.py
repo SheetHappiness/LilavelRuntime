@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from threading import Thread
+from threading import Event, Thread
 from typing import cast
 from uuid import uuid4
 
@@ -36,7 +36,9 @@ PRESENTATION_ABORT = "conversation.presentation.abort"
 
 
 RuntimeFactory = Callable[[], ConversationRuntime]
+RouteRuntimeFactory = Callable[[tuple[str, str]], ConversationRuntime]
 CoreFactory = Callable[[ConversationRuntime], ConversationCore]
+SessionConfigurator = Callable[[ConversationRuntime, ConversationCore, tuple[str, str]], None]
 
 
 @dataclass(slots=True)
@@ -82,6 +84,39 @@ class _ConversationEventBridge:
             self._loop.call_soon_threadsafe(self.queue.put_nowait, _BridgeEnd(error))
 
 
+async def _await_blocking[BlockingResult](
+    function: Callable[[], BlockingResult],
+) -> BlockingResult:
+    """Await one bounded blocking operation without the loop default executor.
+
+    The router already owns daemon threads for Core and provider boundaries.  A
+    small explicit bridge keeps shutdown independent from the event loop's
+    default executor and lets a cancelled await leave only the bounded
+    operation running in its own daemon thread.
+    """
+
+    completed = Event()
+    outcome: list[tuple[BlockingResult | None, BaseException | None]] = []
+
+    def run() -> None:
+        try:
+            result = function()
+        except BaseException as error:
+            outcome.append((None, error))
+        else:
+            outcome.append((result, None))
+        finally:
+            completed.set()
+
+    Thread(target=run, name="lilavel-runtime-blocking-bridge", daemon=True).start()
+    while not completed.is_set():
+        await asyncio.sleep(0)
+    result, error = outcome[0]
+    if error is not None:
+        raise error
+    return cast(BlockingResult, result)
+
+
 class CoreConversationRouter:
     """Map provider-neutral conversation subjects to Core-owned sessions."""
 
@@ -89,13 +124,17 @@ class CoreConversationRouter:
         self,
         *,
         runtime_factory: RuntimeFactory = ModelRuntime,
+        route_runtime_factory: RouteRuntimeFactory | None = None,
         core_factory: CoreFactory = create_conversation,
+        session_configurator: SessionConfigurator | None = None,
         close_timeout_s: float = 15.0,
     ) -> None:
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
         self._runtime_factory = runtime_factory
+        self._route_runtime_factory = route_runtime_factory
         self._core_factory = core_factory
+        self._session_configurator = session_configurator
         self._close_timeout_s = close_timeout_s
         self._sessions: dict[tuple[str, str], _ConversationSession] = {}
         self._session_lock = asyncio.Lock()
@@ -236,7 +275,7 @@ class CoreConversationRouter:
             if watch_task is not None:
                 await asyncio.gather(watch_task, return_exceptions=True)
             if bridge is not None:
-                await asyncio.to_thread(bridge.join, self._close_timeout_s)
+                await _await_blocking(lambda: bridge.join(self._close_timeout_s))
             if run is not None:
                 self._active_runs.discard(run)
             if presentation_open and not presentation_bound:
@@ -270,7 +309,7 @@ class CoreConversationRouter:
             shutdown = getattr(session.runtime, "shutdown", None)
             if callable(shutdown):
                 try:
-                    await asyncio.to_thread(cast(Callable[[], None], shutdown))
+                    await _await_blocking(cast(Callable[[], None], shutdown))
                 except BaseException as error:
                     errors.append(error)
         self._closed = True
@@ -286,13 +325,20 @@ class CoreConversationRouter:
             if existing is not None:
                 await self._await_startup(key, existing)
                 return existing
-            runtime = self._runtime_factory()
-            session = _ConversationSession(runtime=runtime, core=self._core_factory(runtime))
+            runtime = (
+                self._route_runtime_factory(key)
+                if self._route_runtime_factory is not None
+                else self._runtime_factory()
+            )
+            core = self._core_factory(runtime)
+            if self._session_configurator is not None:
+                self._session_configurator(runtime, core, key)
+            session = _ConversationSession(runtime=runtime, core=core)
             self._sessions[key] = session
             start = getattr(runtime, "start", None)
             if callable(start):
                 session.startup_task = asyncio.create_task(
-                    asyncio.to_thread(cast(Callable[[], None], start)),
+                    _await_blocking(cast(Callable[[], None], start)),
                     name=f"lilavel-conversation-start-{key[1]}",
                 )
                 await self._await_startup(key, session)
@@ -309,7 +355,7 @@ class CoreConversationRouter:
                 del self._sessions[key]
             shutdown = getattr(session.runtime, "shutdown", None)
             if callable(shutdown):
-                await asyncio.to_thread(cast(Callable[[], None], shutdown))
+                await _await_blocking(cast(Callable[[], None], shutdown))
             raise
         finally:
             if task.done():

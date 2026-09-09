@@ -101,7 +101,7 @@ ownership rules.
 
 ## Application tool authorization boundary
 
-The opt-in deterministic V3 composition in `apps/runtime` uses one trusted
+The opt-in deterministic V3 composition uses one trusted
 `ApplicationToolRegistry` of canonical `ToolSpec` values plus bound executors.
 The registry rejects duplicate names and unsupported schema features, and it
 never uses provider aliases as authority keys. Each generation receives a
@@ -116,6 +116,16 @@ model-exposable bindings. Validation, denial, unavailability, executor
 failure, timeout, and effect certainty map to the existing typed `ToolResult`
 contract; raw arguments, results, provider payloads, and exception bodies
 remain outside runtime evidence and canonical history.
+
+P4-D adds exactly one explicit Discord adapter composition: the canonical
+`discord.send_message` spec contains only bounded `text`. `DiscordTextEdge`
+resolves the admitted DM's local channel reference from the opaque subject,
+binds that executor to the Core scope before generation, and exposes only that
+snapshot to the explicit V3 host. The model cannot provide or alter the
+destination. The executor sends once at most, suppresses mentions, maps
+confirmed/pre-send/ambiguous outcomes to typed status/effect values, and never
+retries `effect=unknown`. This is a deterministic proof seam, not a global
+production activation; ordinary Discord traffic remains V2/no-tool.
 
 ## Persistence and evidence
 
@@ -177,9 +187,11 @@ model request.
 
 The adapter's bounded message deduplication and session map are edge-local
 delivery concerns, not durable agent identity or memory. Adapter restarts do
-not establish durable Discord-to-agent continuity. Guild listening, voice,
-social attention, slash commands, tools, MCP, and provider continuation remain
-outside this component.
+not establish durable Discord-to-agent continuity. The explicit P4-D tool
+composition reuses the subject-to-local-channel binding but does not expose
+Discord IDs or channel authority to Core/model history. Guild listening, voice,
+social attention, slash commands beyond this single proof capability, MCP, and
+provider continuation remain outside this component.
 
 ## Interaction invariants
 

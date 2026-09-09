@@ -21,6 +21,14 @@ from .presenter import (
     ReplyPresenter,
 )
 from .probe import run_transport_probe
+from .tool import (
+    DISCORD_SEND_MESSAGE_MAX_CHARS,
+    DISCORD_SEND_MESSAGE_NAME,
+    DISCORD_SEND_MESSAGE_PROVIDER_ALIAS,
+    DISCORD_SEND_MESSAGE_SPEC,
+    DiscordSendPreflightError,
+    DiscordToolSessionFactory,
+)
 from .transport import (
     MAX_DISCORD_MESSAGE_CHARS,
     DiscordMessageSink,
@@ -33,11 +41,17 @@ __all__ = [
     "DISCORD_TOKEN_ENV",
     "DISCORD_HTTP_DIAGNOSTICS_ENV",
     "DiscordMessageSink",
+    "DiscordSendPreflightError",
+    "DiscordToolSessionFactory",
     "DiscordDiagnostics",
     "DiscordTextEdge",
     "FAILED_MARKER",
     "INTERRUPTED_MARKER",
     "MAX_DISCORD_MESSAGE_CHARS",
+    "DISCORD_SEND_MESSAGE_MAX_CHARS",
+    "DISCORD_SEND_MESSAGE_NAME",
+    "DISCORD_SEND_MESSAGE_PROVIDER_ALIAS",
+    "DISCORD_SEND_MESSAGE_SPEC",
     "MissingDiscordToken",
     "NO_RESPONSE_MARKER",
     "RateLimitObservation",

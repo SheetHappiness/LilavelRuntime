@@ -68,14 +68,6 @@ class LilavelRuntimeHealth:
     failure_code: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class _StopIngress:
-    pass
-
-
-_STOP_INGRESS = _StopIngress()
-
-
 class LilavelRuntime:
     """Top-level owner of Lilavel's process lifecycle.
 
@@ -96,9 +88,7 @@ class LilavelRuntime:
         if shutdown_timeout <= 0:
             raise ValueError("shutdown_timeout must be positive")
         self._state = RuntimeState.NEW
-        self._queue: asyncio.Queue[WorldEvent | _StopIngress] = asyncio.Queue(
-            maxsize=event_queue_size
-        )
+        self._queue: asyncio.Queue[WorldEvent] = asyncio.Queue(maxsize=event_queue_size)
         self._wake_policy = wake_policy or NeverWakePolicy()
         self._event_router = event_router
         self._shutdown_timeout = shutdown_timeout
@@ -112,6 +102,7 @@ class LilavelRuntime:
         self._submissions_settled.set()
         self._supervisor: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._ingress_task: asyncio.Task[None] | None = None
         self._adapter_tasks: tuple[asyncio.Task[None], ...] = ()
         self._route_tasks: set[asyncio.Task[None]] = set()
         self._route_failure: BaseException | None = None
@@ -242,6 +233,10 @@ class LilavelRuntime:
                     await asyncio.gather(*self._adapter_tasks, return_exceptions=True)
                 await self._submissions_settled.wait()
                 await self._queue.join()
+                ingress_task = self._ingress_task
+                if ingress_task is not None and not ingress_task.done():
+                    ingress_task.cancel()
+                    await asyncio.gather(ingress_task, return_exceptions=True)
                 route_tasks = tuple(self._route_tasks)
                 for task in route_tasks:
                     task.cancel()
@@ -252,7 +247,6 @@ class LilavelRuntime:
                         await self._event_router.close()
                     except BaseException as error:
                         router_error = error
-                await self._queue.put(_STOP_INGRESS)
                 self._stop_requested.set()
                 await supervisor
         except TimeoutError as error:
@@ -308,7 +302,9 @@ class LilavelRuntime:
     async def _supervise(self) -> None:
         try:
             async with asyncio.TaskGroup() as group:
-                group.create_task(self._consume_events(group), name="lilavel-runtime-ingress")
+                self._ingress_task = group.create_task(
+                    self._consume_events(group), name="lilavel-runtime-ingress"
+                )
                 self._adapter_tasks = tuple(
                     group.create_task(
                         self._run_adapter(adapter),
@@ -350,8 +346,6 @@ class LilavelRuntime:
         while True:
             item = await self._queue.get()
             try:
-                if isinstance(item, _StopIngress):
-                    return
                 decision = await self._wake_policy.decide(item)
                 self._processed_events += 1
                 if decision.wake:

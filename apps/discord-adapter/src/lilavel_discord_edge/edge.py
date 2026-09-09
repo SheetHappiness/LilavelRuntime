@@ -14,7 +14,13 @@ from uuid import uuid4
 
 import discord
 from lilavel_contracts import ToolResultStatus
-from lilavel_core import ConversationCore, ConversationRuntime, ModelRuntime
+from lilavel_core import (
+    ApplicationToolSessionFactory,
+    ConversationCore,
+    ConversationRuntime,
+    ModelRuntime,
+    ModelRuntimeV3,
+)
 from lilavel_core.production_cognition import create_conversation
 from lilavel_runtime import (
     PRESENTATION_ABORT,
@@ -44,6 +50,7 @@ from .diagnostics import (
 )
 from .presenter import DEFAULT_EDIT_INTERVAL_S, ReplyPresenter
 from .semantic import DEFAULT_SEMANTIC_LOOKAHEAD_S, DEFAULT_SEMANTIC_MAX_TAIL_CHARS
+from .tool import DiscordToolSessionFactory
 from .transport import DiscordMessageSink, TransportMetrics, validate_edit_interval
 
 DISCORD_TOKEN_ENV: Final = "LILAVEL_DISCORD_BOT_TOKEN"
@@ -167,6 +174,7 @@ class _DiscordEnvironment:
         self._semantic_max_tail_chars = semantic_max_tail_chars
         self._dedupe = _MessageIdDeduplicator(dedupe_capacity)
         self._subjects: dict[str, _OpaqueConversationIdentity] = {}
+        self._subject_channels: dict[str, Any] = {}
         self._routes: dict[str, Any] = {}
         self._presentations: dict[str, _PendingPresentation] = {}
         self._submit: EventSubmitter | None = None
@@ -231,6 +239,7 @@ class _DiscordEnvironment:
         channel = message.channel
         channel_key = str(channel.id)
         subject = self._subjects.setdefault(channel_key, _OpaqueConversationIdentity())
+        self._subject_channels[subject.value] = channel
         event_id = str(uuid4())
         self._routes[event_id] = channel
         try:
@@ -249,6 +258,9 @@ class _DiscordEnvironment:
     def subject_for_channel(self, channel_id: object) -> str | None:
         identity = self._subjects.get(str(channel_id))
         return None if identity is None else identity.value
+
+    def channel_for_subject(self, subject: str) -> Any | None:
+        return self._subject_channels.get(subject)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         try:
@@ -388,6 +400,7 @@ class _DiscordEnvironment:
 RuntimeFactory = Callable[[], ConversationRuntime]
 CoreFactory = Callable[[ConversationRuntime], ConversationCore]
 MessageFilter = Callable[[Any], bool]
+ToolRuntimeFactory = Callable[[Any, ApplicationToolSessionFactory], ConversationRuntime]
 
 
 class DiscordTextEdge:
@@ -399,6 +412,8 @@ class DiscordTextEdge:
         client: discord.Client | None = None,
         runtime_factory: RuntimeFactory = ModelRuntime,
         core_factory: CoreFactory = create_conversation,
+        tool_enabled: bool = False,
+        tool_runtime_factory: ToolRuntimeFactory | None = None,
         message_filter: MessageFilter = is_direct_message,
         token_provider: Callable[[], str | None] = read_discord_token,
         edit_interval_s: float = DEFAULT_EDIT_INTERVAL_S,
@@ -412,6 +427,8 @@ class DiscordTextEdge:
     ) -> None:
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
+        if type(tool_enabled) is not bool:
+            raise TypeError("tool_enabled must be a bool")
         validate_edit_interval(edit_interval_s)
         validate_edit_interval(semantic_lookahead_s)
         if isinstance(semantic_max_tail_chars, bool) or semantic_max_tail_chars <= 0:
@@ -429,11 +446,6 @@ class DiscordTextEdge:
             attach_http_trace(resolved_client, diagnostics)
         self._client = resolved_client
         self._semantic_streaming = semantic_streaming
-        self._router = CoreConversationRouter(
-            runtime_factory=runtime_factory,
-            core_factory=core_factory,
-            close_timeout_s=close_timeout_s,
-        )
         self._environment = _DiscordEnvironment(
             client=resolved_client,
             message_filter=message_filter,
@@ -445,6 +457,46 @@ class DiscordTextEdge:
             semantic_streaming=semantic_streaming,
             semantic_lookahead_s=semantic_lookahead_s,
             semantic_max_tail_chars=semantic_max_tail_chars,
+        )
+
+        tool_factories: dict[int, DiscordToolSessionFactory] = {}
+
+        def route_runtime_factory(route_key: tuple[str, str]) -> ConversationRuntime:
+            channel = self._environment.channel_for_subject(route_key[1])
+            if channel is None:
+                raise RuntimeError("trusted Discord DM scope is unavailable")
+            if tool_runtime_factory is None:
+                factory = DiscordToolSessionFactory(
+                    channel,
+                    asyncio.get_running_loop(),
+                )
+                runtime = ModelRuntimeV3(tool_session_factory=factory)
+            else:
+                factory = DiscordToolSessionFactory(
+                    channel,
+                    asyncio.get_running_loop(),
+                )
+                runtime = tool_runtime_factory(channel, factory)
+            tool_factories[id(runtime)] = factory
+            return runtime
+
+        def configure_tool_runtime(
+            runtime: ConversationRuntime,
+            core: ConversationCore,
+            route_key: tuple[str, str],
+        ) -> None:
+            del route_key
+            factory = tool_factories.pop(id(runtime), None)
+            if factory is None:
+                raise RuntimeError("tool runtime was not created by trusted composition")
+            factory.bind_scope(core.scope_id)
+
+        self._router = CoreConversationRouter(
+            runtime_factory=runtime_factory,
+            route_runtime_factory=route_runtime_factory if tool_enabled else None,
+            core_factory=core_factory,
+            session_configurator=configure_tool_runtime if tool_enabled else None,
+            close_timeout_s=close_timeout_s,
         )
         self._runtime = LilavelRuntime(
             wake_policy=DirectMessageWakePolicy(),

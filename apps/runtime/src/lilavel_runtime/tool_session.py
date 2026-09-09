@@ -52,6 +52,10 @@ _SAFE_REASON_CODES = frozenset(
         "executor_timeout",
         "executor_failed",
         "invalid_executor_result",
+        "discord_preflight_failed",
+        "discord_rejected",
+        "discord_delivery_unknown",
+        "cancelled_before_send",
     }
 )
 

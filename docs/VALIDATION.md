@@ -123,7 +123,10 @@ uv run --locked pytest
 
 These checks cover the replaceable DM adapter, the complete
 `WorldEvent → runtime → Core → action` path, deterministic presenter,
-transport, diagnostics, scenario runner, supersession, and semantic streaming.
+transport, diagnostics, scenario runner, supersession, semantic streaming, and
+the explicit P4-D registry/authorization/one-shot Discord executor proof with
+fake transport. They do not imply live provider selection or live Discord
+delivery.
 
 ### Shared protocol boundary
 
@@ -156,6 +159,10 @@ must be reported separately from deterministic checks:
   `uv run --locked python scripts/transport_probe.py`.
 - Discord Stage B Core-backed adapter: from `apps/discord-adapter`,
   `uv run --locked python scripts/run_edge.py`.
+- P4-D scoped provider-backed Discord proof: only through an explicitly
+  enabled test composition and one admitted test DM; this is not a default
+  package command and must be recorded separately from D1 deterministic
+  evidence.
 
 Discord probes require the supported `LILAVEL_DISCORD_BOT_TOKEN` mechanism and
 an actual Discord interaction. Missing credentials produce `BLOCKED`, not live

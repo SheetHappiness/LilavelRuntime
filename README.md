@@ -11,7 +11,7 @@ implemented.
 Lilavel's top-level runtime owns persistent process lifecycle, bounded
 world-event ingress, registered environment tasks, deterministic explicit-DM
 wake/routing, Core conversation-session lifecycle, and typed environment
-presentation actions. Autonomous scheduling, model-selected tools,
+presentation actions. Autonomous scheduling, production model-selected tools,
 attention/decision, and cross-environment state remain deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
@@ -62,8 +62,9 @@ Discord one-to-one DM
   local protocol, authentication, provider mapping, cleanup, and Bun details
   are documented in its [component README](apps/model-sidecar/README.md).
 - `apps/discord-adapter` is a DM-only replaceable environment adapter. It owns
-  Discord admission, delivery, presentation pacing, and edge-local metadata;
-  it does not own identity, memory, or canonical conversation state.
+  Discord admission, delivery, presentation pacing, edge-local metadata, and
+  the explicitly opt-in P4-D scoped tool executor; it does not own identity,
+  memory, or canonical conversation state.
 
 The default Core store is in-memory for deterministic ephemeral callers.
 Restart-safe conversation history requires an explicit file-backed SQLite store
@@ -100,6 +101,8 @@ prerequisite is reported as `BLOCKED`, not as a migration failure.
 ## Explicitly deferred
 
 The current runtime does not add a scheduler, autonomous model wake loop,
-attention policy, world model, model-selected tool execution, MCP integration,
-voice/guild behavior, retrieval, or memory semantics. Each remains future
-scope requiring an explicit decision and validation.
+attention policy, world model, production model-selected tool activation, MCP
+integration, voice/guild behavior, retrieval, or memory semantics. P4-D proves
+only one explicitly composed, trusted-DM Discord send boundary; it is not a
+default production capability. Each broader capability remains future scope
+requiring an explicit decision and validation.

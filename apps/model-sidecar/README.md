@@ -114,8 +114,8 @@ the continuation.
 Each provider turn has a fresh raw-call collector. `tool_calls` is emitted only
 after that provider turn and its iterator/result cleanup settle. Cleanup failure
 outranks cancellation, preserves its safe failure code, and poisons reuse. The
-sidecar never authorizes or executes the tool, and no Discord model-selected
-action is exposed by this phase.
+sidecar never authorizes or executes a tool; P4-D's single Discord capability is
+exposed and bound only by the application adapter's trusted composition.
 
 When Core launches the host on Windows, it starts the default `npx` launcher
 with `CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP`, verifies Job Object
