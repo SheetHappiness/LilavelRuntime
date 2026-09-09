@@ -4,6 +4,7 @@ import {
   type AssistantMessage,
   type Context,
   type Model,
+  type ToolChoice,
 } from "@oh-my-pi/pi-ai";
 import { discoverAuthStorage } from "@oh-my-pi/pi-ai/auth-broker";
 import { getBundledModel } from "@oh-my-pi/pi-catalog";
@@ -30,8 +31,15 @@ export interface PiToolProvider {
   close(): void;
 }
 
+export interface PiToolProviderOptions {
+  /** Harness-only override; the ordinary provider path leaves tool choice unset. */
+  readonly requireToolOnFirstTurn?: boolean;
+}
+
 /** Build the inactive V3 provider boundary using supported auth discovery only. */
-export async function createPiToolProvider(): Promise<PiToolProvider> {
+export async function createPiToolProvider(
+  options: PiToolProviderOptions = {},
+): Promise<PiToolProvider> {
   const auth: AuthStorageLike = await discoverAuthStorage();
   const model = getBundledModel<"openai-codex-responses">(PROVIDER, MODEL_ID);
   if (model.provider !== PROVIDER || model.id !== MODEL_ID || model.api !== API) {
@@ -40,7 +48,7 @@ export async function createPiToolProvider(): Promise<PiToolProvider> {
   }
 
   const run: ProviderTurn = async (context, signal, hooks) =>
-    runTurn(auth, model, context, signal, hooks);
+    runTurn(auth, model, context, signal, hooks, options);
   return {
     provider: PROVIDER,
     modelId: MODEL_ID,
@@ -56,17 +64,22 @@ async function runTurn(
   context: Context,
   signal: AbortSignal,
   hooks: ProviderTurnHooks,
+  options: PiToolProviderOptions,
 ): Promise<AssistantMessage> {
   const apiKey: ApiKeyResolver = auth.resolver(PROVIDER, {
     modelId: model.id,
     baseUrl: model.baseUrl,
   });
-  const stream = streamSimple(model, context, {
+  const streamOptions = {
     apiKey,
     signal,
     preferWebsockets: false,
     onSseEvent: hooks.onSseEvent,
-  }) as ResultBearingStream;
+    ...(toolChoiceForTurn(context, options) !== undefined
+      ? { toolChoice: toolChoiceForTurn(context, options) }
+      : {}),
+  };
+  const stream = streamSimple(model, context, streamOptions) as ResultBearingStream;
   const iterator = stream[Symbol.asyncIterator]();
   let message: AssistantMessage | undefined;
   let failure: unknown;
@@ -94,6 +107,18 @@ async function runTurn(
   }
   if (failure) throw failure;
   return message as AssistantMessage;
+}
+
+export function toolChoiceForTurn(
+  context: Context,
+  options: PiToolProviderOptions,
+): ToolChoice | undefined {
+  if (options.requireToolOnFirstTurn && !hasToolResult(context)) return "required";
+  return undefined;
+}
+
+function hasToolResult(context: Context): boolean {
+  return context.messages.some((message) => message.role === "toolResult");
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
