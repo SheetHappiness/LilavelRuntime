@@ -199,6 +199,30 @@ Gate 2 was stopped at its required inbound-scope boundary. No Discord send,
 ambiguous effect, provider tool call, ToolResult continuation, or live
 canonical-history mutation occurred.
 
+### Current Gate 2-only retry
+
+Date: `2026-09-09`, Linux, working tree `main`.
+
+- `PASS` — a boolean-only shell check found
+  `LILAVEL_DISCORD_BOT_TOKEN` present. The value was not printed, copied,
+  persisted, or passed through diagnostic output.
+- `PASS` — the existing explicit `DiscordTextEdge(tool_enabled=True)`
+  composition imported and was constructed for the bounded listener. No
+  global tool registry or V3 default activation was changed.
+- `BLOCKED` — the bounded listener exited without admitting a user-authored
+  one-to-one DM. No trusted inbound scope, Core session, or V3 generation was
+  established.
+- `PASS` — live Discord send attempts: `0`; no destination, model arguments,
+  mention-bearing payload, or delivery outcome was created.
+- `UNVERIFIED` — live provider selection of `discord.send_message`, exact
+  `{text}` model arguments, P4-A raw correspondence, ToolResult return,
+  same-generation continuation, final completion, and live history separation;
+  these require an admitted trusted DM and were not run.
+
+Required user action to resume Gate 2: send exactly one user-authored
+one-to-one DM to the Lilavel bot, then rerun this Gate 2 proof. No Discord or
+user IDs may be supplied to or hardcoded by the runner.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
