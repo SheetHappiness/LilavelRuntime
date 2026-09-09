@@ -4,7 +4,7 @@ Status: `BLOCKED`
 Baseline branch: `main`
 Baseline SHA: `3cfed30115820e7af32198008e52a858d0586567`
 Implementation branch: `main`
-Implementation SHA: `44e29c3` (harness/evidence continuation)
+Implementation SHA: `44e29c3` (harness/evidence continuation; post-run audit)
 
 ## Goal
 
@@ -496,6 +496,52 @@ message body, credential, or Discord ID was logged):
   lifecycle records. This did not create an additional Discord attempt and
   did not induce an ambiguous delivery.
 
+### Read-only post-run canonical-history audit
+
+Date: `2026-09-09`, Linux. No provider process, Discord client, external
+effect, or persistence write was started for this audit.
+
+- PASS — the existing live-proof harness constructs `ConversationCore` without
+  a `store` argument. The Core constructor therefore selects the repository
+  default `SQLiteConversationStore(":memory:")`; the harness does not provide
+  a filesystem path or export the store after the run.
+- PASS — the supported adapter history reader is process-local:
+  `DiscordTextEdge.conversation_history_for_channel()` delegates to the live
+  router session and Core's `history`. The router keeps sessions in an
+  in-process map; shutdown closes the session runtime and does not persist or
+  export its Core store.
+- PASS — read-only filesystem inspection found no SQLite database or other
+  live-proof persistence artifact, and no proof process remained from which
+  the process-local history could be queried. The recorded generation ID is
+  lifecycle evidence only and is not a recoverable Core scope or store.
+- PASS — source ordering establishes the invariant for any still-live run:
+  Core appends the accepted user message before starting generation, and
+  appends the assistant only in `commit_assistant()` before emitting
+  `ConversationCompleted`. ToolCall and ToolResult are not Core canonical
+  message types; the SQLite schema permits only `user` and `assistant` roles.
+- PASS — deterministic history-isolation evidence remains authoritative:
+  the explicit fake-tool round records only the accepted user and final
+  assistant `ContextMessage`s, with no ToolCall/ToolResult transcript; the
+  explicit Discord composition keeps the destination in the bound adapter
+  and the trusted guidance separate from Core history.
+- UNVERIFIED — this specific live run's accepted user ContextMessage, final
+  assistant completion, absence of ToolCall/ToolResult, and absence of Discord
+  destination/ID metadata cannot be recovered from persisted state because
+  the only store was in-memory and the wrapper emitted no history snapshot.
+  No IDs, message bodies, provider payloads, or trusted guidance were
+  reconstructed or manufactured.
+- PASS — the wrapper `RuntimeError` is mechanically downstream of the safe
+  provider/tool records: the harness waits through `edge.wait_idle()`, whose
+  only live failure branch raises when the runtime has a recorded kernel or
+  route failure. The snapshot already contained provider terminal
+  `completed`, executor settlement, confirmed ToolResult, and same-generation
+  result consumption. No second attempt occurred.
+- UNVERIFIED — the exact child route/presentation exception and whether Core's
+  assistant commit had completed before that route failure were not retained.
+  The wrapper exception has no code path that deletes or rolls back canonical
+  messages, but the post-run in-memory state is unavailable, so its actual
+  assistant-commit outcome cannot be claimed.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
@@ -520,7 +566,8 @@ message body, credential, or Discord ID was logged):
   Discord delivery was induced.
 - Canonical history boundary: `PASS` under deterministic composition and the
   `NEW-5` live non-tool turn; final live tool metadata separation is
-  `UNVERIFIED` because the wrapper failed before emitting its history
+  `UNVERIFIED` because the post-run audit confirmed that the completed harness
+  used an in-memory store and the wrapper failed before emitting its history
   assertion.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
@@ -568,11 +615,14 @@ The provider-selection portion of Gate 2 is now `PASS`: the pinned
 subscription path delivered and finalized a native ToolCall when tool choice
 was explicitly required. The second final action proves the provider/tool,
 raw correspondence, authorization, one confirmed send, same-generation
-ToolResult submission, continuation, and final completion gates `PASS`. Overall
-Gate 2 remains `BLOCKED` because the wrapper-level capture failed and the live
-canonical-history snapshot is `UNVERIFIED`; no additional send is permitted
-without a new explicit user-directed run. Live cancellation/supersession and
-Windows evidence remain explicitly unverified.
+ToolResult submission, continuation, and final completion gates `PASS`. The
+read-only post-run audit could not recover the run's process-local canonical
+history, so the live history boundary remains `UNVERIFIED`. Overall Gate 2
+therefore remains `BLOCKED` under the written exit gate; deterministic
+history-isolation evidence is sufficient for the implementation invariant but
+does not silently substitute for the required live-history evidence. No
+additional send is permitted merely to collect that missing snapshot. Live
+cancellation/supersession and Windows evidence remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful
