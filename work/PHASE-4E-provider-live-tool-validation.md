@@ -579,6 +579,33 @@ change.
   tests, the existing presenter-failure `wait_idle()` regression, the explicit
   tool composition regression, and `git diff --check`.
 
+### Final Gate 2 live-proof preparation run (no DM admitted)
+
+Date: `2026-09-09`, Linux. No provider turn or Discord send was executed.
+
+- PASS — boolean-only preflight found `LILAVEL_DISCORD_BOT_TOKEN` present; its
+  value was not printed, copied, persisted, or included in diagnostics.
+- PASS — the prepared harness started from the adapter project context with
+  the existing explicit `DiscordTextEdge(tool_enabled=True)` composition and
+  harness-only first-turn `toolChoice=required`. Production V2/no-tool and
+  default V3 `tool_choice=auto` behavior were unchanged.
+- BLOCKED — the bounded listener admitted no user-authored one-to-one DM, so
+  no trusted inbound scope, Core session, generation, or provider turn was
+  established. The harness ended with `TimeoutError` at the `wait_idle` phase;
+  its safe snapshot contained zero tool factories and no Core session.
+- PASS — Discord send-attempt count: `0`; no ToolCall, authorization decision,
+  executor settlement, ToolResult, provider continuation, final completion, or
+  delivery effect was created. No retry occurred.
+- UNVERIFIED — live raw correspondence, authorization, destination binding,
+  ToolResult status/effect, generation/epoch/round correlation, provider
+  continuation, final completion, terminal runtime/presentation outcome, and
+  post-run canonical-history audit. These claims require an admitted trusted
+  DM and were not inferred from the timeout.
+- PASS — the harness preserved the failure classification safely: the emitted
+  result was `status=BLOCKED`, `reason=lifecycle_or_teardown_error`, with no
+  exception message or sensitive data recorded. No implementation or
+  persistence change was made by this run.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:

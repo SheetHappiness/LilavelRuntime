@@ -318,8 +318,7 @@ def _read_history_audit(
     )
     roles_are_canonical = all(message.role in {"user", "assistant"} for message in messages)
     evidence_is_canonical = all(
-        record.provenance_kind in {"canonical_user", "canonical_assistant"}
-        for record in evidence
+        record.provenance_kind in {"canonical_user", "canonical_assistant"} for record in evidence
     )
     guidance_metadata_free = not any(
         metadata_name in text.lower()
