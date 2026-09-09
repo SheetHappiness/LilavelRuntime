@@ -36,7 +36,9 @@ generation, validates and authorizes calls through injected deterministic
 decisions, executes a batch sequentially in provider order, and creates bounded
 `ToolResult` values. Cancellation is rechecked before every call. Executor
 timeout and containment are explicit; an executor that ignores bounded
-cancellation is `uncontained` and must poison the consuming model runtime.
+cancellation is `uncontained` and must poison the consuming model runtime. A
+contained per-call timeout produces `timed_out` for that call without cancelling
+the session, so the exact ordered batch and later legal rounds can still settle.
 
 Session evidence contains only generation/epoch/round/call correlation and safe
 lifecycle/status/effect codes. It excludes raw arguments, raw results, provider
