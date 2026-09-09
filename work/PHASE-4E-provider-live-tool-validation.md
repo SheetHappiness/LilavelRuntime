@@ -3,8 +3,8 @@
 Status: `BLOCKED`
 Baseline branch: `main`
 Baseline SHA: `3cfed30115820e7af32198008e52a858d0586567`
-Implementation branch: `phase4e-provider-live-hardening`
-Implementation SHA: `evidence-only; recorded by the phase commit`
+Implementation branch: `main`
+Implementation SHA: `44e29c3` (harness/evidence continuation)
 
 ## Goal
 
@@ -15,11 +15,12 @@ fencing, and unchanged default V2/no-tool behavior.
 
 ## Scope and implementation outcome
 
-This was an evidence-only phase on Linux. No production code, tool capability,
-default activation, provider transport, or Discord behavior was changed. The
+This was a Linux validation phase. No production/default activation, provider
+transport, or Discord behavior was changed. A harness-only first-turn
+`toolChoice=required` launcher and its deterministic regression test were
+added; the ordinary V2/V3 entry points retain their existing defaults. The
 existing deterministic seams were audited against the P4-E adversarial matrix
-and the authoritative validation matrix was rerun. No deterministic gap
-requiring a code or test patch was found.
+and the authoritative validation matrix was rerun.
 
 The configured live path is the repository-pinned model-sidecar provider
 composition:
@@ -456,6 +457,45 @@ and only post-harness live interaction; no retry was made.
   final provider completion, and live canonical-history separation. The
   deterministic equivalents remain `PASS`.
 
+### Second final Gate 2 live-proof action
+
+Date: `2026-09-09`, Linux. This was a new controlled DM run after the explicit
+user request to continue; it is not a retry after an ambiguous delivery. The
+run-specific marker was generated in trusted guidance and was not emitted in
+diagnostics.
+
+The harness wrapper returned `FAIL` with `RuntimeError` after the provider
+generation had completed. Its safe snapshot nevertheless captured the
+following authoritative lifecycle evidence (no provider payload, arguments,
+message body, credential, or Discord ID was logged):
+
+- PASS — boolean-only token preflight: present.
+- PASS — explicit composition: one exposed tool, exactly
+  `discord.send_message`; tool choice was `required` on the first harness
+  turn only. Production V2/no-tool and default V3 `auto`/unset behavior were
+  unchanged.
+- PASS — exactly one finalized tool-call admission: `call_count=1`,
+  generation `a2ad59a3-a21c-4dfb-8864-2b989ef00dd6`, `epoch=1`, `round=1`.
+  The exposed application name was `discord.send_message`; the provider
+  alias remains transport-local.
+- PASS — P4-A raw-argument correspondence: `pass`.
+- PASS — application authorization: `allowed`; destination remained the
+  trusted application-bound channel and was not a model argument.
+- PASS — exact Discord tool send-attempt count: `1`; executor settlement:
+  `settled`; no retry occurred.
+- PASS — ToolResult status/effect: `ok` / `confirmed`.
+- PASS — ToolResult submission: one `result_consumed` record for the same
+  generation `a2ad59a3-a21c-4dfb-8864-2b989ef00dd6`, `epoch=1`, `round=1`.
+- PASS — provider continuation and final provider completion: the same
+  generation emitted post-tool `text_delta` and terminal `completed`.
+- UNVERIFIED — live canonical-history snapshot from this run: the wrapper
+  failed before its final history assertion emitted. The deterministic
+  explicit composition and prior live non-tool history evidence remain
+  `PASS`; no claim is made that the missing snapshot was captured here.
+- FAIL — wrapper-level final capture: `RuntimeError` after the above safe
+  lifecycle records. This did not create an additional Discord attempt and
+  did not induce an ambiguous delivery.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
@@ -466,22 +506,22 @@ and only post-harness live interaction; no retry was made.
   with the same pinned provider/model/API and explicit `toolChoice=required`
   finalized exactly one native `discord_send_message` ToolCall. This probe
   stopped before any application or Discord execution.
-- Live raw-argument/call-ID correspondence: `UNVERIFIED`; the final harness
-  stopped before its safe capture, while deterministic correspondence remains
-  `PASS`.
-- Live same-generation ToolResult continuation: `UNVERIFIED`; the final
-  harness stopped before recording the submission, and the interaction is not
-  retried because its external effect is `unknown`.
+- Live raw-argument/call-ID correspondence: `PASS` for the second final action;
+  the safe snapshot recorded `raw_correspondence=pass` on the one admitted
+  call.
+- Live same-generation ToolResult continuation: `PASS` for the second final
+  action; one result was consumed at the matching generation/epoch/round.
 - Live ordinary final completion: `PASS` for `NEW-5`; live tool-path final
-  completion: `UNVERIFIED`.
+  completion: `PASS` for the second final action.
 - Live provider-backed contained error-result continuation: `UNVERIFIED`; no
   safe live V3 turn was available and no extra external effect was created.
 - Real-provider cancellation/supersession: `UNVERIFIED`; existing
   deterministic P4-B/P4-D evidence remains authoritative. No ambiguous live
   Discord delivery was induced.
 - Canonical history boundary: `PASS` under deterministic composition and the
-  `NEW-5` live non-tool turn; the final live tool metadata separation is
-  `UNVERIFIED` because the harness did not emit its capture record.
+  `NEW-5` live non-tool turn; final live tool metadata separation is
+  `UNVERIFIED` because the wrapper failed before emitting its history
+  assertion.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
   opt-in only.
@@ -508,6 +548,9 @@ and only post-harness live interaction; no retry was made.
   (`92 passed`, 10 upstream deprecation warnings).
 - `PASS` — sidecar frozen Bun 1.4.0 install, TypeScript check, and full tests
   (`92 passed`).
+- `PASS` — final harness continuation validation: sidecar TypeScript check and
+  focused tool-loop/transport/provider-choice tests (`15 passed`); Discord
+  harness lint/format checks passed.
 - `PASS` — docs integrity, architecture guard, and `git diff --check`.
 
 ## Production state and ADR
@@ -523,12 +566,12 @@ Gate 1 is closed `PASS`: supported auth discovery, actual provider contact,
 normal completion, and clean provider/sidecar settlement were all observed.
 The provider-selection portion of Gate 2 is now `PASS`: the pinned
 subscription path delivered and finalized a native ToolCall when tool choice
-was explicitly required. Overall Gate 2 remains `BLOCKED`: one final
-application-bound trusted DM was admitted, but the harness ended before
-authoritative redacted lifecycle capture; its possible external effect is
-`unknown`, so the one-shot rule forbids retry. Live raw correspondence,
-authorization, ToolResult status/effect, continuation, tool-path final
-completion, live tool metadata separation, live cancellation/supersession, and
+was explicitly required. The second final action proves the provider/tool,
+raw correspondence, authorization, one confirmed send, same-generation
+ToolResult submission, continuation, and final completion gates `PASS`. Overall
+Gate 2 remains `BLOCKED` because the wrapper-level capture failed and the live
+canonical-history snapshot is `UNVERIFIED`; no additional send is permitted
+without a new explicit user-directed run. Live cancellation/supersession and
 Windows evidence remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
