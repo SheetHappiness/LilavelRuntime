@@ -4,7 +4,7 @@ Status: `BLOCKED`
 Baseline branch: `main`
 Baseline SHA: `3cfed30115820e7af32198008e52a858d0586567`
 Implementation branch: `main`
-Implementation SHA: `3aa6f65` (harness/evidence continuation; post-run audit)
+Implementation SHA: `5e1be43` (harness/evidence continuation; post-run audit)
 
 ## Goal
 
