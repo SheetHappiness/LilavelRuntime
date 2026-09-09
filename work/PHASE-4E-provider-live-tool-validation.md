@@ -40,8 +40,9 @@ provider payloads were not persisted or recorded.
   `main`.
 - A dedicated task worktree was created from that exact baseline on
   `phase4e-provider-live-hardening`.
-- `LILAVEL_DISCORD_BOT_TOKEN` was absent from this Work environment. The token
-  value was never printed, copied, or persisted.
+- In the original blocked run, `LILAVEL_DISCORD_BOT_TOKEN` was absent from
+  that Work environment. The token value was never printed, copied, or
+  persisted.
 
 ## Deterministic inherited and hardening evidence
 
@@ -88,23 +89,71 @@ This result is not treated as tool-selection, continuation, Discord, or
 provider-entitlement evidence. No provider-native payload, request text, or
 credential value is recorded.
 
+## Credentialed retry and cleanup-error root cause
+
+Retry date: `2026-09-09`, Linux, canonical `main` at
+`653e316a83f5a2f0b9d130c1c7795d832e01adba`.
+
+- `PASS` — repository-locked dependency preparation completed with
+  `apps/model-sidecar: npx --yes bun@1.4.0 install --frozen-lockfile`.
+  The local graph resolved the pinned `@oh-my-pi/pi-ai@18.1.2` and
+  `@oh-my-pi/pi-catalog@18.1.2` packages and their Linux native addon.
+- `FAIL` — the exact smoke command was rerun after that preparation:
+
+  ```text
+  apps/model-sidecar: npx --yes bun@1.4.0 run smoke -- "Reply exactly P4E_PROVIDER_AUTH_OK."
+  ```
+
+  It exited `1` and emitted only the safe sequence `ready`,
+  `request_received`, `provider_dispatch`, `error(code=cleanup_error)`.
+  No provider first-event, completion, or V3 tool turn was observed.
+- `PASS` — a temporary direct stream probe using only safe metadata showed
+  `iterator.next()` rejected with `MissingApiKeyError`; `iterator.return()`
+  fulfilled; and `stream.result()` rejected with `MissingApiKeyError`.
+  Supported auth discovery reported no configured broker, no active
+  `openai-codex` credential, and no disabled `openai-codex` credential. The
+  provider endpoint was therefore not reached.
+- `PASS` — the `cleanup_error` was root-caused as error masking in the
+  existing sidecar lifecycle: `ModelSidecar.#cleanup()` waits on both
+  `iterator.return()` and pi-ai `stream.result()` and maps any rejection to
+  `cleanup_error`, overwriting the original provider/auth failure. The
+  `provider_dispatch` event is emitted before the lazy auth/provider stream
+  produces its first event, so it is not provider-contact evidence.
+- `PASS` — the retry preflight boolean check found
+  `LILAVEL_DISCORD_BOT_TOKEN` present; its value was not printed, copied, or
+  persisted. This is not live Discord evidence and is not the post-provider
+  gate, which was not reached.
+
+The first unrestricted launcher attempt before local installation failed
+before sidecar startup because transient `npx` resolution selected
+`@oh-my-pi/pi-natives@18.1.15` without its Linux native addon. That launcher
+failure is separate from the reproduced P4-E `cleanup_error`; installing the
+repository lockfile removed that local setup obstruction without changing
+tracked files.
+
 ## Real Discord evidence
 
-`BLOCKED` — `LILAVEL_DISCORD_BOT_TOKEN` was missing from the Work environment.
-Consequently, the normal admitted one-to-one DM scope could not be established,
-the explicit P4-D tool-enabled composition was not launched, and no live
-Discord send was attempted. There is therefore no live attempt count,
-destination confirmation, `ok/confirmed` effect, or live ToolResult
+Prior run: `BLOCKED` — `LILAVEL_DISCORD_BOT_TOKEN` was missing from the Work
+environment. Consequently, the normal admitted one-to-one DM scope could not
+be established, the explicit P4-D tool-enabled composition was not launched,
+and no live Discord send was attempted. There is therefore no live attempt
+count, destination confirmation, `ok/confirmed` effect, or live ToolResult
 continuation to claim.
 
 The deterministic P4-D proof remains `PASS`: its bound fake DM executor makes
 one send attempt at most, suppresses mentions, maps confirmed success to
 `ok/confirmed`, and never retries unknown delivery.
 
+On the 2026-09-09 retry, the required provider-V3 completion and clean
+settlement gate remained `BLOCKED`, so the post-provider token gate, trusted
+inbound DM admission, and `discord.send_message({text})` live proof were not
+run. Live Discord send attempts: `0`. No uncertain effect was created.
+
 ## Live lifecycle gates
 
 - Live provider tool definition delivery and provider selection:
-  `BLOCKED`/`UNVERIFIED`; no successful V3 provider turn.
+  `BLOCKED`; supported provider auth was unavailable and no successful V3
+  provider turn occurred.
 - Live raw-argument/call-ID correspondence: `UNVERIFIED`; deterministic
   correspondence remains `PASS`.
 - Live same-generation ToolResult continuation and final completion:
@@ -153,10 +202,12 @@ V2/no-tool.
 
 ## Remaining unknowns and exit gate
 
-The missing Discord credential and failed provider smoke leave the required
-provider-backed selection, same-generation continuation, and real Discord
-effect gates open. Live cancellation/supersession and Windows evidence also
-remain explicitly unverified.
+The unavailable supported provider credential and failed provider smoke leave
+the required provider-backed selection, same-generation continuation, and real
+Discord effect gates open. The retry observed the Discord token binding as
+present, but did not admit a DM scope or launch the tool composition because
+the provider gate remained blocked. Live cancellation/supersession and Windows
+evidence also remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful
