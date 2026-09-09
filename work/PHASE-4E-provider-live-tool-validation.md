@@ -4,7 +4,7 @@ Status: `BLOCKED`
 Baseline branch: `main`
 Baseline SHA: `3cfed30115820e7af32198008e52a858d0586567`
 Implementation branch: `main`
-Implementation SHA: `44e29c3` (harness/evidence continuation; post-run audit)
+Implementation SHA: `3aa6f65` (harness/evidence continuation; post-run audit)
 
 ## Goal
 
@@ -542,6 +542,43 @@ effect, or persistence write was started for this audit.
   messages, but the post-run in-memory state is unavailable, so its actual
   assistant-commit outcome cannot be claimed.
 
+### Live-proof harness hardening (final proof not executed)
+
+Date: `2026-09-09`, Linux. No provider turn or Discord send was run for this
+change.
+
+- PASS — the opt-in live proof now gives `ConversationCore` a task-owned
+  temporary filesystem SQLite path. It uses the existing
+  `SQLiteConversationStore` API and unchanged Core append/load semantics; the
+  path and database contents are not emitted in evidence.
+- PASS — evidence collection is in a `finally` path. It takes the redacted
+  lifecycle snapshot before teardown, records wait/close/start/store exception
+  types and cause types without exception text, closes the live store, then
+  reopens the SQLite file through repository-supported load-only calls.
+- PASS — an application exception remains `FAIL`; collection does not convert
+  a failed `edge.wait_idle()` or presentation/teardown failure into `PASS`.
+  A timeout remains `BLOCKED`.
+- PASS — `edge.wait_idle()` is a wrapper over the runtime's recorded kernel or
+  route failure; it is not itself a provider or Core terminal result. The
+  existing deterministic presenter sink-failure regression proves that a
+  presentation failure reaches this wrapper path. The harness now snapshots
+  Core runtime evidence so a future live run can distinguish completed Core
+  semantics from a post-provider presentation/router failure.
+- UNVERIFIED — the exact child failure for the already completed live run
+  remains unavailable: its earlier safe snapshot did not include Core runtime
+  evidence and its store was in-memory. The recorded provider completion rules
+  out neither a specific presentation child exception nor a Core assistant
+  commit for that historical process.
+- PASS — deterministic clean-completion and post-provider presentation-failure
+  harness tests both recover the closed SQLite history. They prove the
+  accepted user and required assistant are canonical, roles are limited to
+  `user`/`assistant`, ToolCall/ToolResult and Discord metadata are outside the
+  canonical schema, trusted guidance is separate, and the failure case remains
+  `FAIL` while still returning the history audit.
+- PASS — focused validation: harness Ruff, strict Pyright, two new harness
+  tests, the existing presenter-failure `wait_idle()` regression, the explicit
+  tool composition regression, and `git diff --check`.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
@@ -566,9 +603,8 @@ effect, or persistence write was started for this audit.
   Discord delivery was induced.
 - Canonical history boundary: `PASS` under deterministic composition and the
   `NEW-5` live non-tool turn; final live tool metadata separation is
-  `UNVERIFIED` because the post-run audit confirmed that the completed harness
-  used an in-memory store and the wrapper failed before emitting its history
-  assertion.
+  `UNVERIFIED` for the historical live tool run; the hardened harness is ready
+  to make this live assertion from a closed task-owned SQLite file.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
   opt-in only.
@@ -614,15 +650,16 @@ normal completion, and clean provider/sidecar settlement were all observed.
 The provider-selection portion of Gate 2 is now `PASS`: the pinned
 subscription path delivered and finalized a native ToolCall when tool choice
 was explicitly required. The second final action proves the provider/tool,
-raw correspondence, authorization, one confirmed send, same-generation
-ToolResult submission, continuation, and final completion gates `PASS`. The
-read-only post-run audit could not recover the run's process-local canonical
-history, so the live history boundary remains `UNVERIFIED`. Overall Gate 2
-therefore remains `BLOCKED` under the written exit gate; deterministic
-history-isolation evidence is sufficient for the implementation invariant but
-does not silently substitute for the required live-history evidence. No
-additional send is permitted merely to collect that missing snapshot. Live
-cancellation/supersession and Windows evidence remain explicitly unverified.
+  raw correspondence, authorization, one confirmed send, same-generation
+  ToolResult submission, continuation, and final completion gates `PASS`. The
+  read-only post-run audit could not recover the run's process-local canonical
+  history, so the live history boundary remains `UNVERIFIED` for that run.
+  Overall Gate 2 therefore remains `BLOCKED` under the written exit gate;
+  deterministic history-isolation evidence is sufficient for the
+  implementation invariant but does not silently substitute for the required
+  live-history evidence. The final live proof is prepared but was not executed
+  in this hardening change. Live cancellation/supersession and Windows
+  evidence remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful
