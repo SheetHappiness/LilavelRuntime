@@ -91,7 +91,7 @@ credential value is recorded.
 
 ## Credentialed retry and cleanup-error root cause
 
-Retry date: `2026-09-09`, Linux, canonical `main` at
+Earlier retry date: `2026-09-09`, Linux, canonical `main` at
 `653e316a83f5a2f0b9d130c1c7795d832e01adba`.
 
 - `PASS` — repository-locked dependency preparation completed with
@@ -131,6 +131,38 @@ failure is separate from the reproduced P4-E `cleanup_error`; installing the
 repository lockfile removed that local setup obstruction without changing
 tracked files.
 
+### Latest credentialed Gate 1 retry
+
+Retry date: `2026-09-09`, Linux, canonical `main` at `f090258`.
+
+- `BLOCKED` — the first exact smoke invocation in the restricted shell could
+  not resolve `registry.npmjs.org` (`npx` reported `EAI_AGAIN`) before Bun or
+  the sidecar started. It produced no live auth or provider evidence.
+- `PASS` — the exact supported smoke command was then rerun with the required
+  network access:
+
+  ```text
+  apps/model-sidecar: npx --yes bun@1.4.0 run smoke -- "Reply exactly P4E_PROVIDER_AUTH_OK."
+  ```
+
+  It exited `0` and emitted the safe lifecycle sequence `ready`,
+  `request_received`, `provider_dispatch`, `provider_first_event`,
+  `text_delta`, and `completed`.
+- `PASS` — `ready` reported the pinned composition
+  `openai-codex / gpt-5.6-luna / openai-codex-responses` after the sidecar's
+  supported auth-discovery/startup boundary completed.
+- `PASS` — `provider_first_event` with provider event type `start` proves the
+  lazy authenticated provider stream was contacted; this is stronger than
+  the pre-stream `provider_dispatch` marker.
+- `PASS` — the normal live completion was received with the requested safe
+  completion marker `P4E_PROVIDER_AUTH_OK` and terminal `textLength=20`.
+- `PASS` — the process exited successfully after the `completed` frame, with
+  no `cleanup_error` or `cleanup_timeout`; provider/sidecar settlement was
+  therefore clean for this smoke generation.
+
+This closes Gate 1. No provider payload, credential, header, or token was
+persisted.
+
 ## Real Discord evidence
 
 Prior run: `BLOCKED` — `LILAVEL_DISCORD_BOT_TOKEN` was missing from the Work
@@ -144,20 +176,40 @@ The deterministic P4-D proof remains `PASS`: its bound fake DM executor makes
 one send attempt at most, suppresses mentions, maps confirmed success to
 `ok/confirmed`, and never retries unknown delivery.
 
-On the 2026-09-09 retry, the required provider-V3 completion and clean
+On the earlier 2026-09-09 retry, the required provider-V3 completion and clean
 settlement gate remained `BLOCKED`, so the post-provider token gate, trusted
 inbound DM admission, and `discord.send_message({text})` live proof were not
 run. Live Discord send attempts: `0`. No uncertain effect was created.
 
+### Latest credentialed Gate 2 attempt
+
+- `PASS` — the adapter's supported boolean-only reader found
+  `LILAVEL_DISCORD_BOT_TOKEN` present. The value was not printed, copied, or
+  persisted. The restricted-shell preflight was `BLOCKED` by uv cache write
+  permissions; the escalated supported check completed successfully.
+- `PASS` — the existing explicit `DiscordTextEdge(tool_enabled=True)`
+  composition connected to Discord and reached the one-DM waiting state.
+  The default V2/no-tool launcher was not changed or globally enabled.
+- `BLOCKED` — during the bounded listener window no user-authored one-to-one
+  DM arrived, so the adapter admitted no trusted inbound scope and created no
+  Core session or V3 generation. The listener was stopped before any external
+  effect. Live Discord send attempts: `0`.
+
+Gate 2 was stopped at its required inbound-scope boundary. No Discord send,
+ambiguous effect, provider tool call, ToolResult continuation, or live
+canonical-history mutation occurred.
+
 ## Live lifecycle gates
 
+- Live non-tool provider auth, contact, completion, and clean settlement:
+  `PASS`; see the latest credentialed Gate 1 retry above.
 - Live provider tool definition delivery and provider selection:
-  `BLOCKED`; supported provider auth was unavailable and no successful V3
-  provider turn occurred.
+  `BLOCKED`; Gate 1 passed, but Gate 2 never admitted the required inbound DM
+  scope, so no V3 generation was launched.
 - Live raw-argument/call-ID correspondence: `UNVERIFIED`; deterministic
-  correspondence remains `PASS`.
+  correspondence remains `PASS`, but no live tool call reached the sidecar.
 - Live same-generation ToolResult continuation and final completion:
-  `BLOCKED`/`UNVERIFIED`.
+  `BLOCKED`/`UNVERIFIED`; no live V3 generation was launched.
 - Live provider-backed contained error-result continuation: `UNVERIFIED`; no
   safe live V3 turn was available and no extra external effect was created.
 - Real-provider cancellation/supersession: `UNVERIFIED`; existing
@@ -202,12 +254,14 @@ V2/no-tool.
 
 ## Remaining unknowns and exit gate
 
-The unavailable supported provider credential and failed provider smoke leave
-the required provider-backed selection, same-generation continuation, and real
-Discord effect gates open. The retry observed the Discord token binding as
-present, but did not admit a DM scope or launch the tool composition because
-the provider gate remained blocked. Live cancellation/supersession and Windows
-evidence also remain explicitly unverified.
+Gate 1 is closed `PASS`: supported auth discovery, actual provider contact,
+normal completion, and clean provider/sidecar settlement were all observed.
+Gate 2 remains `BLOCKED` solely because no user-authored one-to-one DM arrived
+to establish the required trusted scope. Consequently live V3 tool selection,
+raw correspondence, one authorized Discord send, same-generation ToolResult
+continuation, final completion, and live history behavior remain open or
+unverified. Live cancellation/supersession and Windows evidence also remain
+explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful
