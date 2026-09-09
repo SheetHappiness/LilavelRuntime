@@ -332,24 +332,75 @@ Date: `2026-09-09`, Linux, continuation from commit `82e64a1`.
   continuation, final completion, and live canonical-history separation;
   these require the admitted trusted DM scope.
 
+### Gate 2 live capture `NEW-4`
+
+Date: `2026-09-09`, Linux, continuation from commit `e7e90f8`.
+
+- PASS — boolean-only check found `LILAVEL_DISCORD_BOT_TOKEN` present; its
+  value was not printed, copied, persisted, or passed through diagnostics.
+- PASS — one explicit `DiscordTextEdge(tool_enabled=True)` listener was
+  started; ordinary activation defaults and P4-A–D boundaries were unchanged.
+- PASS — one inbound DM established the trusted one-to-one scope
+  (`session_count=1`).
+- FAIL — the live route failed at the adapter's
+  `conversation.presentation.complete` action with safe error type
+  `ValueError` before the listener's evidence snapshot executed. No raw
+  arguments, message body, Discord ID, provider payload, or exception body was
+  recorded.
+- UNVERIFIED — exact Discord send-attempt count, executor settlement,
+  ToolResult status/effect, raw correspondence, authorization,
+  generation/epoch/round correlation, ToolResult submission, provider
+  continuation, final completion, and live canonical-history separation;
+  the failed capture did not establish these fields.
+
+### Gate 2 live capture `NEW-5`
+
+Date: `2026-09-09`, Linux, continuation from commit `e7e90f8`.
+
+- PASS — boolean-only check found `LILAVEL_DISCORD_BOT_TOKEN` present; its
+  value was not printed, copied, persisted, or passed through diagnostics.
+- PASS — one bounded listener used the supported explicit
+  `DiscordTextEdge(tool_enabled=True)` composition. The exposed tool set was
+  exactly `discord.send_message`; defaults and P4-A–D invariants were
+  unchanged.
+- PASS — one new inbound DM established trusted one-to-one scope
+  (`session_count=1`).
+- PASS — one V3 generation was created and accepted with generation ID
+  `a2cd72d7-875b-4c83-95d0-6f93ce171d54`, epoch `1`; the physical trace then
+  reached `completed` and terminal `completed`.
+- PASS — provider continuation was not needed because no tool call was
+  selected; the ordinary non-tool generation reached final completion.
+- PASS — canonical history entry types were only `ContextMessage`, with no
+  `ToolCall` or `ToolResult` metadata.
+- PASS — exact Discord send-attempt count was `0`; no executor settlement,
+  ToolResult, delivery effect, or retry occurred.
+- UNVERIFIED — provider selection of `discord.send_message`, raw-argument
+  correspondence, authorization, ToolResult status/effect, same-generation
+  ToolResult submission/continuation, and live tool-path final completion.
+  The unique live DM did not exercise the requested tool path.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
   `PASS`; see the latest credentialed Gate 1 retry above.
-- Live provider tool definition delivery and provider selection:
-  `BLOCKED`; Gate 1 passed, but Gate 2 never admitted the required inbound DM
-  scope, so no V3 generation was launched.
+- Live provider tool definition delivery: `PASS` for `NEW-5`; the explicit
+  provider-facing tool set contained only `discord.send_message`.
+- Live provider tool selection: `UNVERIFIED`; the admitted `NEW-5` turn
+  completed without selecting the tool.
 - Live raw-argument/call-ID correspondence: `UNVERIFIED`; deterministic
   correspondence remains `PASS`, but no live tool call reached the sidecar.
-- Live same-generation ToolResult continuation and final completion:
-  `BLOCKED`/`UNVERIFIED`; no live V3 generation was launched.
+- Live same-generation ToolResult continuation: `UNVERIFIED`; `NEW-5` did not
+  select a tool and therefore did not submit a ToolResult.
+- Live ordinary final completion: `PASS` for `NEW-5`; live tool-path final
+  completion: `UNVERIFIED`.
 - Live provider-backed contained error-result continuation: `UNVERIFIED`; no
   safe live V3 turn was available and no extra external effect was created.
 - Real-provider cancellation/supersession: `UNVERIFIED`; existing
   deterministic P4-B/P4-D evidence remains authoritative. No ambiguous live
   Discord delivery was induced.
-- Canonical history boundary: `PASS` under the deterministic composition;
-  live history behavior is `UNVERIFIED` because no live tool run occurred.
+- Canonical history boundary: `PASS` under deterministic composition and the
+  `NEW-5` live non-tool turn; live tool metadata separation remains
+  `UNVERIFIED` because no live tool run occurred.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
   opt-in only.
