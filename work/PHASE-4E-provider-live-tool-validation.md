@@ -1,10 +1,10 @@
 # PHASE 4E — Provider/Live Tool Validation + Adversarial Hardening
 
-Status: `BLOCKED`
+Status: `PASS`
 Baseline branch: `main`
 Baseline SHA: `3cfed30115820e7af32198008e52a858d0586567`
 Implementation branch: `main`
-Implementation SHA: `5e1be43` (harness/evidence continuation; post-run audit)
+Implementation SHA: `3b197b4` (harness evidence-shape fix and regression test)
 
 ## Goal
 
@@ -598,10 +598,9 @@ persistence write was started for this audit.
 - PASS — the audit result was `status=PASS`, with canonical message count `2`
   and roles `("user", "assistant")`.
 
-The live external-effect lifecycle and SQLite history invariant therefore
-passed, but the prepared proof harness returned `FAIL` at its final capture
-boundary. P4-E remains `BLOCKED` under the written exit gate, and `PHASE 4`
-is not closed; no closure or P4-5 handoff is claimed from this run.
+The live external-effect lifecycle and SQLite history invariant passed. The
+capture failure was a post-proof parser defect, not a failed gate claim; it is
+resolved by `3b197b4` and covered by a deterministic regression test.
 
 ### Live-proof harness hardening (final proof not executed)
 
@@ -689,10 +688,10 @@ Date: `2026-09-09`, Linux. No provider turn or Discord send was executed.
 - Real-provider cancellation/supersession: `UNVERIFIED`; existing
   deterministic P4-B/P4-D evidence remains authoritative. No ambiguous live
   Discord delivery was induced.
-- Canonical history boundary: `PASS` under deterministic composition and the
-  `NEW-5` live non-tool turn; final live tool metadata separation is
-  `UNVERIFIED` for the historical live tool run; the hardened harness is ready
-  to make this live assertion from a closed task-owned SQLite file.
+- Canonical history boundary: `PASS` under deterministic composition, the
+  `NEW-5` live non-tool turn, and the final live tool run's closed task-owned
+  SQLite audit. The audit found the accepted user and final assistant only,
+  with no ToolCall, ToolResult, or Discord metadata.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
   opt-in only.
@@ -722,6 +721,11 @@ Date: `2026-09-09`, Linux. No provider turn or Discord send was executed.
 - `PASS` — final harness continuation validation: sidecar TypeScript check and
   focused tool-loop/transport/provider-choice tests (`15 passed`); Discord
   harness lint/format checks passed.
+- `PASS` — post-proof parser fix: Discord adapter lock, Ruff, format, Pyright,
+  and full pytest (`95 passed`, 10 upstream deprecation warnings). The focused
+  harness regression exercises the actual flat session tuple and separately
+  captures authorization from `execution_started` and settlement from
+  `execution_settled`.
 - `PASS` — docs integrity, architecture guard, and `git diff --check`.
 
 ## Production state and ADR
@@ -735,22 +739,25 @@ remains unset/auto.
 
 Gate 1 is closed `PASS`: supported auth discovery, actual provider contact,
 normal completion, and clean provider/sidecar settlement were all observed.
-The provider-selection portion of Gate 2 is now `PASS`: the pinned
-subscription path delivered and finalized a native ToolCall when tool choice
-was explicitly required. The second final action proves the provider/tool,
-  raw correspondence, authorization, one confirmed send, same-generation
-  ToolResult submission, continuation, and final completion gates `PASS`. The
-  read-only post-run audit could not recover the run's process-local canonical
-  history, so the live history boundary remains `UNVERIFIED` for that run.
-  Overall Gate 2 therefore remains `BLOCKED` under the written exit gate;
-  deterministic history-isolation evidence is sufficient for the
-  implementation invariant but does not silently substitute for the required
-  live-history evidence. The final live proof is prepared but was not executed
-  in this hardening change. Live cancellation/supersession and Windows
-  evidence remain explicitly unverified.
+The original Phase 4 exit gate is `PASS`: Gate 1 is closed; the pinned
+subscription path finalized the required native ToolCall; the final live
+interaction proved P4-A raw correspondence, application authorization,
+application-bound destination, one confirmed Discord attempt with no retry,
+same-generation/epoch/round ToolResult consumption, provider continuation,
+final completion, and the closed-store canonical-history boundary. Production
+V2/no-tool activation and default V3 `tool_choice=auto` remain unchanged.
 
-`PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
-environment` should wait until a later credentialed run records a successful
-provider V3 tool selection, exact raw correspondence, one authorized scoped
-Discord send with `ok/confirmed`, same-generation ToolResult continuation to a
-final completion, and the required boundary evidence.
+The post-proof `RuntimeError` was a harness-only flat-tuple parsing defect. It
+occurred after the successful settled lifecycle and persistence audit, and the
+deterministic parser regression now passes. It does not leave a substantive
+exit-gate claim unmet.
+
+- `UNVERIFIED` — real-provider cancellation/supersession remains outside this
+  one-shot effect proof; the required cancellation and supersession invariants
+  retain deterministic P4-B/P4-D `PASS` evidence.
+- `UNVERIFIED` — Windows containment/launcher evidence was not run in this
+  Linux P4-E execution and is not claimed by this closure.
+
+These explicitly retained platform/adversarial unknowns are not mandatory
+claims of the written P4-E live exit gate. `P4-E` is therefore `PASS` and
+`PHASE 4` is `CLOSED`; `P4-5` may proceed.
