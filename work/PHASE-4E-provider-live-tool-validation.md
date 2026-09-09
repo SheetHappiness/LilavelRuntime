@@ -379,14 +379,66 @@ Date: `2026-09-09`, Linux, continuation from commit `e7e90f8`.
   ToolResult submission/continuation, and live tool-path final completion.
   The unique live DM did not exercise the requested tool path.
 
+### Provider tool-selection root-cause probe
+
+Date: `2026-09-09`, Linux, read-only provider investigation after `NEW-5`.
+No Discord adapter, trusted DM scope, application executor, or Discord send was
+started.
+
+- PASS — the repository-pinned `@oh-my-pi/pi-ai@18.1.2` and
+  `@oh-my-pi/pi-catalog@18.1.2` source was inspected at the provider boundary.
+  `ToolLoopSidecar` maps the one application spec to one provider alias and
+  assigns it to `Context.tools`; the Codex Responses builder consumes that
+  field. The safe derived request summary contained one application tool, one
+  provider alias (`discord_send_message`), and one effective provider tool in
+  the Responses-Lite `additional_tools` item.
+- PASS — the exact effective pinned model/provider metadata was
+  `openai-codex / gpt-5.6-luna / openai-codex-responses`, with
+  `toolMode=code_mode_only`, `useResponsesLite=true`, and native tool-choice
+  support flags `supportsToolChoice=true`, `supportsForcedToolChoice=true`,
+  and `supportsNamedToolChoice=true`. The catalog's `supportsTools` value was
+  absent, which is the pinned catalog's positive/unspecified native-tool
+  signal, not an unsupported value.
+- PASS — the derived default request had effective `tool_choice=auto` and one
+  effective tool. The forced variant had effective `tool_choice=required` and
+  the same one effective tool. Responses-Lite moves the tool into
+  `additional_tools`; it does not drop the definition.
+- PASS — source inspection found no `toolMode` branch in the pinned pi-ai
+  Codex request builder. The observed provider-specific mode is catalog
+  metadata; the active pi-ai request behavior is governed by
+  `useResponsesLite`, `Context.tools`, and the optional `toolChoice` option.
+- PASS — one direct authenticated live selection probe used the supported auth
+  broker and `streamSimple` with exactly one ordinary function tool and
+  `toolChoice=required`. It did not instantiate the Discord adapter or call an
+  executor. Safe observed event classes were `start`, `toolcall_start`, nine
+  `toolcall_delta` events, `toolcall_end`, and `done`.
+- PASS — the live stream finalized exactly one ToolCall with provider alias
+  `discord_send_message`, ended with `done.reason=toolUse` and
+  `message.stopReason=toolUse`, and its provider result settled. This proves
+  native tool-call selection through the current subscription path and pinned
+  pi-ai API without creating an external effect.
+- PASS — the prior `NEW-5` no-call completion is mechanically explained by
+  the V3 provider adapter omitting `toolChoice`: its effective mode was
+  `auto`, so a normal text completion was valid even though the single tool
+  definition was delivered. No transport-loss or `code_mode_only` block was
+  observed.
+- PASS — no Discord tool execution occurred during this investigation; live
+  Discord send-attempt count remains `0` and no delivery effect was created.
+- UNVERIFIED — live raw-argument correspondence, application authorization,
+  ToolResult status/effect, same-generation continuation, final completion
+  after a ToolResult, and live canonical-history separation remain unverified
+  because this probe stopped immediately after provider ToolCall selection.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
   `PASS`; see the latest credentialed Gate 1 retry above.
 - Live provider tool definition delivery: `PASS` for `NEW-5`; the explicit
   provider-facing tool set contained only `discord.send_message`.
-- Live provider tool selection: `UNVERIFIED`; the admitted `NEW-5` turn
-  completed without selecting the tool.
+- Live provider tool selection: `PASS`; an isolated authenticated live probe
+  with the same pinned provider/model/API and explicit `toolChoice=required`
+  finalized exactly one native `discord_send_message` ToolCall. This probe
+  stopped before any application or Discord execution.
 - Live raw-argument/call-ID correspondence: `UNVERIFIED`; deterministic
   correspondence remains `PASS`, but no live tool call reached the sidecar.
 - Live same-generation ToolResult continuation: `UNVERIFIED`; `NEW-5` did not
@@ -440,12 +492,14 @@ V2/no-tool.
 
 Gate 1 is closed `PASS`: supported auth discovery, actual provider contact,
 normal completion, and clean provider/sidecar settlement were all observed.
-Gate 2 remains `BLOCKED` solely because no user-authored one-to-one DM arrived
-to establish the required trusted scope. Consequently live V3 tool selection,
-raw correspondence, one authorized Discord send, same-generation ToolResult
-continuation, final completion, and live history behavior remain open or
-unverified. Live cancellation/supersession and Windows evidence also remain
-explicitly unverified.
+The provider-selection portion of Gate 2 is now `PASS`: the pinned
+subscription path delivered and finalized a native ToolCall when tool choice
+was explicitly required. Overall Gate 2 remains `BLOCKED` because the
+application-bound trusted DM/send path was intentionally not rerun and no
+Discord effect or same-generation ToolResult continuation was attempted.
+Live raw correspondence, authorization, ToolResult status/effect, continuation,
+tool-path final completion, live tool metadata separation, live
+cancellation/supersession, and Windows evidence remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful
