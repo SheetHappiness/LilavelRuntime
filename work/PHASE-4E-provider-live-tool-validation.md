@@ -223,6 +223,34 @@ Required user action to resume Gate 2: send exactly one user-authored
 one-to-one DM to the Lilavel bot, then rerun this Gate 2 proof. No Discord or
 user IDs may be supplied to or hardcoded by the runner.
 
+### Current Gate 2 retry after inbound DM
+
+Date: `2026-09-09`, Linux, working tree `main`.
+
+- `PASS` — the boolean-only token check found
+  `LILAVEL_DISCORD_BOT_TOKEN` present; its value was not printed, copied, or
+  persisted.
+- `PASS` — one user-authored one-to-one DM established the trusted adapter
+  scope, created exactly one Core session, and launched the explicit
+  `tool_enabled=True` V3 composition. The default V2/no-tool path was not
+  changed or globally enabled.
+- `PASS` — the V3 lifecycle evidence contained one `execution_settled` record.
+  Because the explicit Discord registry exposes only `discord.send_message`,
+  this establishes that the admitted generation reached the exposed Discord
+  tool execution boundary.
+- `PASS` — the Core history boundary check observed two history entries with
+  no ToolCall/ToolResult or Discord identifier metadata in canonical history.
+- `UNVERIFIED` — the captured safe summary did not retain the adapter factory's
+  typed `ToolResult` status/effect or an HTTP operation count. Therefore the
+  exact `ok/confirmed` outcome, exact physical send-attempt count, raw P4-A
+  correspondence fields, and final provider completion are not claimed.
+  No retry was made.
+
+This retry is not sufficient to close Gate 2. A future run must capture the
+typed adapter settlement (`ok/confirmed`), one-send bound, exact raw
+correspondence, same-generation continuation, and final completion before
+claiming those results.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
