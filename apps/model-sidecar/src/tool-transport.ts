@@ -122,6 +122,7 @@ export class RawFunctionCallCollector {
 /** A generation-local mapping. It is discarded when the transport turn ends. */
 export class GenerationCallMap {
   readonly #providerToLocal = new Map<string, string>();
+  readonly #localToProvider = new Map<string, string>();
   #next = 1;
 
   assign(providerId: string): string {
@@ -129,11 +130,16 @@ export class GenerationCallMap {
     const local = `call-${this.#next}`;
     this.#next += 1;
     this.#providerToLocal.set(providerId, local);
+    this.#localToProvider.set(local, providerId);
     return local;
   }
 
   localFor(providerId: string): string | undefined {
     return this.#providerToLocal.get(providerId);
+  }
+
+  providerFor(localId: string): string | undefined {
+    return this.#localToProvider.get(localId);
   }
 }
 

@@ -30,6 +30,10 @@ export class ToolWaitState {
     this.#pending = undefined;
   }
 
+  cancel(): void {
+    this.#pending = undefined;
+  }
+
   assertTerminalAllowed(): void {
     if (this.#pending) throw new Error("pending_tool_results");
   }

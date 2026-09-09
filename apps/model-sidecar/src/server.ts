@@ -35,27 +35,34 @@ export interface ProtocolServerOptions {
   forceExit?: (code: number) => void;
 }
 
-class ProtocolWriter {
+export class ProtocolWriter {
   readonly #output: ProtocolOutput;
   readonly #onFailure: (error: Error) => void;
   readonly #writeTimeoutMs: number;
+  readonly #encode: (event: unknown) => string;
   readonly #queue: string[] = [];
   #pendingBytes = 0;
   #drainPromise: Promise<void> | undefined;
   #failure: Error | undefined;
   #closed = false;
 
-  constructor(output: ProtocolOutput, onFailure: (error: Error) => void, writeTimeoutMs: number) {
+  constructor(
+    output: ProtocolOutput,
+    onFailure: (error: Error) => void,
+    writeTimeoutMs: number,
+    encode: (event: unknown) => string = (event) => encodeEvent(event as ProtocolEvent),
+  ) {
     this.#output = output;
     this.#onFailure = onFailure;
     this.#writeTimeoutMs = writeTimeoutMs;
+    this.#encode = encode;
   }
 
-  write(event: ProtocolEvent): boolean {
+  write(event: unknown): boolean {
     if (this.#closed || this.#failure) return false;
     let line: string;
     try {
-      line = encodeEvent(event);
+      line = this.#encode(event);
     } catch (error) {
       this.#fail(error instanceof Error ? error : new Error("protocol encoding failed"));
       return false;

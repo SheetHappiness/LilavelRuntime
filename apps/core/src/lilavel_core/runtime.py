@@ -392,12 +392,23 @@ class GenerationHandle:
             return True
 
 
+type _GenerationPhase = Literal[
+    "created",
+    "accepted",
+    "streaming",
+    "tool_wait",
+    "continuing",
+    "cancelling",
+    "terminal",
+]
+
+
 @dataclass(slots=True)
 class _PendingGeneration:
     handle: GenerationHandle
     generation_id: str
     epoch: int
-    phase: Literal["created", "accepted", "streaming", "cancelling", "terminal"] = "created"
+    phase: _GenerationPhase = "created"
     accepted_seen: bool = False
     cancel_timer: threading.Timer | None = None
 
@@ -776,6 +787,10 @@ class ModelRuntime:
             exit_code = None
             containment_ok = _close_ownership(containment)
 
+        joined_shutdown_failure = self._await_shutdown_settlement(deadline)
+        if shutdown_failure is None and joined_shutdown_failure is not None:
+            shutdown_failure = joined_shutdown_failure
+
         with self._lock:
             observed_failure = self._failure
             shutdown_ack = self._shutdown_event_seen
@@ -831,6 +846,12 @@ class ModelRuntime:
             if isinstance(shutdown_failure, ShutdownTimeout):
                 raise shutdown_failure
             raise shutdown_failure
+
+    def _await_shutdown_settlement(self, deadline: float) -> ModelRuntimeError | None:
+        """Allow an extended runtime to join application-owned work before closure."""
+
+        del deadline
+        return None
 
     def _ensure_ready(self) -> None:
         if self._shutdown_requested or self._state == "shutting_down":

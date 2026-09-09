@@ -9,7 +9,8 @@
     "test": "bun test",
     "smoke": "bun run src/cli.ts",
     "probe": "bun run src/cli.ts --probe",
-    "protocol": "bun run src/protocol-cli.ts"
+    "protocol": "bun run src/protocol-cli.ts",
+    "protocol:v3": "bun run src/protocol-v3-cli.ts"
   },
   "dependencies": {
     "@oh-my-pi/pi-ai": "18.1.2",

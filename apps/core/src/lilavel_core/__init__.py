@@ -26,6 +26,7 @@ from .conversation import (
     ConversationRuntime,
     ConversationTextDelta,
     FullHistoryContextComposer,
+    RunAwareConversationRuntime,
     RuntimeEvidenceRecord,
     RuntimeGeneration,
 )
@@ -63,6 +64,15 @@ from .runtime import (
     ShutdownTimeout,
     SidecarCrashed,
 )
+from .runtime_v3 import (
+    TOOL_EVIDENCE_CAPACITY,
+    ModelRuntimeV3,
+    ToolExecutorUncontained,
+    ToolGenerationTimeout,
+    ToolLifecycleEvidenceRecord,
+    ToolLoopError,
+    ToolResultWaitTimeout,
+)
 from .sidecar_protocol import (
     ContextMessage,
     GenerationAccepted,
@@ -76,6 +86,21 @@ from .sidecar_protocol import (
     TextDelta,
 )
 from .sidecar_protocol import GenerationFailed as GenerationFailedEvent
+from .sidecar_protocol_v3 import ToolCallsEvent
+from .tool_runtime import (
+    DEFAULT_TOOL_EXECUTOR_DEADLINE,
+    DEFAULT_TOOL_GENERATION_DEADLINE,
+    DEFAULT_TOOL_RESULT_WAIT_DEADLINE,
+    MAX_TOOL_CALLS_PER_BATCH,
+    MAX_TOOL_CALLS_PER_GENERATION,
+    MAX_TOOL_ROUNDS_PER_GENERATION,
+    ApplicationToolSession,
+    ApplicationToolSessionFactory,
+    ToolBatchCorrelation,
+    ToolGenerationContext,
+    ToolSessionSettlement,
+    ToolSessionUncontained,
+)
 
 __version__ = "0.1.0"
 
@@ -110,6 +135,7 @@ __all__ = [
     "HealthEvent",
     "ModelRequest",
     "ModelRuntime",
+    "ModelRuntimeV3",
     "ModelRuntimeError",
     "PHYSICAL_EVIDENCE_CAPACITY",
     "PhysicalGenerationEvidenceRecord",
@@ -124,6 +150,7 @@ __all__ = [
     "ProtocolViolation",
     "RuntimeBusy",
     "RuntimeGeneration",
+    "RunAwareConversationRuntime",
     "RuntimeEvidenceRecord",
     "RUNTIME_EVIDENCE_CAPACITY",
     "RuntimeHealth",
@@ -135,6 +162,25 @@ __all__ = [
     "SidecarCrashed",
     "ShutdownEvent",
     "TextDelta",
+    "ToolCallsEvent",
+    "ToolExecutorUncontained",
+    "ToolGenerationTimeout",
+    "ToolLifecycleEvidenceRecord",
+    "ToolLoopError",
+    "ToolResultWaitTimeout",
+    "TOOL_EVIDENCE_CAPACITY",
+    "ApplicationToolSession",
+    "ApplicationToolSessionFactory",
+    "ToolBatchCorrelation",
+    "ToolGenerationContext",
+    "ToolSessionSettlement",
+    "ToolSessionUncontained",
+    "MAX_TOOL_CALLS_PER_BATCH",
+    "MAX_TOOL_CALLS_PER_GENERATION",
+    "MAX_TOOL_ROUNDS_PER_GENERATION",
+    "DEFAULT_TOOL_EXECUTOR_DEADLINE",
+    "DEFAULT_TOOL_RESULT_WAIT_DEADLINE",
+    "DEFAULT_TOOL_GENERATION_DEADLINE",
     "SCHEMA_VERSION",
     "SQLiteConversationStore",
     "__version__",

@@ -96,6 +96,22 @@ class FakeRuntime:
         return self.generations[index]
 
 
+class RunAwareFakeRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.run_correlations: list[tuple[str, str]] = []
+
+    def generate_for_run(
+        self,
+        request: ModelRequest,
+        *,
+        scope_id: str,
+        logical_run_id: str,
+    ) -> FakeGeneration:
+        self.run_correlations.append((scope_id, logical_run_id))
+        return self.generate(request)
+
+
 class RecordingComposer:
     def __init__(self) -> None:
         self.calls: list[tuple[ContextMessage, ...]] = []
@@ -111,6 +127,25 @@ def wait_until(check: Callable[[], bool], timeout: float = 2.0) -> None:
         if time.monotonic() >= deadline:
             raise AssertionError("condition did not become true before the deadline")
         time.sleep(0.001)
+
+
+def test_core_passes_local_run_correlation_only_to_an_explicit_run_aware_runtime() -> None:
+    runtime = RunAwareFakeRuntime()
+    core = ConversationCore(runtime, scope_id="scope-v3")
+
+    run = core.start_turn("correlate this run")
+    generation = runtime.generation()
+    assert runtime.run_correlations == [("scope-v3", run.run_id)]
+
+    generation.emit(GenerationAccepted(generation.generation_id, generation.epoch))
+    generation.emit(TextDelta(generation.generation_id, generation.epoch, "done"))
+    generation.emit(GenerationCompleted(generation.generation_id, generation.epoch))
+
+    assert run.wait(2.0).text == "done"
+    assert [(message.role, message.text) for message in core.history] == [
+        ("user", "correlate this run"),
+        ("assistant", "done"),
+    ]
 
 
 def test_history_order_composition_and_incremental_streaming() -> None:

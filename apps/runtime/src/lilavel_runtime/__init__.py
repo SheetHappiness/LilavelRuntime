@@ -39,6 +39,13 @@ from .kernel import (
     RuntimeShutdownTimeout,
     RuntimeState,
 )
+from .tool_session import (
+    DeterministicToolSession,
+    DeterministicToolSessionFactory,
+    FakeToolDecision,
+    FakeToolExecutor,
+    ToolSessionEvidence,
+)
 
 __version__ = "0.1.0"
 
@@ -46,6 +53,8 @@ __all__ = [
     "ActionExecutor",
     "CoreConversationRouter",
     "DirectMessageWakePolicy",
+    "DeterministicToolSession",
+    "DeterministicToolSessionFactory",
     "DuplicateEnvironment",
     "DuplicateTool",
     "EnvironmentAdapter",
@@ -53,6 +62,8 @@ __all__ = [
     "EventSource",
     "EventSubmitter",
     "EventTrust",
+    "FakeToolDecision",
+    "FakeToolExecutor",
     "JsonValue",
     "LilavelRuntime",
     "LilavelRuntimeError",
@@ -76,6 +87,7 @@ __all__ = [
     "ToolResult",
     "ToolResultStatus",
     "ToolSpec",
+    "ToolSessionEvidence",
     "WakeDecision",
     "WakePolicy",
     "WorldEvent",

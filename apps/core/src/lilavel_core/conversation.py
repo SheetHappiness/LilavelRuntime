@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from queue import Queue
 from threading import Event, Lock, RLock, Thread
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
 from .persistence import (
@@ -59,6 +59,19 @@ class ConversationRuntime(Protocol):
     def cancel(self, generation_id: str) -> bool:
         """Request cancellation for one runtime generation."""
         ...
+
+
+@runtime_checkable
+class RunAwareConversationRuntime(ConversationRuntime, Protocol):
+    """Optional correlation seam implemented only by explicit V3 runtimes."""
+
+    def generate_for_run(
+        self,
+        request: ModelRequest,
+        *,
+        scope_id: str,
+        logical_run_id: str,
+    ) -> RuntimeGeneration: ...
 
 
 class ConversationContextComposer(Protocol):
@@ -452,7 +465,7 @@ class ConversationRun:
                 return
 
             try:
-                generation = self._core.runtime_generate(request)
+                generation = self._core.runtime_generate(self, request)
             except Exception:
                 self._settle_failed(reason="runtime")
                 return
@@ -872,9 +885,15 @@ class ConversationCore:
             if self._active is run:
                 self._active = None
 
-    def runtime_generate(self, request: ModelRequest) -> RuntimeGeneration:
-        """Bridge one semantic request to the configured runtime."""
+    def runtime_generate(self, run: ConversationRun, request: ModelRequest) -> RuntimeGeneration:
+        """Bridge one semantic request without making tool transport a Core concern."""
 
+        if isinstance(self._runtime, RunAwareConversationRuntime):
+            return self._runtime.generate_for_run(
+                request,
+                scope_id=self._scope_id,
+                logical_run_id=run.run_id,
+            )
         return self._runtime.generate(request)
 
     def runtime_cancel(
