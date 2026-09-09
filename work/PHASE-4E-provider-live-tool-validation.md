@@ -291,6 +291,24 @@ bot while the bounded Gate 2 listener is running. The DM must explicitly
 request `discord.send_message` and include a fresh unique marker. No Discord
 or user IDs should be supplied or hardcoded.
 
+### Gate 2 fresh attempt `NEW-2`
+
+Date: `2026-09-09`, Linux, continuation from commit `58bf490`.
+
+- PASS — boolean-only shell check found `LILAVEL_DISCORD_BOT_TOKEN` present;
+  the value was not printed, copied, persisted, or passed through diagnostics.
+- PASS — the explicit `DiscordTextEdge(tool_enabled=True)` listener started
+  with the redacted proof instrumentation; defaults remained unchanged.
+- BLOCKED — the user reported the bot offline and interrupted the bounded
+  listener before any inbound DM was admitted (`session_count=0`). This run
+  did not establish a trusted DM scope and stopped before generation/tool
+  selection.
+- PASS — fresh `NEW-2` Discord send-attempt count: `0`; no delivery effect was
+  created and no retry was made.
+- UNVERIFIED — provider selection, raw correspondence, authorization,
+  ToolResult status/effect, same-generation continuation, final completion,
+  and live history separation remain unverified.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
