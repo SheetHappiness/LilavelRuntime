@@ -69,10 +69,11 @@ uv run --locked pytest
 These checks cover the zero-environment lifecycle, bounded observation
 backpressure, deterministic task settlement, environment/tool registration,
 provider-neutral immutable contracts, deterministic direct-message wake,
-single-route dispatch to the source action boundary, and the fake application
-tool-session execution/containment seam. Core-backed routing is exercised
-through the Discord adapter suite. They do not prove live providers, live
-Discord, Neuro, scheduling, production model-selected tools, or memory.
+single-route dispatch to the source action boundary, the application-owned
+tool registry/exposure/authorization seam, and deterministic tool-session
+execution/containment. Core-backed routing is exercised through the Discord
+adapter suite. They do not prove live providers, live Discord, Neuro,
+scheduling, production model-selected tools, or memory.
 
 ### Core
 

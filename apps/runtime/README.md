@@ -28,23 +28,37 @@ tools.
 - `WakePolicy` maps an observation to a `WakeDecision`; an optional
   `EventRouter` owns the positive-wake conversational route.
 
-## Deterministic tool-session seam
+## P4-C application tool authorization seam
 
-P4-B adds `DeterministicToolSessionFactory` as the application-owned execution
-seam for fixtures only. It snapshots exposed `ToolSpec` values per admitted
-generation, validates and authorizes calls through injected deterministic
-decisions, executes a batch sequentially in provider order, and creates bounded
-`ToolResult` values. Cancellation is rechecked before every call. Executor
-timeout and containment are explicit; an executor that ignores bounded
-cancellation is `uncontained` and must poison the consuming model runtime. A
-contained per-call timeout produces `timed_out` for that call without cancelling
-the session, so the exact ordered batch and later legal rounds can still settle.
+P4-C extends the deterministic session seam with an explicit
+`ApplicationToolRegistry`. Trusted application composition registers one
+canonical `ToolSpec`, bound executor, and optional trusted authorization and
+availability hooks per name. Registration rejects duplicate names and schema
+keywords outside the bounded object/property/required/scalar/enum/string and
+numeric constraint subset. Provider aliases never enter the registry key.
+
+Each explicit tool-enabled generation receives an immutable exposure snapshot
+selected by canonical application names. Exposure is not authorization: every
+call is checked for snapshot membership, strict non-coercive arguments,
+trusted-scope authorization, and liveness immediately before sequential
+executor admission. Internal presentation bindings are not model-exposable.
+Unknown, unexposed, unavailable, denied, and invalid calls produce bounded
+typed `ToolResult` values and never dispatch an executor. Pure and effect-like
+fixtures use the same registry path; no fixture binding is registered by the
+production Discord composition.
+
+The existing P4-B containment seam remains authoritative. Cancellation is
+fenced before executor admission, calls execute sequentially in provider order,
+executor timeout is bounded and reports effect uncertainty, and an executor
+that ignores bounded cancellation is `uncontained` and poisons the consuming
+model runtime. The exact ordered batch and later legal rounds can still settle
+after a contained per-call timeout.
 
 Session evidence contains only generation/epoch/round/call correlation and safe
-lifecycle/status/effect codes. It excludes raw arguments, raw results, provider
-payloads, external identifiers, credentials, and exception bodies. This seam is
-not registered with the production kernel or Discord adapter and grants no real
-model-selected external effect.
+lifecycle/status/reason/effect codes. It excludes raw arguments, raw results,
+provider payloads, external identifiers, credentials, and exception bodies.
+This seam is not activated by the production kernel or Discord adapter and
+grants no real model-selected external effect.
 
 `submit()` waits when the bounded queue is full. It does not drop, overwrite,
 or silently accumulate observations. Events are rejected before startup and

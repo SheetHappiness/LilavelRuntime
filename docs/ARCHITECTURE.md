@@ -44,7 +44,7 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, action destination selection, and the deterministic application tool-session seam | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or production model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or production model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -98,6 +98,24 @@ cleanup deadlines, Bun commands, and Windows launcher details are local
 implementation concerns documented in
 [`apps/model-sidecar/README.md`](../apps/model-sidecar/README.md), not system
 ownership rules.
+
+## Application tool authorization boundary
+
+The opt-in deterministic V3 composition in `apps/runtime` uses one trusted
+`ApplicationToolRegistry` of canonical `ToolSpec` values plus bound executors.
+The registry rejects duplicate names and unsupported schema features, and it
+never uses provider aliases as authority keys. Each generation receives a
+bounded immutable exposure snapshot selected by trusted application
+composition.
+
+Exposure is not a capability grant. A model-originated `ToolCall` must remain
+in the snapshot, pass strict non-coercive application validation, pass the
+trusted-scope authorization hook, and remain live immediately before its
+sequential bound executor starts. Internal presentation actions are not
+model-exposable bindings. Validation, denial, unavailability, executor
+failure, timeout, and effect certainty map to the existing typed `ToolResult`
+contract; raw arguments, results, provider payloads, and exception bodies
+remain outside runtime evidence and canonical history.
 
 ## Persistence and evidence
 
@@ -187,7 +205,7 @@ cannot import Core persistence or perform Core lifecycle operations.
 
 The following are intentionally `DEFERRED` rather than implied: a durable
 agent-state model, scheduler or timer source, autonomous model wake loop,
-attention/decision policy, model tool authorization/execution,
+attention/decision policy, production model tool activation,
 retrieval or memory semantics, and production
 non-Discord environment adapters. Each needs an explicit decision and
 proportionate validation before code is added.
