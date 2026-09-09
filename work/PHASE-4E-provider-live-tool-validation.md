@@ -309,6 +309,29 @@ Date: `2026-09-09`, Linux, continuation from commit `58bf490`.
   ToolResult status/effect, same-generation continuation, final completion,
   and live history separation remain unverified.
 
+### Gate 2 instrumented capture `NEW-3`
+
+Date: `2026-09-09`, Linux, continuation from commit `82e64a1`.
+
+- PASS — boolean-only shell check found `LILAVEL_DISCORD_BOT_TOKEN` present;
+  the value was not printed, copied, persisted, or passed through diagnostics.
+- PASS — focused deterministic validation remained satisfied from the
+  instrumentation commit: runtime tool-loop `27 passed`, Core runtime
+  `11 passed`, Discord tool/edge `35 passed`; changed runtime and Discord
+  packages passed Ruff, format check, and Pyright.
+- PASS — exactly one new instrumented listener used explicit
+  `DiscordTextEdge(tool_enabled=True)` composition; activation defaults and
+  P4-A–D boundaries were unchanged.
+- BLOCKED — the `NEW-3` bounded listener admitted no user-authored
+  one-to-one DM (`session_count=0`) before timeout. Trusted inbound scope was
+  not established, so the proof stopped before generation/tool selection.
+- PASS — `NEW-3` Discord send-attempt count: `0`; no executor settlement,
+  ToolResult, delivery effect, or retry was created.
+- UNVERIFIED — raw-argument correspondence, authorization,
+  generation/epoch/round correlation, ToolResult submission, provider
+  continuation, final completion, and live canonical-history separation;
+  these require the admitted trusted DM scope.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
