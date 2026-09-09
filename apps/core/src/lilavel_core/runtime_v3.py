@@ -95,6 +95,7 @@ class ToolLifecycleEvidenceRecord:
     call_count: int = 0
     result_code: str | None = None
     settlement: JoinedSettlement | None = None
+    raw_correspondence: Literal["pass"] | None = None
 
 
 @dataclass(slots=True)
@@ -380,7 +381,11 @@ class ModelRuntimeV3(ModelRuntime):
             state.total_calls += len(event.calls)
             pending.phase = "tool_wait"
             self._append_tool_evidence(
-                "tool_requested", pending, round=event.round, call_count=len(event.calls)
+                "tool_requested",
+                pending,
+                round=event.round,
+                call_count=len(event.calls),
+                raw_correspondence="pass",
             )
             timer = threading.Timer(
                 self._tool_result_wait_deadline,
@@ -710,6 +715,7 @@ class ModelRuntimeV3(ModelRuntime):
         call_count: int = 0,
         result_code: str | None = None,
         settlement: JoinedSettlement | None = None,
+        raw_correspondence: Literal["pass"] | None = None,
     ) -> None:
         with self._lock:
             self._append_tool_evidence(
@@ -719,6 +725,7 @@ class ModelRuntimeV3(ModelRuntime):
                 call_count=call_count,
                 result_code=result_code,
                 settlement=settlement,
+                raw_correspondence=raw_correspondence,
             )
 
     def _append_tool_evidence(
@@ -730,6 +737,7 @@ class ModelRuntimeV3(ModelRuntime):
         call_count: int = 0,
         result_code: str | None = None,
         settlement: JoinedSettlement | None = None,
+        raw_correspondence: Literal["pass"] | None = None,
     ) -> None:
         self._tool_evidence.append(
             ToolLifecycleEvidenceRecord(
@@ -741,6 +749,7 @@ class ModelRuntimeV3(ModelRuntime):
                 call_count=call_count,
                 result_code=result_code,
                 settlement=settlement,
+                raw_correspondence=raw_correspondence,
             )
         )
         self._tool_evidence_sequence += 1

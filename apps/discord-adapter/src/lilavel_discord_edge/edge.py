@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import weakref
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -460,6 +461,7 @@ class DiscordTextEdge:
         )
 
         tool_factories: dict[int, DiscordToolSessionFactory] = {}
+        self._tool_factories: weakref.WeakSet[DiscordToolSessionFactory] = weakref.WeakSet()
 
         def route_runtime_factory(route_key: tuple[str, str]) -> ConversationRuntime:
             channel = self._environment.channel_for_subject(route_key[1])
@@ -478,6 +480,7 @@ class DiscordTextEdge:
                 )
                 runtime = tool_runtime_factory(channel, factory)
             tool_factories[id(runtime)] = factory
+            self._tool_factories.add(factory)
             return runtime
 
         def configure_tool_runtime(
@@ -486,7 +489,7 @@ class DiscordTextEdge:
             route_key: tuple[str, str],
         ) -> None:
             del route_key
-            factory = tool_factories.pop(id(runtime), None)
+            factory = tool_factories.get(id(runtime))
             if factory is None:
                 raise RuntimeError("tool runtime was not created by trusted composition")
             factory.bind_scope(core.scope_id)
@@ -536,6 +539,34 @@ class DiscordTextEdge:
         if subject is None:
             return None
         return self._router.history(DISCORD_ENVIRONMENT_ID, subject)
+
+    def tool_proof_evidence(self) -> tuple[dict[str, object], ...]:
+        """Return bounded, redacted evidence for explicit tool proof runs."""
+
+        snapshots: list[dict[str, object]] = []
+        for factory in self._tool_factories:
+            records: list[dict[str, object]] = []
+            for session in factory.sessions:
+                records.extend(
+                    {
+                        "generation_id": record.generation_id,
+                        "epoch": record.epoch,
+                        "round": record.round,
+                        "kind": record.kind,
+                        "status_code": record.status_code,
+                        "effect": record.effect,
+                        "authorization": record.authorization,
+                    }
+                    for record in session.evidence()
+                )
+            snapshots.append(
+                {
+                    "exposed_tools": tuple(spec.name for spec in factory.registry.tools()),
+                    "send_attempt_count": factory.send_attempt_count,
+                    "sessions": tuple(records),
+                }
+            )
+        return tuple(snapshots)
 
     async def start(self, token: str | None = None) -> None:
         self._environment.set_token(token)

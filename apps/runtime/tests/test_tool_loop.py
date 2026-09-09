@@ -140,6 +140,13 @@ def test_b_one_fake_tool_round_completes_and_history_excludes_tool_transcript() 
         assert all("tool" not in record.provenance_kind for record in core.evidence_records)
         assert sessions.sessions[0].settlement == "settled"
         assert model.tool_evidence()[-1].settlement == "settled"
+        requested = next(
+            record for record in model.tool_evidence() if record.kind == "tool_requested"
+        )
+        assert requested.raw_correspondence == "pass"
+        assert requested.generation_id == sessions.sessions[0].evidence()[0].generation_id
+        assert requested.epoch == sessions.sessions[0].evidence()[0].epoch
+        assert any(record.kind == "result_consumed" for record in model.tool_evidence())
         assert model.ready
     finally:
         close(model)

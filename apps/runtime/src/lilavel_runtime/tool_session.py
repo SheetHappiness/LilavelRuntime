@@ -90,6 +90,7 @@ class ToolSessionEvidence:
     status_code: str | None = None
     reason_code: str | None = None
     effect: str | None = None
+    authorization: str | None = None
 
 
 class DeterministicToolSession(ApplicationToolSession):
@@ -315,6 +316,7 @@ class DeterministicToolSession(ApplicationToolSession):
                         else "tool_unavailable"
                     ),
                 ),
+                authorization=decision.value,
             )
 
         executor = binding.executor
@@ -354,7 +356,12 @@ class DeterministicToolSession(ApplicationToolSession):
                 raise _ToolSessionCancelled
             self._active_worker = worker
             self._active_call_cancelled = call_cancelled
-            self._record(correlation, call, "execution_started")
+            self._record(
+                correlation,
+                call,
+                "execution_started",
+                authorization=ToolAuthorization.ALLOWED.value,
+            )
             worker.start()
 
         timed_out = False
@@ -502,7 +509,12 @@ class DeterministicToolSession(ApplicationToolSession):
         )
 
     def _settled_result(
-        self, correlation: ToolBatchCorrelation, call: ToolCall, result: ToolResult
+        self,
+        correlation: ToolBatchCorrelation,
+        call: ToolCall,
+        result: ToolResult,
+        *,
+        authorization: str | None = None,
     ) -> ToolResult:
         self._record(
             correlation,
@@ -511,6 +523,7 @@ class DeterministicToolSession(ApplicationToolSession):
             status_code=result.status.value,
             reason_code=result.reason_code,
             effect=result.effect.value,
+            authorization=authorization,
         )
         return result
 
@@ -523,6 +536,7 @@ class DeterministicToolSession(ApplicationToolSession):
         status_code: str | None = None,
         reason_code: str | None = None,
         effect: str | None = None,
+        authorization: str | None = None,
     ) -> None:
         with self._lock:
             self._evidence.append(
@@ -536,6 +550,7 @@ class DeterministicToolSession(ApplicationToolSession):
                     status_code=status_code,
                     reason_code=reason_code,
                     effect=effect,
+                    authorization=authorization,
                 )
             )
             if len(self._evidence) > self._evidence_capacity:

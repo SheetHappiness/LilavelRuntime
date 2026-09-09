@@ -208,6 +208,7 @@ def test_allowed_scoped_send_is_confirmed_once_with_mentions_disabled() -> None:
         assert results[0].status is ToolResultStatus.OK
         assert results[0].effect is ToolEffect.CONFIRMED
         assert channel.attempts == 1
+        assert factory.send_attempt_count == 1
         assert len(channel.sends) == 1
         assert channel.sends[0]["content"] == "hello <@everyone>"
         assert_mentions_suppressed(channel.sends[0])
@@ -216,6 +217,9 @@ def test_allowed_scoped_send_is_confirmed_once_with_mentions_disabled() -> None:
             "execution_started",
             "execution_settled",
         ]
+        assert session.evidence()[1].authorization == "allowed"
+        assert session.evidence()[-1].status_code == "ok"
+        assert session.evidence()[-1].effect == "confirmed"
 
     asyncio.run(scenario())
 
@@ -444,6 +448,7 @@ def test_explicit_tool_enabled_dm_composition_runs_real_boundary_without_history
             assert len(settled) == 1
             assert settled[0].status_code == expected_tool_status.value
             assert settled[0].effect == expected_effect.value
+            assert factories[0].send_attempt_count == (1 if mode == "allowed" else 0)
             assert channel.messages[-1].content == expected_final
             tool_sends = [
                 item for item in channel.sends if item["content"] == "tool message <@everyone>"

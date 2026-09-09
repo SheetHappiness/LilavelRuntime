@@ -251,6 +251,46 @@ typed adapter settlement (`ok/confirmed`), one-send bound, exact raw
 correspondence, same-generation continuation, and final completion before
 claiming those results.
 
+### Gate 2 evidence instrumentation and fresh live proof
+
+Date: `2026-09-09`, Linux, continuation from commit `ac4f303`.
+
+- PASS — boolean-only shell check found `LILAVEL_DISCORD_BOT_TOKEN` present;
+  the value was not printed, copied, persisted, or passed through diagnostics.
+- PASS — added bounded status-only evidence at existing seams: V3
+  `tool_requested` records `raw_correspondence=pass`; application session
+  evidence records authorization; the Discord executor exposes only an
+  aggregate admitted-send count; and the explicit edge exposes a redacted
+  proof snapshot containing generation/epoch/round, lifecycle/status/effect,
+  authorization, exposed tool names, and send-attempt count. No arguments,
+  message bodies, destinations, Discord IDs, provider payloads, credentials,
+  or exception bodies are recorded.
+- PASS — focused deterministic validation: runtime tool-loop `27 passed`, Core
+  runtime `11 passed`, Discord tool/edge `35 passed`; changed runtime and
+  Discord packages passed Ruff, format check, and Pyright.
+- UNVERIFIED — the Core package Pyright command also reports three existing
+  `process_containment.py` errors for `ctypes.get_last_error` typing on Linux;
+  no changed-file error was reported.
+- PASS — explicit `DiscordTextEdge(tool_enabled=True)` listener was started
+  after the deterministic checks; ordinary defaults and global V3/tool
+  activation were unchanged.
+- BLOCKED — the bounded fresh proof window admitted no user-authored
+  one-to-one DM (`session_count=0`). The required trusted scope was therefore
+  not established, and the proof stopped before generation, tool selection,
+  raw correspondence, authorization, ToolResult, continuation, completion,
+  or any Discord operation.
+- PASS — fresh live Discord send-attempt count: `0`; no delivery effect was
+  created, so there was no retry and no ambiguous effect to classify.
+- UNVERIFIED — live end-to-end claims remain open: provider selection of
+  `discord.send_message`, raw correspondence, authorized send with
+  `ok/confirmed`, same-generation ToolResult submission/continuation, final
+  completion, and live canonical-history separation.
+
+Required user action: send one new user-authored one-to-one DM to the Lilavel
+bot while the bounded Gate 2 listener is running. The DM must explicitly
+request `discord.send_message` and include a fresh unique marker. No Discord
+or user IDs should be supplied or hardcoded.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:

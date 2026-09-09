@@ -61,6 +61,15 @@ class _DiscordSendMessageExecutor:
     def __init__(self, channel: Any, loop: asyncio.AbstractEventLoop) -> None:
         self._channel = channel
         self._loop = loop
+        self._attempts = 0
+        self._attempts_lock = threading.Lock()
+
+    @property
+    def send_attempt_count(self) -> int:
+        """Return the safe count of admitted Discord send operations."""
+
+        with self._attempts_lock:
+            return self._attempts
 
     def __call__(
         self,
@@ -137,6 +146,8 @@ class _DiscordSendMessageExecutor:
         )
 
     async def _send(self, text: str) -> Any:
+        with self._attempts_lock:
+            self._attempts += 1
         return await self._channel.send(
             content=text,
             allowed_mentions=discord.AllowedMentions.none(),
@@ -198,17 +209,25 @@ class DiscordToolSessionFactory:
         self._lock = threading.Lock()
         self._executor_deadline = executor_deadline
         self._containment_deadline = containment_deadline
+        executor = _DiscordSendMessageExecutor(channel, loop)
         self._registry = ApplicationToolRegistry(
             [
                 ToolBinding(
                     DISCORD_SEND_MESSAGE_SPEC,
-                    _DiscordSendMessageExecutor(channel, loop),
+                    executor,
                     authorize=self._authorize,
                     is_available=self._is_available,
                 )
             ]
         )
+        self._executor = executor
         self._sessions: list[DeterministicToolSession] = []
+
+    @property
+    def send_attempt_count(self) -> int:
+        """Return the aggregate count without exposing destination or body."""
+
+        return self._executor.send_attempt_count
 
     @property
     def registry(self) -> ApplicationToolRegistry:
