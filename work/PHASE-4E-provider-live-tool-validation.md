@@ -542,6 +542,67 @@ effect, or persistence write was started for this audit.
   messages, but the post-run in-memory state is unavailable, so its actual
   assistant-commit outcome cannot be claimed.
 
+### Final Gate 2 live-proof execution with hardened SQLite audit
+
+Date: `2026-09-09`, Linux. This was one newly admitted user-authored
+one-to-one DM after the listener printed `READY_FOR_DM`. Admission then froze;
+there was exactly one provider interaction and no retry.
+
+- PASS — boolean-only preflight found `LILAVEL_DISCORD_BOT_TOKEN` present. The
+  value was not printed, copied, persisted, or included in diagnostics.
+- PASS — the existing explicit `DiscordTextEdge(tool_enabled=True)` V3
+  composition was used with one exposed `discord.send_message` ToolSpec.
+  `toolChoice=required` was limited to the proof harness first turn;
+  production/default V2/no-tool and V3 `tool_choice=auto` behavior were not
+  changed.
+- PASS — one trusted inbound one-to-one DM scope was admitted, and the
+  redacted runtime snapshot recorded exactly one finalized tool request
+  (`call_count=1`) at `generation_id=8d2d2086-04fe-4176-89e0-7d75522d1039`,
+  `epoch=1`, `round=1`. Because the exposed set contained only
+  `discord.send_message` and the executor settled that request, the live
+  selected application tool is established without recording provider
+  payloads, arguments, message bodies, or Discord IDs.
+- PASS — P4-A raw-argument correspondence: `pass`.
+- PASS — application authorization: `allowed`; destination remained
+  trusted/application-bound and was not a model-supplied argument.
+- PASS — executor settlement: `settled`; exact Discord send-attempt count:
+  `1`; no retry occurred.
+- PASS — ToolResult status/effect: `ok` / `confirmed`.
+- PASS — ToolResult submission consumed exactly once at the same generation,
+  `generation_id=8d2d2086-04fe-4176-89e0-7d75522d1039`, `epoch=1`, and
+  `round=1`; the provider then emitted continuation text and a terminal
+  `completed` event for that generation.
+- PASS — Core runtime terminal evidence: accepted turn, generation terminal
+  `completed`, assistant commit, and run terminal `completed` were all present
+  before teardown. The terminal/presentation wrapper outcome itself was
+  `FAIL` because final evidence capture raised `RuntimeError`.
+- FAIL — wrapper evidence aggregation: `_capture()` expected
+  `factory["sessions"]` to contain one nested tuple, but the supported
+  `tool_proof_evidence()` API returns one flat tuple of redacted session
+  records. The error occurred after the external effect had settled and did
+  not cause another provider call or Discord attempt.
+
+### Read-only SQLite audit for the final execution
+
+The task-owned temporary SQLite file was reopened after store closure through
+the supported `SQLiteConversationStore` load API. No provider, Discord, or
+persistence write was started for this audit.
+
+- PASS — the accepted user `ContextMessage` is canonical.
+- PASS — the final assistant completion is canonical; Core runtime evidence
+  required and found the assistant commit.
+- PASS — canonical history contains only `user` and `assistant` roles and no
+  ToolCall or ToolResult.
+- PASS — canonical history contains no Discord destination/ID metadata.
+- PASS — trusted guidance contains no Discord destination/ID metadata.
+- PASS — the audit result was `status=PASS`, with canonical message count `2`
+  and roles `("user", "assistant")`.
+
+The live external-effect lifecycle and SQLite history invariant therefore
+passed, but the prepared proof harness returned `FAIL` at its final capture
+boundary. P4-E remains `BLOCKED` under the written exit gate, and `PHASE 4`
+is not closed; no closure or P4-5 handoff is claimed from this run.
+
 ### Live-proof harness hardening (final proof not executed)
 
 Date: `2026-09-09`, Linux. No provider turn or Discord send was run for this
