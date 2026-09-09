@@ -429,6 +429,33 @@ started.
   after a ToolResult, and live canonical-history separation remain unverified
   because this probe stopped immediately after provider ToolCall selection.
 
+### Final Gate 2 live-proof harness attempt (stopped)
+
+Date: `2026-09-09`, Linux, implementation commit `7d09c17`. This was the one
+and only post-harness live interaction; no retry was made.
+
+- PASS — the boolean-only token preflight reported
+  `LILAVEL_DISCORD_BOT_TOKEN` present. The token value was not printed,
+  copied, persisted, or included in diagnostics.
+- PASS — the explicit `DiscordTextEdge(tool_enabled=True)` composition was
+  started with one bound V3 tool session and the harness-only
+  `protocol:v3:live-proof` sidecar. `toolChoice=required` was configured only
+  for the first provider turn; the ordinary V3 launcher remains unchanged.
+- PASS — one user-authored one-to-one DM was admitted and established one
+  trusted adapter scope. The harness then terminated without a safe capture
+  record after its bounded completion wait raised `RuntimeError`.
+- FAIL — the final harness did not produce authoritative end-to-end evidence
+  for finalized `discord.send_message`, raw correspondence, authorization,
+  ToolResult, continuation, or final completion. The failure was not retried.
+- UNKNOWN effect — because the harness ended before emitting the redacted
+  executor snapshot, the live Discord send-attempt count and delivery outcome
+  cannot be established from this run. The interaction is conservatively
+  recorded as `effect=unknown`; no second send or DM was attempted.
+- UNVERIFIED — exact live send-attempt count, `ok/confirmed` ToolResult,
+  same-generation/epoch/round ToolResult submission, provider continuation,
+  final provider completion, and live canonical-history separation. The
+  deterministic equivalents remain `PASS`.
+
 ## Live lifecycle gates
 
 - Live non-tool provider auth, contact, completion, and clean settlement:
@@ -439,10 +466,12 @@ started.
   with the same pinned provider/model/API and explicit `toolChoice=required`
   finalized exactly one native `discord_send_message` ToolCall. This probe
   stopped before any application or Discord execution.
-- Live raw-argument/call-ID correspondence: `UNVERIFIED`; deterministic
-  correspondence remains `PASS`, but no live tool call reached the sidecar.
-- Live same-generation ToolResult continuation: `UNVERIFIED`; `NEW-5` did not
-  select a tool and therefore did not submit a ToolResult.
+- Live raw-argument/call-ID correspondence: `UNVERIFIED`; the final harness
+  stopped before its safe capture, while deterministic correspondence remains
+  `PASS`.
+- Live same-generation ToolResult continuation: `UNVERIFIED`; the final
+  harness stopped before recording the submission, and the interaction is not
+  retried because its external effect is `unknown`.
 - Live ordinary final completion: `PASS` for `NEW-5`; live tool-path final
   completion: `UNVERIFIED`.
 - Live provider-backed contained error-result continuation: `UNVERIFIED`; no
@@ -451,8 +480,8 @@ started.
   deterministic P4-B/P4-D evidence remains authoritative. No ambiguous live
   Discord delivery was induced.
 - Canonical history boundary: `PASS` under deterministic composition and the
-  `NEW-5` live non-tool turn; live tool metadata separation remains
-  `UNVERIFIED` because no live tool run occurred.
+  `NEW-5` live non-tool turn; the final live tool metadata separation is
+  `UNVERIFIED` because the harness did not emit its capture record.
 - Default ordinary behavior and production activation: `PASS`; V2/no-tool
   remains the default and model-selected external tools remain explicit
   opt-in only.
@@ -484,9 +513,9 @@ started.
 ## Production state and ADR
 
 No ADR was added. P4-E did not introduce a new ownership or activation
-decision. The existing explicit tool-enabled composition remains available for
-a later credentialed proof, while ordinary production traffic remains
-V2/no-tool.
+decision. The explicit required-first-turn option is harness-only; ordinary
+production traffic remains V2/no-tool and the default V3 provider choice
+remains unset/auto.
 
 ## Remaining unknowns and exit gate
 
@@ -494,12 +523,13 @@ Gate 1 is closed `PASS`: supported auth discovery, actual provider contact,
 normal completion, and clean provider/sidecar settlement were all observed.
 The provider-selection portion of Gate 2 is now `PASS`: the pinned
 subscription path delivered and finalized a native ToolCall when tool choice
-was explicitly required. Overall Gate 2 remains `BLOCKED` because the
-application-bound trusted DM/send path was intentionally not rerun and no
-Discord effect or same-generation ToolResult continuation was attempted.
-Live raw correspondence, authorization, ToolResult status/effect, continuation,
-tool-path final completion, live tool metadata separation, live
-cancellation/supersession, and Windows evidence remain explicitly unverified.
+was explicitly required. Overall Gate 2 remains `BLOCKED`: one final
+application-bound trusted DM was admitted, but the harness ended before
+authoritative redacted lifecycle capture; its possible external effect is
+`unknown`, so the one-shot rule forbids retry. Live raw correspondence,
+authorization, ToolResult status/effect, continuation, tool-path final
+completion, live tool metadata separation, live cancellation/supersession, and
+Windows evidence remain explicitly unverified.
 
 `PHASE 4` cannot be declared closed from this run. `PHASE 5 — Neuro-compatible
 environment` should wait until a later credentialed run records a successful

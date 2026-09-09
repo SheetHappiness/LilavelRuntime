@@ -13,6 +13,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from lilavel_core import ConversationCore, ModelRuntimeV3
 
@@ -24,11 +25,7 @@ from lilavel_discord_edge import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIDECAR_DIR = REPO_ROOT / "apps" / "model-sidecar"
-PROOF_GUIDANCE = (
-    "For this one-shot controlled proof, use the exposed send tool exactly once "
-    "with a fresh run marker. After the tool result, do not call any tool again; "
-    "finish the response briefly.",
-)
+PROOF_MARKER_PREFIX = "P4E-GATE2-ONE-SHOT"
 
 
 def sidecar_command() -> tuple[str, ...]:
@@ -46,9 +43,17 @@ async def main() -> int:
 
     runtimes: list[ModelRuntimeV3] = []
     cores: list[ConversationCore] = []
+    marker = f"{PROOF_MARKER_PREFIX}-{uuid4().hex}"
 
     def core_factory(runtime: Any) -> ConversationCore:
-        core = ConversationCore(runtime, trusted_guidance=PROOF_GUIDANCE)
+        core = ConversationCore(
+            runtime,
+            trusted_guidance=(
+                "For this one-shot controlled proof, call the exposed send tool exactly "
+                f"once with the text argument exactly equal to this fresh marker: {marker}. "
+                "After the tool result, do not call any tool again; finish briefly.",
+            ),
+        )
         cores.append(core)
         return core
 
@@ -79,7 +84,11 @@ async def main() -> int:
     except TimeoutError:
         result = {"status": "BLOCKED", "reason": "no_single_completed_dm_within_bound"}
     except Exception as error:
-        result = {"status": "FAIL", "reason": type(error).__name__}
+        result = {
+            "status": "FAIL",
+            "reason": type(error).__name__,
+            "safe_snapshot": _safe_snapshot(edge, runtimes),
+        }
     finally:
         await edge.close()
         await asyncio.wait_for(start_task, timeout=20.0)
@@ -177,6 +186,36 @@ def _capture(
     if evidence["tool_result_status"] != "ok" or evidence["tool_result_effect"] != "confirmed":
         raise RuntimeError("tool_result_outcome")
     return evidence
+
+
+def _safe_snapshot(edge: DiscordTextEdge, runtimes: list[ModelRuntimeV3]) -> dict[str, object]:
+    snapshot: dict[str, object] = {"tool_factories": edge.tool_proof_evidence()}
+    if runtimes:
+        snapshot["tool_lifecycle"] = tuple(
+            {
+                "kind": record.kind,
+                "generation_id": record.generation_id,
+                "epoch": record.epoch,
+                "round": record.round,
+                "call_count": record.call_count,
+                "result_code": record.result_code,
+                "settlement": record.settlement,
+                "raw_correspondence": record.raw_correspondence,
+            }
+            for record in runtimes[0].tool_evidence()
+        )
+        snapshot["physical"] = tuple(
+            {
+                "kind": record.kind,
+                "generation_id": record.generation_id,
+                "epoch": record.epoch,
+                "protocol_event": record.protocol_event,
+                "result": record.result,
+                "failure_code": record.failure_code,
+            }
+            for record in runtimes[0].physical_evidence()
+        )
+    return snapshot
 
 
 if __name__ == "__main__":
