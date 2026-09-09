@@ -92,9 +92,9 @@ forward provider payloads, response IDs, usage, `sessionId`, or
 generation lifecycle and semantic state; this host owns provider and process
 transport state only.
 
-## P4-A V3 transport proof
+## V3 transport proof and opt-in deterministic continuation
 
-The sidecar contains an inactive V3 contract parser and a transport-only
+The sidecar contains a strict V3 contract parser and a transport-only
 ordinary-function-tool adapter. It maps immutable Lilavel `ToolSpec` values to
 collision-checked provider aliases, retains raw Responses terminal function
 items only inside the active transport operation, and maps each provider call
@@ -103,11 +103,19 @@ string, requires an exact match with pi-ai's finalized normalized object, and
 marks malformed JSON or non-object JSON non-executable. Missing, duplicate, or
 ambiguous correspondence fails the provider turn closed.
 
-The active JSONL host remains V2 in this slice. No Core request exposes tools,
-no tool result is continued to a provider, and no Discord model-selected action
-is available. The V3 fixture parser covers `generate.tools`, `tool_calls`, and
-`tool_results`; `ToolWaitState` accepts results only for the exact pending
-generation, epoch, round, and ordered call-ID set.
+The ordinary production entry point remains V2. The explicit `protocol:v3`
+entry point now runs a bounded active-generation loop for deterministic P4-B
+coverage. One generation may span sequential provider turns; the sidecar keeps
+only its bounded replay context, generation-local ID map, alias map, and pending
+round. `ToolWaitState` accepts results only for the exact pending generation,
+epoch, round, and ordered call-ID set, then consumes the batch before starting
+the continuation.
+
+Each provider turn has a fresh raw-call collector. `tool_calls` is emitted only
+after that provider turn and its iterator/result cleanup settle. Cleanup failure
+outranks cancellation, preserves its safe failure code, and poisons reuse. The
+sidecar never authorizes or executes the tool, and no Discord model-selected
+action is exposed by this phase.
 
 When Core launches the host on Windows, it starts the default `npx` launcher
 with `CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP`, verifies Job Object

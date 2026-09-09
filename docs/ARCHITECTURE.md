@@ -11,8 +11,8 @@ The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
 event ingress, registered environment tasks, wake classification,
 conversation routing, Core/ModelRuntime session lifecycle, and selection of
 the source environment for typed presentation actions. It adds no autonomous
-scheduling, attention loop, world model, memory, or model-selected tool
-authority.
+scheduling, attention loop, world model, memory, or production model-selected
+tool authority.
 
 The intended direction is:
 
@@ -44,10 +44,10 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, and action destination selection | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, action destination selection, and the deterministic application tool-session seam | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or production model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
-| `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, and fail-closed runtime state | Canonical agent memory, provider authentication, or Discord behavior |
-| `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, and version-two JSONL host behavior | Semantic conversation history, agent identity, tools/MCP, or the top-level runtime |
+| `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
+| `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
 | `apps/discord-adapter` | Discord observations/actions, DM admission, edge-local mapping, typing, sends, edits, continuations, and presentation diagnostics | Lilavel identity, canonical history, memory, provider state, scheduling, or agent lifecycle |
 | Core persistence substrate | Canonical conversation messages and separate raw provenance evidence | Interpreted memory, retrieval, reflection, confidence, or durable cross-environment agent state |
 
@@ -79,10 +79,19 @@ Cancellation is an intent; a valid completion may win a completion/cancel
 race. Protocol, pipe, queue, cancellation-deadline, shutdown, or process
 containment uncertainty fails closed and does not trigger automatic reuse.
 
+`ModelRuntimeV3` is an explicit opt-in host; the default production path remains
+V2. One V3 generation identity may span bounded provider turns separated by
+`tool_wait`. An exact ordered result batch is consumed and fenced before the
+continuation write. Cancellation, supersession, shutdown, and provider failure
+join provider settlement with the application tool session before successor
+admission. An executor that cannot be confirmed settled poisons the runtime.
+
 The model sidecar is a transport boundary, not a second conversational runtime.
-Core owns the full context supplied to each request. The sidecar does not retain
-semantic history or provider continuation state. Stdout is reserved for
-machine-readable version-two JSONL frames; human diagnostics use stderr.
+Core owns the full context supplied to each request. The default V2 host retains
+no semantic history or provider continuation state. The opt-in V3 host retains
+only bounded active-generation replay context and local/provider call mapping;
+it discards them at the generation terminal. Stdout remains machine-readable
+JSONL only; human diagnostics use stderr.
 
 Provider selection, supported authentication discovery, pi-ai context mapping,
 cleanup deadlines, Bun commands, and Windows launcher details are local
@@ -105,8 +114,10 @@ this foundation.
 Runtime evidence is bounded diagnostic output. Core evidence joins conversation
 run IDs to physical generation IDs/epochs and safe protocol outcomes without
 storing request text, delta content, credentials, provider payloads, or
-exception bodies. Evidence is not canonical history and is not a live-provider
-or restart proof.
+exception bodies. V3 tool evidence adds only correlation-safe lifecycle classes,
+counts, normalized status/effect codes, and settlement outcomes; raw arguments,
+results, and replay payloads are excluded. Evidence is not canonical history and
+is not a live-provider or restart proof.
 
 ## Persistent kernel lifecycle
 

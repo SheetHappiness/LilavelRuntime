@@ -68,10 +68,11 @@ uv run --locked pytest
 
 These checks cover the zero-environment lifecycle, bounded observation
 backpressure, deterministic task settlement, environment/tool registration,
-provider-neutral immutable contracts, deterministic direct-message wake, and
-single-route dispatch to the source action boundary. Core-backed routing is
-exercised through the Discord adapter suite. They do not prove live providers,
-live Discord, Neuro, scheduling, model-selected tools, or memory.
+provider-neutral immutable contracts, deterministic direct-message wake,
+single-route dispatch to the source action boundary, and the fake application
+tool-session execution/containment seam. Core-backed routing is exercised
+through the Discord adapter suite. They do not prove live providers, live
+Discord, Neuro, scheduling, production model-selected tools, or memory.
 
 ### Core
 
@@ -87,7 +88,8 @@ uv run --locked pytest
 
 These checks cover Core conversation semantics, Character v0 fixtures and
 evaluation harnesses, persistence/evidence, runtime lifecycle, protocol
-fixtures, and process-containment tests selected by the host platform.
+fixtures, the opt-in V3 tool-wait/joined-settlement lifecycle, and
+process-containment tests selected by the host platform.
 
 ### Model sidecar
 
@@ -99,10 +101,11 @@ npx --yes bun@1.4.0 test
 ```
 
 These checks cover the TypeScript/Bun sidecar API, protocol parsing, provider
-adapter fixtures, cleanup, lifecycle tests, the shared inactive V3 tool-frame
-corpus, generation-local ID/alias mapping, and pinned pi-ai raw-argument
-correspondence without requiring a live provider. They do not establish Luna
-tool selection, provider continuation, endpoint multi-call behavior,
+adapter fixtures, cleanup, lifecycle tests, the shared V3 tool-frame
+corpus, generation-local ID/alias mapping, pinned pi-ai raw-argument
+correspondence, and the opt-in bounded V3 continuation harness without requiring
+a live provider. They do not establish Luna tool selection, live provider
+continuation, endpoint multi-call behavior,
 code-mode-only behavior, real-provider cancellation, or Discord effects.
 
 ### Discord adapter

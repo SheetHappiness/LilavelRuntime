@@ -28,6 +28,22 @@ tools.
 - `WakePolicy` maps an observation to a `WakeDecision`; an optional
   `EventRouter` owns the positive-wake conversational route.
 
+## Deterministic tool-session seam
+
+P4-B adds `DeterministicToolSessionFactory` as the application-owned execution
+seam for fixtures only. It snapshots exposed `ToolSpec` values per admitted
+generation, validates and authorizes calls through injected deterministic
+decisions, executes a batch sequentially in provider order, and creates bounded
+`ToolResult` values. Cancellation is rechecked before every call. Executor
+timeout and containment are explicit; an executor that ignores bounded
+cancellation is `uncontained` and must poison the consuming model runtime.
+
+Session evidence contains only generation/epoch/round/call correlation and safe
+lifecycle/status/effect codes. It excludes raw arguments, raw results, provider
+payloads, external identifiers, credentials, and exception bodies. This seam is
+not registered with the production kernel or Discord adapter and grants no real
+model-selected external effect.
+
 `submit()` waits when the bounded queue is full. It does not drop, overwrite,
 or silently accumulate observations. Events are rejected before startup and
 after shutdown begins.

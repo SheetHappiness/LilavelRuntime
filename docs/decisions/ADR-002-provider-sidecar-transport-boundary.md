@@ -25,6 +25,13 @@ guidance. The Bun sidecar performs supported auth discovery, provider mapping,
 streaming, and provider cleanup. Its stdout is protocol-only; diagnostics use
 stderr.
 
+The production entry point remains V2. An explicit opt-in V3 path may retain
+only bounded transport/replay context, alias and provider/local call mappings,
+and pending-round correlation for one active generation spanning multiple
+provider turns. It discards that state at terminal settlement. Application tool
+authorization, execution, results, and executor settlement remain outside the
+sidecar, as required by [ADR-007](ADR-007-model-tool-calls-remain-transport-only.md).
+
 ## Historical rationale status
 
 Contemporaneous rationale was not recovered. This ADR does not treat current
@@ -39,7 +46,8 @@ memory.
 ## Consequences
 
 - The sidecar does not own conversation, memory, character, social, voice, or
-  tool state, and does not use provider continuation state for this boundary.
+  application tool state. Its opt-in V3 continuation state is bounded to one
+  active generation and is never cross-generation semantic memory.
 - Provider-specific authentication and cleanup remain outside canonical history.
 - Protocol changes must preserve strict framing and the stdout/stderr split.
 

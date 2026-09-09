@@ -306,5 +306,27 @@ uv run --locked pytest
 `ModelRuntime` expose tools. The shared `lilavel-contracts` dependency hosts
 immutable `ToolSpec`, model-untrusted `ToolCall`, and bounded `ToolResult`
 values; it owns no tool policy, authorization, execution, or canonical history.
-The active Core/sidecar runtime protocol remains V2 until a later continuation
-slice has deterministic end-to-end settlement evidence.
+P4-A left the active Core/sidecar runtime protocol at V2; the P4-B continuation
+slice below adds a separate explicit opt-in host.
+
+## P4-B opt-in deterministic tool loop
+
+`ModelRuntimeV3` now provides that deterministic continuation path without
+changing the default `ModelRuntime` V2 activation. One `generation_id` and
+`epoch` spans up to four tool rounds, four calls per batch, and eight calls in
+total. While an immutable call batch is pending, the generation remains busy;
+only the exact ordered result batch for the active round can be consumed, and it
+is fenced before continuation dispatch.
+
+`ConversationCore` supplies its local `scope_id` and logical `run_id` only to a
+runtime that explicitly implements the run-aware seam. Calls and results remain
+outside canonical role/text history. Pre-tool and continuation text are one
+append-only transient candidate, and only the final successful generation
+completion can commit the aggregate assistant text.
+
+Provider settlement is joined with application tool-session settlement on
+cancellation, supersession, failure, and shutdown. A stale result cannot resume
+a newer generation; an uncontainable executor or uncertain provider cleanup
+fails the runtime closed. Default bounds are 60 seconds for result wait, 120
+seconds overall for a tool-enabled generation, and 10 seconds for the fake
+executor; existing stricter transport/shutdown bounds still win.
