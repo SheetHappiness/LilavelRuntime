@@ -11,6 +11,7 @@ from .contracts import (
     EnvironmentAdapter,
     EventRouter,
     NeverWakePolicy,
+    RuntimePresence,
     ToolSpec,
     WakePolicy,
     WorldEvent,
@@ -81,6 +82,7 @@ class LilavelRuntime:
         event_queue_size: int = 128,
         wake_policy: WakePolicy | None = None,
         event_router: EventRouter | None = None,
+        presence: RuntimePresence | None = None,
         shutdown_timeout: float = 5.0,
     ) -> None:
         if event_queue_size <= 0:
@@ -91,6 +93,7 @@ class LilavelRuntime:
         self._queue: asyncio.Queue[WorldEvent] = asyncio.Queue(maxsize=event_queue_size)
         self._wake_policy = wake_policy or NeverWakePolicy()
         self._event_router = event_router
+        self._presence = presence
         self._shutdown_timeout = shutdown_timeout
         self._environments: dict[str, EnvironmentAdapter] = {}
         self._tools: dict[str, ToolSpec] = {}
@@ -186,6 +189,17 @@ class LilavelRuntime:
             if self._pending_submissions == 0:
                 self._submissions_settled.set()
 
+    async def submit_user(self, text: str) -> str:
+        """Route local user priority through the one runtime-owned presence lane."""
+
+        async with self._lifecycle_lock:
+            if self._state is not RuntimeState.RUNNING:
+                raise RuntimeNotRunning(f"runtime is {self._state.value}")
+            presence = self._presence
+        if presence is None:
+            raise RuntimeNotRunning("runtime has no local presence component")
+        return await presence.submit_user(text)
+
     async def stop(self) -> None:
         while True:
             wait_for_start = False
@@ -247,6 +261,12 @@ class LilavelRuntime:
                         await self._event_router.close()
                     except BaseException as error:
                         router_error = error
+                if self._presence is not None:
+                    try:
+                        await self._presence.stop()
+                    except BaseException as error:
+                        if router_error is None:
+                            router_error = error
                 self._stop_requested.set()
                 await supervisor
         except TimeoutError as error:
@@ -301,10 +321,16 @@ class LilavelRuntime:
 
     async def _supervise(self) -> None:
         try:
+            if self._presence is not None:
+                await self._presence.start()
             async with asyncio.TaskGroup() as group:
                 self._ingress_task = group.create_task(
                     self._consume_events(group), name="lilavel-runtime-ingress"
                 )
+                if self._presence is not None:
+                    group.create_task(
+                        self._run_presence(self._presence), name="lilavel-runtime-presence"
+                    )
                 self._adapter_tasks = tuple(
                     group.create_task(
                         self._run_adapter(adapter),
@@ -325,6 +351,11 @@ class LilavelRuntime:
                 self._state = RuntimeState.FAILED
             self._admission_closed.set()
             raise
+        except BaseException as error:
+            self._failure = error
+            self._state = RuntimeState.FAILED
+            self._admission_closed.set()
+            self._started.set()
         else:
             if self.health().state is RuntimeState.STOPPING:
                 self._state = RuntimeState.STOPPED
@@ -336,11 +367,19 @@ class LilavelRuntime:
                     if self._failure is None:
                         self._failure = error
                         self._state = RuntimeState.FAILED
+            if self._state is RuntimeState.FAILED and self._presence is not None:
+                with suppress(BaseException):
+                    await self._presence.stop()
 
     async def _run_adapter(self, adapter: EnvironmentAdapter) -> None:
         await adapter.run(self.submit)
         if self._state is RuntimeState.RUNNING:
             raise RuntimeFailed(f"environment {adapter.environment_id!r} stopped unexpectedly")
+
+    async def _run_presence(self, presence: RuntimePresence) -> None:
+        await presence.wait()
+        if self._state is RuntimeState.RUNNING:
+            raise RuntimeFailed("local presence stopped unexpectedly")
 
     async def _consume_events(self, group: asyncio.TaskGroup) -> None:
         while True:

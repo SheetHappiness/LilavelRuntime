@@ -98,11 +98,25 @@ Run the package-local deterministic checks listed in
 optional and require their supported external authentication; absence of that
 prerequisite is reported as `BLOCKED`, not as a migration failure.
 
+## Persistent local CLI
+
+P5-B1 adds the root launcher:
+
+```powershell
+uv run --locked lilavel
+```
+
+It keeps one local process alive, streams canonical user conversation, and can
+optionally admit one bounded noncanonical idle action with `--wake-on-idle`.
+See the [runtime README](apps/runtime/README.md#p5-b1-local-presence) for the
+ownership and safety bounds.
+
 ## Explicitly deferred
 
-The current runtime does not add a scheduler, autonomous model wake loop,
-attention policy, world model, production model-selected tool activation, MCP
-integration, voice/guild behavior, retrieval, or memory semantics. P4-D proves
-only one explicitly composed, trusted-DM Discord send boundary; it is not a
-default production capability. Each broader capability remains future scope
+The current runtime does not add a general scheduler, probabilistic attention
+policy, world model, arbitrary model-selected tool activation, MCP integration,
+voice/guild behavior, retrieval, or memory semantics. P5-B1 proves only one
+bounded local idle opportunity with two terminal presence actions. P4-D proves
+only one explicitly composed, trusted-DM Discord send boundary; neither is a
+general production capability. Each broader capability remains future scope
 requiring an explicit decision and validation.

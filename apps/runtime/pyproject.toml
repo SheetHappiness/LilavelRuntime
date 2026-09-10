@@ -3,7 +3,10 @@ name = "lilavel-runtime"
 version = "0.1.0"
 description = "The provider-neutral persistent agent kernel for Lilavel."
 requires-python = ">=3.12"
-dependencies = ["lilavel-contracts", "lilavel-core"]
+dependencies = ["lilavel-contracts", "lilavel-core", "prompt-toolkit==3.0.52"]
+
+[project.scripts]
+lilavel = "lilavel_runtime.cli:main"
 
 [tool.uv.sources]
 lilavel-core = { path = "../core", editable = true }

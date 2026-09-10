@@ -2,17 +2,19 @@
 
 This document records the current ownership boundaries of the canonical
 `LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
-the proven conversational foundation and a replaceable Discord environment
-adapter. Future autonomous capabilities are not implied by this kernel.
+the proven conversational foundation, a replaceable Discord environment
+adapter, and the bounded P5-B1 local presence slice. Broader autonomous
+capabilities are not implied by this slice.
 
 ## Top-level product boundary
 
 The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
 event ingress, registered environment tasks, wake classification,
-conversation routing, Core/ModelRuntime session lifecycle, and selection of
-the source environment for typed presentation actions. It adds no autonomous
-scheduling, attention loop, world model, memory, or production model-selected
-tool authority.
+conversation routing, the optional local presence component,
+Core/ModelRuntime session lifecycle, and selection of the source environment
+for typed presentation actions. P5-B1 adds one monotonic idle opportunity and
+transient autonomous cognition lane; it adds no general scheduler, attention
+loop, world model, memory, or arbitrary model-selected tool authority.
 
 The intended direction is:
 
@@ -44,12 +46,46 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, autonomous scheduling, memory, provider sessions, or production model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, optional local presence lifecycle, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, general scheduling, memory, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
 | `apps/discord-adapter` | Discord observations/actions, DM admission, edge-local mapping, typing, sends, edits, continuations, and presentation diagnostics | Lilavel identity, canonical history, memory, provider state, scheduling, or agent lifecycle |
 | Core persistence substrate | Canonical conversation messages and separate raw provenance evidence | Interpreted memory, retrieval, reflection, confidence, or durable cross-environment agent state |
+
+## Persistent CLI presence
+
+The root `uv run lilavel` launcher composes one `LilavelRuntime`, one local
+presence component, one `ConversationCore`, and one `ModelRuntimeV3`. Normal
+typed input enters `ConversationCore.start_turn()` and retains canonical
+conversation semantics. Background rendering is isolated behind a bounded
+`prompt_toolkit` output bridge, so terminal mechanics do not become runtime
+semantics.
+
+The presence component waits for either real local input or a runtime-monotonic
+idle deadline. Real activity resets the deadline and one-shot idle latch. One
+`IdleOpportunity` receives a deterministic `NO_WAKE` or `WAKE`; an opportunity
+can admit at most one cognition run, and no second opportunity is created until
+new user activity resets the latch. The safe production default is `NO_WAKE`
+with a 300-second idle interval; explicit CLI configuration can enable the
+deterministic wake path.
+
+`AutonomousCognitionRunner` is a thin admission client of the existing V3 model
+host. It receives only a bounded suffix of canonical conversation context and
+ephemeral trusted guidance. It creates no user message, transcript, assistant
+commit, or durable memory. Only an explicitly application-permitted autonomous
+logical run identity receives the two presence tool specs; a matching string
+prefix alone grants no capability, and ordinary Core runs receive an empty
+exposure snapshot.
+
+The generation-scoped presence executor permits exactly one action. A
+successful `presence.say` enqueues one bounded local utterance and returns
+`effect=confirmed`; `presence.stay_silent` returns success with `effect=none`
+and emits nothing. Provider continuation remains mandatory after the result
+batch, but its semantic text is discarded. User input records priority
+cancellation before successor admission, including the pre-handle race, and
+waits for the existing provider/tool joined settlement before the user turn
+uses the shared model runtime.
 
 ## Conversational foundation
 
@@ -150,7 +186,8 @@ is not a live-provider or restart proof.
 ## Persistent kernel lifecycle
 
 `LilavelRuntime` is a separate Python package that depends on provider-neutral
-Core but not on Discord, Neuro, the model sidecar, or a provider. Its normal lifecycle is
+Core and the CLI-local `prompt-toolkit` renderer but not on Discord, Neuro, the
+model sidecar package, or a provider. Its normal lifecycle is
 `new → starting → running → stopping → stopped`; stopped and failed instances
 cannot be restarted. It owns registered adapter coroutines through an
 `asyncio.TaskGroup`. An unexpected owned-task failure fails the kernel closed.
@@ -216,8 +253,7 @@ cannot import Core persistence or perform Core lifecycle operations.
 ## Deferred boundaries
 
 The following are intentionally `DEFERRED` rather than implied: a durable
-agent-state model, scheduler or timer source, autonomous model wake loop,
-attention/decision policy, production model tool activation,
-retrieval or memory semantics, and production
-non-Discord environment adapters. Each needs an explicit decision and
-proportionate validation before code is added.
+agent-state model, general scheduler, probabilistic or LLM attention policy,
+arbitrary autonomous tool activation, retrieval or memory semantics, and
+additional production environment adapters. Each needs an explicit decision
+and proportionate validation before code is added.

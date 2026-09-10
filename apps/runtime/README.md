@@ -82,6 +82,33 @@ fencing remain authoritative.
 or silently accumulate observations. Events are rejected before startup and
 after shutdown begins.
 
+## P5-B1 local presence
+
+The optional local presence component is started, monitored, and stopped by
+`LilavelRuntime`. It owns one bounded input queue and one cognition lane over a
+shared `ConversationCore`/`ModelRuntimeV3`. Normal user input remains canonical;
+idle cognition never calls `ConversationCore.start_turn()` and never writes
+history.
+
+True idle is a monotonic event-or-timeout wait with a one-shot latch. The safe
+default policy is `NO_WAKE`; explicit deterministic configuration may admit one
+run. Autonomous generations receive only `presence.say` and
+`presence.stay_silent`, while normal conversation generations receive no
+presence tools. The action executes through the existing application registry
+and tool-session path. Provider continuation text is consumed but suppressed,
+so one `say` produces exactly one noncanonical local utterance.
+
+From the repository root, run:
+
+```powershell
+uv run --locked lilavel
+```
+
+`--wake-on-idle` enables deterministic autonomous admission for a controlled
+proof. `--wake-after-opportunities N` deterministically records earlier
+`NO_WAKE` decisions before waking on opportunity `N`; production defaults
+remain silent.
+
 ## Lifecycle
 
 The normal states are `new → starting → running → stopping → stopped`.

@@ -21,6 +21,7 @@ __all__ = [
     "EventTrust",
     "JsonValue",
     "NeverWakePolicy",
+    "RuntimePresence",
     "ToolCall",
     "ToolResult",
     "ToolSpec",
@@ -118,6 +119,18 @@ class EventRouter(Protocol):
     async def route(self, event: WorldEvent, execute: ActionExecutor) -> None: ...
 
     async def close(self) -> None: ...
+
+
+class RuntimePresence(Protocol):
+    """Optional runtime-owned local presence component."""
+
+    async def start(self) -> None: ...
+
+    async def submit_user(self, text: str) -> str: ...
+
+    async def wait(self) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 class NeverWakePolicy:

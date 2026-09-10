@@ -72,6 +72,43 @@ async def test_context_manager_owns_clean_lifecycle() -> None:
     assert runtime.state is RuntimeState.STOPPED
 
 
+@dataclass(slots=True)
+class _FixturePresence:
+    started: bool = False
+    stopped: bool = False
+    inputs: list[str] = field(default_factory=lambda: [])
+    closed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def submit_user(self, text: str) -> str:
+        self.inputs.append(text)
+        return "completed"
+
+    async def wait(self) -> None:
+        await self.closed.wait()
+
+    async def stop(self) -> None:
+        self.stopped = True
+        self.closed.set()
+
+
+@pytest.mark.asyncio
+async def test_runtime_owns_optional_local_presence_lifecycle_and_input() -> None:
+    presence = _FixturePresence()
+    runtime = LilavelRuntime(presence=presence)
+
+    await runtime.start()
+    assert presence.started
+    assert await runtime.submit_user("hello") == "completed"
+    await runtime.stop()
+
+    assert presence.inputs == ["hello"]
+    assert presence.stopped
+    assert runtime.state is RuntimeState.STOPPED
+
+
 @pytest.mark.asyncio
 async def test_concurrent_stop_callers_share_one_settlement() -> None:
     runtime = LilavelRuntime()

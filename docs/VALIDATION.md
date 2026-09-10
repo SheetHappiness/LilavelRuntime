@@ -2,8 +2,9 @@
 
 This document indexes authoritative checks and their interpretation. It records
 what a command can establish; it does not claim that a check has been run.
-There is no aggregate root package command because the repository contains
-independently locked Python and Bun components.
+The root Python project is only the persistent CLI launcher; package validation
+remains independently locked because the repository contains separate Python
+and Bun components.
 
 ## Result vocabulary
 
@@ -39,6 +40,18 @@ these commands proves live behavior or autonomous model/tool behavior.
 
 Run the applicable package-local commands from the package directory.
 
+### Root presence launcher
+
+```powershell
+uv sync --locked
+uv lock --check
+uv run --locked lilavel --help
+```
+
+These checks prove the root launcher resolves the pinned runtime and
+`prompt-toolkit` dependencies and exposes the expected command surface. They do
+not invoke a provider or prove an interactive terminal session.
+
 ### Shared contracts
 
 ```powershell
@@ -71,9 +84,14 @@ backpressure, deterministic task settlement, environment/tool registration,
 provider-neutral immutable contracts, deterministic direct-message wake,
 single-route dispatch to the source action boundary, the application-owned
 tool registry/exposure/authorization seam, and deterministic tool-session
-execution/containment. Core-backed routing is exercised through the Discord
-adapter suite. They do not prove live providers, live Discord, Neuro,
-scheduling, production model-selected tools, or memory.
+execution/containment. P5-B1 coverage adds runtime-owned local presence,
+monotonic idle reset/latching, deterministic wake/no-wake, noncanonical
+say/silence actions, terminal continuation suppression, user preemption before
+generation and during tool execution, joined settlement, bounded admissions,
+shutdown, and the thread-safe CLI output boundary. Core-backed Discord routing
+remains exercised through the Discord adapter suite. These checks do not prove
+live providers, live Discord, Neuro, general scheduling, arbitrary
+model-selected tools, or memory.
 
 ### Core
 
@@ -151,6 +169,8 @@ must be reported separately from deterministic checks:
 
 - Core Luna probe: from `apps/core`,
   `uv run --locked python scripts/conversation_live.py`.
+- Persistent presence CLI: from the repository root,
+  `uv run --locked lilavel --idle-seconds 15 --wake-after-opportunities 2 --debug-presence`.
 - Sidecar smoke and probes: from `apps/model-sidecar`,
   `npx --yes bun@1.4.0 run smoke -- "Reply exactly STREAM_OK."`,
   `npx --yes bun@1.4.0 run probe -- cancel-recovery`, and

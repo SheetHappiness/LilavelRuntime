@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the PRESENCE-V0 design; not implemented by P5-A.
+Accepted and implemented for the P5-B1 PRESENCE-V0 slice.
 
 ## Date
 
@@ -55,14 +55,32 @@ cancelled, stale output is fenced, provider and application settlement are
 joined, and only then may the user's successor run proceed. Cancellation does
 not claim rollback or known effect reversal.
 
-## Current implementation boundary
+## Implemented ownership and terminal semantics
 
-P5-A is a design/research phase. The current repository still has no
-autonomous scheduler, model wake loop, presence CLI, or durable agent state.
-P5-B must add a narrow Core-owned transient autonomous cognition admission seam
-without faking a user message, creating a second transcript, or calling the
-sidecar directly. V0 autonomous `SAY` output is presented but is not committed
-to canonical history until a later origin/commit decision is accepted.
+P5-B1 resolved the autonomous-run seam in favor of a thin runtime-owned
+`AutonomousCognitionRunner`. `ConversationCore.start_turn()` necessarily
+accepts a canonical user message and commits a successful assistant response,
+so adding autonomy there would require semantic exceptions. The runner instead
+submits one transient request through the same `ModelRuntimeV3`; it owns no
+provider lifecycle, tool execution, transcript, or persistence. One runtime
+coordinator serializes user and autonomous admission, retaining cancellation
+intent even when user input races generation-handle binding.
+
+The only autonomous tools are `presence.say(text)` and
+`presence.stay_silent()`. An application-owned one-shot permit controls their
+exposure; a caller-chosen logical-run prefix alone grants nothing. Their
+application-owned session independently authorizes and reserves at most one
+terminal action per generation. `say` validates bounded text, publishes once to
+the local CLI sink, and reports `effect=confirmed`; `stay_silent` reports
+success with `effect=none`. The V3 host still submits the exact `ToolResult`
+batch and waits for the provider continuation/terminal event. Any provider text
+before or after the action is consumed as noncanonical transport output and is
+not rendered. This preserves joined settlement without duplicate semantic
+speech.
+
+The implementation adds no autonomous scheduler or durable agent state. A
+monotonic one-shot idle latch, deterministic wake policy, single active lane,
+and user-activity reset bound PRESENCE-V0.
 
 ## Rationale
 

@@ -21,9 +21,10 @@ import ctypes
 import os
 import subprocess
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from ctypes import wintypes
-from typing import Any, Final
+from typing import Any, Final, cast
 
 _CREATE_SUSPENDED: Final = 0x00000004
 _CREATE_NEW_PROCESS_GROUP: Final = 0x00000200
@@ -138,7 +139,8 @@ def process_creation_flags() -> int:
 
 
 def _win32_error(operation: str) -> ProcessContainmentError:
-    error = ctypes.get_last_error()
+    get_last_error = cast(Callable[[], int], ctypes.__dict__["get_last_error"])
+    error = get_last_error()
     return ProcessContainmentError(f"{operation} failed (Win32 error {error})")
 
 
