@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 
 from lilavel_core import ConversationCore, ModelRuntimeV3
+from lilavel_core.production_cognition import build_turn_guidance
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
 
@@ -84,7 +85,11 @@ async def run_cli(
     sink = PromptToolkitOutputSink(loop)
     tools = PresenceToolSessionFactory(sink)
     model = ModelRuntimeV3(tool_session_factory=tools)
-    core = ConversationCore(model, scope_id="local-cli")
+    core = ConversationCore(
+        model,
+        trusted_guidance=build_turn_guidance,
+        scope_id="local-cli",
+    )
     runner = AutonomousCognitionRunner(model, tools)
     wake_policy = (
         WakeAfterIdleOpportunitiesPolicy(wake_after_opportunities)

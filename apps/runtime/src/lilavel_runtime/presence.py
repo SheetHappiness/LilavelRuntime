@@ -30,6 +30,7 @@ from lilavel_core import (
     ToolBatchCorrelation,
     ToolGenerationContext,
 )
+from lilavel_core.production_cognition import build_turn_guidance
 
 from .tool_registry import ApplicationToolRegistry, ToolAuthorization, ToolBinding
 from .tool_session import DeterministicToolSession, DeterministicToolSessionFactory
@@ -41,6 +42,11 @@ DEFAULT_IDLE_TIMEOUT_S: Final = 300.0
 DEFAULT_RECENT_CONTEXT_MESSAGES: Final = 12
 PRESENCE_EVIDENCE_CAPACITY: Final = 256
 PRESENCE_ACTION_STATE_CAPACITY: Final = 64
+AUTONOMOUS_CONTROL_GUIDANCE: Final[tuple[str, ...]] = (
+    "This is a transient, noncanonical idle cognition opportunity.",
+    "Choose exactly one terminal tool: presence.say(text) or "
+    "presence.stay_silent(). Do not answer with ordinary assistant text.",
+)
 
 SAY_SPEC = ToolSpec(
     PRESENCE_SAY,
@@ -310,11 +316,7 @@ class AutonomousCognitionRunner:
         request = ModelRequest(
             messages=recent if recent else None,
             prompt=None if recent else "A bounded idle opportunity is available.",
-            system_prompt=(
-                "This is a transient, noncanonical idle cognition opportunity.",
-                "Choose exactly one terminal tool: presence.say(text) or "
-                "presence.stay_silent(). Do not answer with ordinary assistant text.",
-            ),
+            system_prompt=(*build_turn_guidance(), *AUTONOMOUS_CONTROL_GUIDANCE),
         )
         self._tools.permit_run(run_id)
         try:

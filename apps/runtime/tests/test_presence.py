@@ -63,7 +63,11 @@ def _components(
         tool_generation_deadline=2,
         tool_settlement_deadline=1,
     )
-    core = ConversationCore(model, scope_id="presence-test")
+    core = ConversationCore(
+        model,
+        trusted_guidance=build_turn_guidance,
+        scope_id="presence-test",
+    )
     runner = AutonomousCognitionRunner(model, tools)
     presence = PersistentPresenceRuntime(
         model,
@@ -173,7 +177,7 @@ async def test_provider_continuation_after_terminal_action_is_consumed_not_rende
 async def test_p5b1_probe_captures_system_prompt_for_user_and_autonomous_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Capture the live request guidance before changing P5-B1 composition."""
+    """Keep canonical Character v0 guidance on both P5-B1 request paths."""
 
     presence, model, _ = _components("silent", idle_timeout_s=0.02)
     captured: list[tuple[str, ModelRequest]] = []
@@ -197,15 +201,14 @@ async def test_p5b1_probe_captures_system_prompt_for_user_and_autonomous_paths(
     autonomous_request = next(
         request for run_id, request in captured if run_id.startswith("autonomous:")
     )
-    assert user_request.system_prompt == ()
-    assert autonomous_request.system_prompt == (
+    canonical_guidance = build_turn_guidance()
+    control_guidance = (
         "This is a transient, noncanonical idle cognition opportunity.",
         "Choose exactly one terminal tool: presence.say(text) or "
         "presence.stay_silent(). Do not answer with ordinary assistant text.",
     )
-    canonical_guidance = build_turn_guidance()
-    assert canonical_guidance != user_request.system_prompt
-    assert canonical_guidance != autonomous_request.system_prompt
+    assert user_request.system_prompt == canonical_guidance
+    assert autonomous_request.system_prompt == canonical_guidance + control_guidance
 
 
 @pytest.mark.asyncio
