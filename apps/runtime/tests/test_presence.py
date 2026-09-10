@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from lilavel_core import ConversationCore, ModelRuntimeV3, ToolGenerationContext
+from lilavel_core import ConversationCore, ModelRequest, ModelRuntimeV3, ToolGenerationContext
+from lilavel_core.production_cognition import build_turn_guidance
 
 from lilavel_runtime import (
     AutonomousCognitionRunner,
@@ -166,6 +167,45 @@ async def test_provider_continuation_after_terminal_action_is_consumed_not_rende
         PresenceOutput("autonomous", "hello from idle")
     ]
     assert all("duplicate continuation" not in item.text for item in sink.outputs)
+
+
+@pytest.mark.asyncio
+async def test_p5b1_probe_captures_system_prompt_for_user_and_autonomous_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capture the live request guidance before changing P5-B1 composition."""
+
+    presence, model, _ = _components("silent", idle_timeout_s=0.02)
+    captured: list[tuple[str, ModelRequest]] = []
+    original_generate_for_run = model.generate_for_run
+
+    def capture_request(request: ModelRequest, *, scope_id: str, logical_run_id: str):
+        captured.append((logical_run_id, request))
+        return original_generate_for_run(request, scope_id=scope_id, logical_run_id=logical_run_id)
+
+    monkeypatch.setattr(model, "generate_for_run", capture_request)
+
+    await presence.start()
+    assert await presence.submit_user("capture this request") == "completed"
+    await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
+    await presence.stop()
+
+    assert len(captured) == 2
+    user_request = next(
+        request for run_id, request in captured if not run_id.startswith("autonomous:")
+    )
+    autonomous_request = next(
+        request for run_id, request in captured if run_id.startswith("autonomous:")
+    )
+    assert user_request.system_prompt == ()
+    assert autonomous_request.system_prompt == (
+        "This is a transient, noncanonical idle cognition opportunity.",
+        "Choose exactly one terminal tool: presence.say(text) or "
+        "presence.stay_silent(). Do not answer with ordinary assistant text.",
+    )
+    canonical_guidance = build_turn_guidance()
+    assert canonical_guidance != user_request.system_prompt
+    assert canonical_guidance != autonomous_request.system_prompt
 
 
 @pytest.mark.asyncio
