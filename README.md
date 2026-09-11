@@ -3,8 +3,8 @@
 LilavelRuntime is the canonical repository for Lilavel as a persistent agent
 runtime. It combines a small persistent-agent kernel with the controlled
 migration of the proven conversational foundation from
-`C:\Lilavel-m4c-integration`; it does not claim that autonomous behavior is
-implemented.
+`C:\Lilavel-m4c-integration`; it does not claim that general autonomous
+behavior is implemented.
 
 ## Product model
 
@@ -12,7 +12,7 @@ Lilavel's top-level runtime owns persistent process lifecycle, bounded
 world-event ingress, registered environment tasks, deterministic explicit-DM
 wake/routing, Core conversation-session lifecycle, and typed environment
 presentation actions. Autonomous scheduling, production model-selected tools,
-attention/decision, and cross-environment state remain deferred.
+attention/decision, durable memory, and cross-environment state remain deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -50,9 +50,9 @@ Discord one-to-one DM
 ## Current foundation
 
 - `apps/runtime` contains the persistent kernel, provider-neutral observation
-  and action contracts, deterministic explicit-DM policy, and the Core-backed
-  conversation router. It still starts cleanly with zero environments and
-  performs no autonomous work.
+  and action contracts, deterministic explicit-DM policy, the Core-backed
+  conversation router, and the local-CLI-only bounded MIND-0 state loop. It
+  still starts cleanly with zero environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,
@@ -106,8 +106,10 @@ P5-B1 adds the root launcher:
 uv run --locked lilavel
 ```
 
-It keeps one local process alive, streams canonical user conversation, and can
-optionally admit one bounded noncanonical idle action with `--wake-on-idle`.
+It keeps one local process alive, streams canonical user conversation, appraises
+successful turns into bounded in-memory intentions, and can optionally admit
+one noncanonical idle action caused by an active intention with
+`--wake-on-idle`.
 See the [runtime README](apps/runtime/README.md#p5-b1-local-presence) for the
 ownership and safety bounds.
 
@@ -115,8 +117,8 @@ ownership and safety bounds.
 
 The current runtime does not add a general scheduler, probabilistic attention
 policy, world model, arbitrary model-selected tool activation, MCP integration,
-voice/guild behavior, retrieval, or memory semantics. P5-B1 proves only one
-bounded local idle opportunity with two terminal presence actions. P4-D proves
-only one explicitly composed, trusted-DM Discord send boundary; neither is a
-general production capability. Each broader capability remains future scope
-requiring an explicit decision and validation.
+voice/guild behavior, retrieval, durable memory semantics, or cross-environment
+mind state. MIND-0 proves only one bounded local causal loop on top of P5-B1;
+P4-D proves only one explicitly composed, trusted-DM Discord send boundary.
+Neither is a general production capability. Each broader capability remains
+future scope requiring an explicit decision and validation.

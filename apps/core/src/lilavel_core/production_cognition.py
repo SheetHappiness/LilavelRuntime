@@ -1,4 +1,6 @@
-"""Production composition of the canonical Character v0 and neutral turn controls."""
+"""Production composition of immutable Character v0 and run-local guidance."""
+
+from collections.abc import Sequence
 
 from .character import LILAVEL_CHARACTER_V0
 from .cognition import IdentityCanon, ResponseDisposition, WorkingState, compile_guidance
@@ -20,16 +22,22 @@ EXPERIMENTAL_IDENTITY = IdentityCanon(
 )
 
 
-def build_turn_guidance() -> tuple[str, ...]:
-    """Build fresh neutral controls for an admitted conversational turn.
+def build_character_guidance() -> tuple[str, ...]:
+    """Return only the immutable Character v0 guidance blocks."""
 
-    No classifier or durable cognition state exists today. Use only the fact
-    that the application is responding to the current user turn; do not infer
-    emotion, relationship, topic, or intent from untrusted message text.
+    return compile_guidance(LILAVEL_CHARACTER_V0)
+
+
+def build_turn_guidance(mind_guidance: Sequence[str] = ()) -> tuple[str, ...]:
+    """Build fresh normal-turn behavior over immutable Character v0 guidance.
+
+    ``mind_guidance`` is an optional application-composed, read-only projection.
+    It is kept outside the character canon and outside Core canonical history.
     """
     state = WorkingState("respond to the current user turn")
     disposition = ResponseDisposition()
-    return compile_guidance(LILAVEL_CHARACTER_V0, state=state, disposition=disposition)
+    behavior = compile_guidance(LILAVEL_CHARACTER_V0, state=state, disposition=disposition)[-1]
+    return (*build_character_guidance(), behavior, *tuple(mind_guidance))
 
 
 def create_conversation(runtime: ConversationRuntime) -> ConversationCore:

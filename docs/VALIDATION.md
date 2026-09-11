@@ -89,9 +89,12 @@ monotonic idle reset/latching, deterministic wake/no-wake, noncanonical
 say/silence actions, terminal continuation suppression, user preemption before
 generation and during tool execution, joined settlement, bounded admissions,
 shutdown, and the thread-safe CLI output boundary. Core-backed Discord routing
-remains exercised through the Discord adapter suite. These checks do not prove
-live providers, live Discord, Neuro, general scheduling, arbitrary
-model-selected tools, or memory.
+remains exercised through the Discord adapter suite. MIND-0 coverage adds
+strict appraisal parsing, bounded runtime intentions/self-actions, canonical
+provenance binding, appraisal preemption, intention-specific idle admission,
+noncanonical expression, and next-turn self-action projection. These checks do
+not prove live providers, live Discord, Neuro, general scheduling, arbitrary
+model-selected tools, durable memory, or restart persistence.
 
 ### Core
 

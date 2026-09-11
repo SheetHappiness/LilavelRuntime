@@ -183,12 +183,13 @@ Callers must derive it only from trusted, application-owned semantic fixtures;
 Provider metadata, session state, tools, and transport details remain outside
 this layer.
 
-Production composition lives in `production_cognition.py`. It uses the current
-canonical Character v0 fixture and builds neutral `WorkingState` /
-`ResponseDisposition` through the existing compiler for every model request.
-`trusted_guidance` accepts either static blocks or an application-owned
-zero-argument builder. The builder receives no user text or transport metadata;
-it adds nothing to canonical history.
+Production composition lives in `production_cognition.py`. It exposes the
+immutable Character v0 blocks separately, then builds normal-turn
+`WorkingState` / `ResponseDisposition` controls through the existing compiler.
+An application-owned read-only projection may be appended through
+`build_turn_guidance` without entering canonical history. `trusted_guidance`
+accepts either static blocks or a zero-argument builder; the builder receives no
+user text or transport metadata.
 
 ## Offline Character v0 evaluation
 

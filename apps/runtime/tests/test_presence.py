@@ -10,19 +10,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from lilavel_core import ConversationCore, ModelRequest, ModelRuntimeV3, ToolGenerationContext
-from lilavel_core.production_cognition import build_turn_guidance
+from lilavel_core import (
+    ContextMessage,
+    ConversationCore,
+    ModelRequest,
+    ModelRuntimeV3,
+    ToolGenerationContext,
+)
+from lilavel_core.production_cognition import build_character_guidance, build_turn_guidance
 
 from lilavel_runtime import (
     AutonomousCognitionRunner,
     AutonomousStatus,
     FixedPresenceWakePolicy,
     IdleOpportunity,
+    IntentionStatus,
+    MindAppraisalAction,
+    MindState,
     PersistentPresenceRuntime,
     PresenceAction,
     PresenceOutput,
     PresenceToolSessionFactory,
     WakeAfterIdleOpportunitiesPolicy,
+    parse_mind_appraisal,
 )
 from lilavel_runtime.cli import PromptToolkitOutputSink
 
@@ -63,9 +73,10 @@ def _components(
         tool_generation_deadline=2,
         tool_settlement_deadline=1,
     )
+    mind_state = MindState()
     core = ConversationCore(
         model,
-        trusted_guidance=build_turn_guidance,
+        trusted_guidance=lambda: build_turn_guidance(mind_state.projection().guidance_blocks()),
         scope_id="presence-test",
     )
     runner = AutonomousCognitionRunner(model, tools)
@@ -74,6 +85,7 @@ def _components(
         core,
         runner,
         actual_sink,
+        mind_state=mind_state,
         wake_policy=FixedPresenceWakePolicy(wake=wake),
         idle_timeout_s=idle_timeout_s,
     )
@@ -102,6 +114,67 @@ async def test_cold_start_idle_no_wake_and_clean_shutdown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wake_without_an_active_intention_admits_no_model_generation() -> None:
+    presence, model, sink = _components("say", wake=True)
+    await presence.start()
+    await _wait_for(lambda: any(item.kind == "wake_decision" for item in presence.evidence()))
+    await asyncio.sleep(0.05)
+    await presence.stop()
+
+    assert sink.outputs == []
+    assert not any(item.kind == "cognition_admitted" for item in presence.evidence())
+    assert not any(
+        item.kind in {"tool_requested", "execution_started"} for item in model.tool_evidence()
+    )
+
+
+def test_mind_appraisal_parser_fails_closed_without_retry() -> None:
+    assert parse_mind_appraisal('{"action":"no_change"}').action is MindAppraisalAction.NO_CHANGE
+    assert parse_mind_appraisal('{"action":"create_intention","text":"finish later"}').action is (
+        MindAppraisalAction.CREATE_INTENTION
+    )
+    for raw in (
+        "",
+        "not json",
+        '{"action":"no_change","text":"unexpected"}',
+        '{"action":"create_intention","text":""}',
+        '{"action":"create_intention","text":"x","extra":true}',
+    ):
+        assert parse_mind_appraisal(raw).action is MindAppraisalAction.NO_CHANGE
+
+
+def test_mind_state_bounds_records_and_selects_only_active_intentions() -> None:
+    state = MindState(intentions_capacity=1, self_actions_capacity=1)
+    first = state.create_intention(
+        "first matter",
+        user_message_id="user-1",
+        assistant_message_id="assistant-1",
+    )
+    assert first is not None
+    assert (
+        state.create_intention(
+            "blocked matter",
+            user_message_id="user-2",
+            assistant_message_id="assistant-2",
+        )
+        is None
+    )
+    action = state.mark_expressed(first.intention_id, "said once")
+    assert action is not None
+    assert state.active_intention() is None
+
+    second = state.create_intention(
+        "second matter",
+        user_message_id="user-3",
+        assistant_message_id="assistant-3",
+    )
+    assert second is not None
+    assert second.intention_id != first.intention_id
+    assert state.active_intention() == second
+    assert len(state.intentions()) == len(state.self_actions()) == 1
+
+
+@pytest.mark.asyncio
 async def test_user_input_streams_commits_and_returns_to_idle() -> None:
     presence, _, sink = _components("say", wake=False, idle_timeout_s=0.2)
     await presence.start()
@@ -115,6 +188,79 @@ async def test_user_input_streams_commits_and_returns_to_idle() -> None:
         ("user", "hello"),
         ("assistant", "reply:hello"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_mind_state_causes_noncanonical_expression_and_next_turn_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    presence, model, sink = _components("say", idle_timeout_s=0.02)
+    captured: list[tuple[str, ModelRequest]] = []
+    original_generate_for_run = model.generate_for_run
+
+    def capture_request(request: ModelRequest, *, scope_id: str, logical_run_id: str):
+        captured.append((logical_run_id, request))
+        return original_generate_for_run(request, scope_id=scope_id, logical_run_id=logical_run_id)
+
+    monkeypatch.setattr(model, "generate_for_run", capture_request)
+
+    await presence.start()
+    prompt = "I have an unfinished future matter to finish tomorrow."
+    assert await presence.submit_user(prompt) == "completed"
+
+    intention = presence.mind_state.intentions()[0]
+    assert intention.status is IntentionStatus.ACTIVE
+    assert intention.text == "Finish the concrete matter later."
+    assert intention.user_message_id == presence.canonical_history[0].message_id
+    assert intention.assistant_message_id == presence.canonical_history[1].message_id
+    assert not [item for item in sink.outputs if item.kind == "autonomous"]
+
+    await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
+    assert [item.text for item in sink.outputs if item.kind == "autonomous"] == ["hello from idle"]
+    assert presence.mind_state.intentions()[0].status is IntentionStatus.EXPRESSED
+    assert [item.text for item in presence.mind_state.self_actions()] == ["hello from idle"]
+    assert len(presence.history) == 2
+
+    assert await presence.submit_user("Ще ні") == "completed"
+    await presence.stop()
+
+    normal_requests = [
+        request
+        for run_id, request in captured
+        if not run_id.startswith(("appraisal:", "autonomous:"))
+    ]
+    assert len(normal_requests) == 2
+    follow_up = normal_requests[-1]
+    assert follow_up.messages is not None
+    assert follow_up.messages[-1] == ContextMessage("user", "Ще ні")
+    assert any("hello from idle" in block for block in follow_up.system_prompt)
+    assert all("hello from idle" not in message.text for message in follow_up.messages)
+
+
+@pytest.mark.asyncio
+async def test_user_preempts_appraisal_before_successor_generation() -> None:
+    presence, model, _ = _components("block-first-appraisal", wake=False, idle_timeout_s=1)
+    await presence.start()
+    first = asyncio.create_task(presence.submit_user("An unfinished future matter."))
+    await _wait_for(lambda: any(item.kind == "appraisal_admitted" for item in presence.evidence()))
+    second = asyncio.create_task(presence.submit_user("Ще ні"))
+
+    assert await first == "completed"
+    assert await second == "completed"
+    await presence.stop()
+
+    appraisal_settled = [item for item in presence.evidence() if item.kind == "appraisal_settled"]
+    assert appraisal_settled[0].result == AutonomousStatus.CANCELLED.value
+    assert presence.mind_state.intentions() == ()
+    assert [(item.role, item.text) for item in presence.history] == [
+        ("user", "An unfinished future matter."),
+        ("assistant", "reply:An unfinished future matter."),
+        ("user", "Ще ні"),
+        ("assistant", "reply:Ще ні"),
+    ]
+    assert not any(
+        item.kind in {"tool_requested", "execution_started"} for item in model.tool_evidence()
+    )
 
 
 @pytest.mark.asyncio
@@ -137,26 +283,29 @@ async def test_real_activity_resets_idle_and_one_timeout_makes_one_opportunity()
 async def test_wake_stay_silent_is_successful_non_output_and_latched() -> None:
     presence, _, sink = _components("silent")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await asyncio.sleep(0.05)
     await presence.stop()
 
-    assert sink.outputs == []
+    assert [item for item in sink.outputs if item.kind == "autonomous"] == []
     settled = [item for item in presence.evidence() if item.kind == "cognition_settled"]
     assert [item.result for item in settled] == [AutonomousStatus.COMPLETED.value]
     assert len([item for item in presence.evidence() if item.kind == "idle_opportunity"]) == 1
+    assert presence.mind_state.intentions()[0].status is IntentionStatus.ACTIVE
 
 
 @pytest.mark.asyncio
 async def test_wake_say_has_exactly_one_visible_noncanonical_output() -> None:
     presence, model, sink = _components("say")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await presence.stop()
 
     autonomous = [item.text for item in sink.outputs if item.kind == "autonomous"]
     assert autonomous == ["hello from idle"]
-    assert presence.history == ()
+    assert len(presence.history) == 2
     assert model.tool_evidence()[-1].settlement == "settled"
 
 
@@ -164,6 +313,7 @@ async def test_wake_say_has_exactly_one_visible_noncanonical_output() -> None:
 async def test_provider_continuation_after_terminal_action_is_consumed_not_rendered() -> None:
     presence, _, sink = _components("say")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await presence.stop()
 
@@ -190,36 +340,49 @@ async def test_p5b1_probe_captures_system_prompt_for_user_and_autonomous_paths(
     monkeypatch.setattr(model, "generate_for_run", capture_request)
 
     await presence.start()
-    assert await presence.submit_user("capture this request") == "completed"
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await presence.stop()
 
-    assert len(captured) == 2
+    assert len(captured) == 3
     user_request = next(
-        request for run_id, request in captured if not run_id.startswith("autonomous:")
+        request
+        for run_id, request in captured
+        if not run_id.startswith(("autonomous:", "appraisal:"))
+    )
+    appraisal_request = next(
+        request for run_id, request in captured if run_id.startswith("appraisal:")
     )
     autonomous_request = next(
         request for run_id, request in captured if run_id.startswith("autonomous:")
     )
-    canonical_guidance = build_turn_guidance()
-    control_guidance = (
-        "This is a transient, noncanonical idle cognition opportunity.",
-        "Choose exactly one terminal tool: presence.say(text) or "
-        "presence.stay_silent(). Do not answer with ordinary assistant text.",
+    character_guidance = build_character_guidance()
+    assert user_request.system_prompt == build_turn_guidance()
+    assert appraisal_request.system_prompt[: len(character_guidance)] == character_guidance
+    assert all(
+        "respond to the current user turn" not in block for block in appraisal_request.system_prompt
     )
-    assert user_request.system_prompt == canonical_guidance
-    assert autonomous_request.system_prompt == canonical_guidance + control_guidance
+    assert autonomous_request.system_prompt[: len(character_guidance)] == character_guidance
+    assert all(
+        "respond to the current user turn" not in block
+        for block in autonomous_request.system_prompt
+    )
+    assert autonomous_request.prompt is not None
+    assert "Finish the concrete matter later." in autonomous_request.prompt
 
 
 @pytest.mark.asyncio
 async def test_user_preempts_autonomous_generation_then_is_admitted() -> None:
     presence, model, sink = _components("block-generation")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_admitted" for item in presence.evidence()))
     assert await presence.submit_user("priority") == "completed"
     await presence.stop()
 
     assert [(item.role, item.text) for item in presence.history] == [
+        ("user", "An unfinished future matter needs attention."),
+        ("assistant", "reply:An unfinished future matter needs attention."),
         ("user", "priority"),
         ("assistant", "reply:priority"),
     ]
@@ -256,6 +419,7 @@ async def test_user_during_presence_executor_wait_preserves_joined_settlement() 
     sink = _Sink(publish_started=started, publish_release=release)
     presence, model, _ = _components("say", sink=sink)
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(started.is_set)
     user = asyncio.create_task(presence.submit_user("after effect"))
     await asyncio.sleep(0.01)
@@ -270,6 +434,8 @@ async def test_user_during_presence_executor_wait_preserves_joined_settlement() 
         for item in model.tool_evidence()
     )
     assert [(item.role, item.text) for item in presence.history] == [
+        ("user", "An unfinished future matter needs attention."),
+        ("assistant", "reply:An unfinished future matter needs attention."),
         ("user", "after effect"),
         ("assistant", "reply:after effect"),
     ]
@@ -279,10 +445,11 @@ async def test_user_during_presence_executor_wait_preserves_joined_settlement() 
 async def test_invalid_autonomous_completion_is_contained_without_output() -> None:
     presence, _, sink = _components("invalid")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await presence.stop()
 
-    assert sink.outputs == []
+    assert [item for item in sink.outputs if item.kind == "autonomous"] == []
     settled = next(item for item in presence.evidence() if item.kind == "cognition_settled")
     assert settled.result == AutonomousStatus.INVALID.value
 
@@ -291,6 +458,7 @@ async def test_invalid_autonomous_completion_is_contained_without_output() -> No
 async def test_two_requested_terminal_actions_produce_at_most_one_effect() -> None:
     presence, _, sink = _components("two-actions")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
     await presence.stop()
 
@@ -305,6 +473,7 @@ async def test_two_requested_terminal_actions_produce_at_most_one_effect() -> No
 async def test_shutdown_during_autonomous_generation_settles_cleanly() -> None:
     presence, model, _ = _components("shutdown-block")
     await presence.start()
+    assert await presence.submit_user("An unfinished future matter needs attention.") == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_admitted" for item in presence.evidence()))
     await presence.stop()
 

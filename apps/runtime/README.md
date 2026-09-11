@@ -98,6 +98,18 @@ presence tools. The action executes through the existing application registry
 and tool-session path. Provider continuation text is consumed but suppressed,
 so one `say` produces exactly one noncanonical local utterance.
 
+MIND-0 adds a bounded in-memory `MindState` to this local composition. After a
+successful normal turn, one tool-free transient `MindAppraiser` may return
+strict JSON for `no_change` or one short `create_intention` result. The runtime
+binds the resulting intention to the completed Core user/assistant message IDs.
+Idle admission requires an active intention and passes that specific intention
+to autonomous cognition. A successful `presence.say` marks it expressed and
+records one bounded recent `SelfAction`; `presence.stay_silent` leaves it
+active. The read-only `MindProjection` is composed into later normal-turn
+guidance, so self-action context is available without adding autonomous speech
+to canonical history. This state is intentionally not persisted and does not
+apply to the Discord adapter.
+
 From the repository root, run:
 
 ```powershell

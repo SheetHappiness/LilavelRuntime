@@ -13,6 +13,7 @@ from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from .kernel import LilavelRuntime
+from .mind import MindState
 from .presence import (
     DEFAULT_IDLE_TIMEOUT_S,
     AutonomousCognitionRunner,
@@ -85,9 +86,10 @@ async def run_cli(
     sink = PromptToolkitOutputSink(loop)
     tools = PresenceToolSessionFactory(sink)
     model = ModelRuntimeV3(tool_session_factory=tools)
+    mind_state = MindState()
     core = ConversationCore(
         model,
-        trusted_guidance=build_turn_guidance,
+        trusted_guidance=lambda: build_turn_guidance(mind_state.projection().guidance_blocks()),
         scope_id="local-cli",
     )
     runner = AutonomousCognitionRunner(model, tools)
@@ -101,6 +103,7 @@ async def run_cli(
         core,
         runner,
         sink,
+        mind_state=mind_state,
         wake_policy=wake_policy,
         idle_timeout_s=idle_seconds,
     )

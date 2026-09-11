@@ -3,7 +3,7 @@
 This document records the current ownership boundaries of the canonical
 `LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
 the proven conversational foundation, a replaceable Discord environment
-adapter, and the bounded P5-B1 local presence slice. Broader autonomous
+adapter, and the bounded P5-B1/MIND-0 local presence slice. Broader autonomous
 capabilities are not implied by this slice.
 
 ## Top-level product boundary
@@ -13,8 +13,10 @@ event ingress, registered environment tasks, wake classification,
 conversation routing, the optional local presence component,
 Core/ModelRuntime session lifecycle, and selection of the source environment
 for typed presentation actions. P5-B1 adds one monotonic idle opportunity and
-transient autonomous cognition lane; it adds no general scheduler, attention
-loop, world model, memory, or arbitrary model-selected tool authority.
+transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
+and recent self-actions to the local CLI only; it adds no general scheduler,
+attention loop, world model, durable memory, or arbitrary model-selected tool
+authority.
 
 The intended direction is:
 
@@ -46,7 +48,7 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, optional local presence lifecycle, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, general scheduling, memory, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -70,13 +72,28 @@ new user activity resets the latch. The safe production default is `NO_WAKE`
 with a 300-second idle interval; explicit CLI configuration can enable the
 deterministic wake path.
 
+After a successful normal Core turn, the runtime runs one transient,
+tool-free `MindAppraiser`. Its strict bounded result can create one
+runtime-owned intention, binding the actual completed Core user and assistant
+message IDs. Invalid or missing appraisal output is `no_change`; it is not
+retried. Idle cognition is admitted only for a selected active intention and
+receives that intention directly. A successful `presence.say` marks it
+`expressed` and records one bounded noncanonical `SelfAction`; silence leaves
+the intention active.
+
 `AutonomousCognitionRunner` is a thin admission client of the existing V3 model
-host. It receives only a bounded suffix of canonical conversation context and
-ephemeral trusted guidance. It creates no user message, transcript, assistant
-commit, or durable memory. Only an explicitly application-permitted autonomous
-logical run identity receives the two presence tool specs; a matching string
-prefix alone grants no capability, and ordinary Core runs receive an empty
-exposure snapshot.
+host. It receives only the selected runtime-owned intention and immutable
+Character v0 guidance plus autonomous controls. It creates no user message,
+transcript, assistant commit, or durable memory. Only an explicitly
+application-permitted autonomous logical run identity receives the two
+presence tool specs; a matching string prefix alone grants no capability, and
+ordinary Core/appraisal runs receive an empty exposure snapshot.
+
+Normal CLI conversation receives a bounded read-only `MindProjection` through
+the trusted-guidance composition seam. It includes active intentions and
+recent noncanonical self-action context; autonomous speech is never appended to
+Core history. Character v0 blocks remain immutable and are separate from
+run-specific normal-turn, appraisal, and autonomous behavior controls.
 
 The generation-scoped presence executor permits exactly one action. A
 successful `presence.say` enqueues one bounded local utterance and returns
@@ -172,8 +189,8 @@ interpreted memory, a claim, or a second content authority.
 
 The default store is SQLite `:memory:`. Restart-safe conversation history
 requires an explicit file-backed store and stable provider-neutral scope. The
-product-level persistent agent state described above is not implemented by
-this foundation.
+MIND-0 state is intentionally in-memory and local-CLI-only, so it is lost on
+restart; durable product-level agent state remains outside this foundation.
 
 Runtime evidence is bounded diagnostic output. Core evidence joins conversation
 run IDs to physical generation IDs/epochs and safe protocol outcomes without

@@ -188,3 +188,18 @@ def test_production_assembles_character_v0_and_rebuilds_neutral_guidance() -> No
     assert len(expected) == 9
     assert calls == [1, 1]
     assert core.history == (ContextMessage("user", "hello"),)
+
+
+def test_character_guidance_is_separate_from_normal_turn_behavior() -> None:
+    from lilavel_core.production_cognition import (
+        build_character_guidance,
+        build_turn_guidance,
+    )
+
+    character = build_character_guidance()
+    normal = build_turn_guidance(("[Mind projection]\nRecent self-actions:\n- said: hi",))
+
+    assert normal[: len(character)] == character
+    assert all("respond to the current user turn" not in block for block in character)
+    assert any("respond to the current user turn" in block for block in normal)
+    assert any("Recent self-actions" in block for block in normal)

@@ -42,6 +42,7 @@ def main() -> int:
     )
     active: tuple[object, object, bool] | None = None
     user_generations = 0
+    appraisal_generations = 0
     for line in sys.stdin:
         command = json.loads(line)
         command_type = command["type"]
@@ -49,9 +50,45 @@ def main() -> int:
             generation_id = command["generation_id"]
             epoch = command["epoch"]
             tools = command.get("tools", [])
+            system_prompt = command.get("system_prompt", [])
+            appraisal = any("internal mind appraisal" in block for block in system_prompt)
             autonomous = bool(tools)
             active = (generation_id, epoch, autonomous)
             emit(identity("accepted", generation_id, epoch))
+            if appraisal:
+                appraisal_generations += 1
+                if mode == "block-first-appraisal" and appraisal_generations == 1:
+                    continue
+                messages = command.get("messages", [])
+                latest = next(
+                    (
+                        message["text"]
+                        for message in reversed(messages)
+                        if message["role"] == "user"
+                    ),
+                    "",
+                )
+                future_matter = any(
+                    marker in latest.casefold()
+                    for marker in (
+                        "future",
+                        "unfinished",
+                        "tomorrow",
+                        "later",
+                        "finish",
+                        "потом",
+                        "заверш",
+                    )
+                )
+                result = (
+                    {"action": "create_intention", "text": "Finish the concrete matter later."}
+                    if future_matter
+                    else {"action": "no_change"}
+                )
+                emit({**identity("text_delta", generation_id, epoch), "delta": json.dumps(result)})
+                emit(identity("completed", generation_id, epoch))
+                active = None
+                continue
             if not autonomous:
                 user_generations += 1
                 messages = command.get("messages", [])
