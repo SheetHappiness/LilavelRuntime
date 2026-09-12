@@ -85,11 +85,14 @@ Executed on Linux with CPython 3.14.7:
 - Architecture guard: `PASS`.
 - Root `uv sync --locked`, `uv lock --check`, and `lilavel --help`: `PASS`.
 - Final `git diff --check`: `PASS`.
+- Contracts locked validation: `PASS` — 7 passed.
+- Core locked validation: `PASS` — 180 passed, 4 platform skips.
+- Discord adapter locked validation: `PASS` — 95 passed, 10 existing Python
+  3.14 deprecation warnings.
 
-Contracts/Core/Discord package reruns were not required because no files in
-those packages or shared package contracts changed. Live provider, Discord,
-process-restart replay, durable idempotency, and Windows-specific behavior
-remain `UNVERIFIED` unless separately exercised.
+Live provider, live Discord interaction, process-restart replay, durable
+idempotency, and Windows-specific behavior remain `UNVERIFIED` unless
+separately exercised.
 
 ## Exit gate
 
