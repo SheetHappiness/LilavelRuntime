@@ -36,13 +36,15 @@ generation and provider/process transport boundaries.
 
 `apps/runtime` implements the top-level process owner and now realizes the
 explicit Discord DM route: bounded `WorldEvent` admission into a recent
-in-memory `ObservationWindow`, an explicit reactive response step,
-Core/ModelRuntime conversation sessions, and trusted runtime-generated
-presentation actions back to the source adapter. Admission alone has no
-response or cognition side effect. It remains healthy with zero environments
-and does not implement a scheduler, autonomous model wake loop,
-attention/decision system, model-selected tools, world model, memory, or
-durable cross-environment agent state.
+in-memory `ObservationWindow`, an explicit deterministic cognition gate,
+reactive response step, Core/ModelRuntime conversation sessions, and trusted
+runtime-generated presentation actions back to the source adapter. Admission
+alone has no response or cognition side effect. The current gate recognizes
+only the existing direct-message event kind and returns either
+`NO_COGNITION` or a bounded observation-ID `CognitionTrigger`; model-based
+attention remains deferred. It remains healthy with zero environments and
+does not implement a scheduler, autonomous model wake loop, model-selected
+tools, world model, memory, or durable cross-environment agent state.
 
 ## Rationale status
 

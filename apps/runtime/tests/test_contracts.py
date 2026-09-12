@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from lilavel_runtime import (
+    NO_COGNITION,
+    CognitionTrigger,
+    DirectMessageCognitionGate,
     DirectMessageWakePolicy,
     EventSource,
     EventTrust,
@@ -55,6 +58,42 @@ def test_observation_window_evicts_oldest_transient_entries() -> None:
 
     assert window.snapshot() == (second,)
     assert window.get(first.observation_id) is None
+
+
+def test_deterministic_cognition_gate_returns_explicit_no_cognition() -> None:
+    gate = DirectMessageCognitionGate()
+    observation = Observation(
+        "observation-1",
+        1,
+        WorldEvent("event-1", EventSource("fixture"), "ambient_message", {"text": "hello"}),
+    )
+
+    assert gate.decide((observation,)) is NO_COGNITION
+
+
+def test_deterministic_cognition_gate_coalesces_a_bounded_ordered_batch() -> None:
+    gate = DirectMessageCognitionGate(max_observations=2)
+    observations = tuple(
+        Observation(
+            f"observation-{number}",
+            number,
+            WorldEvent(
+                f"event-{number}",
+                EventSource("fixture", "opaque-subject"),
+                "direct_message",
+                {"text": f"message-{number}"},
+            ),
+        )
+        for number in range(1, 4)
+    )
+
+    decision = gate.decide(observations)
+
+    assert decision == CognitionTrigger(
+        ("observation-1", "observation-2"), "explicit_direct_message"
+    )
+    assert isinstance(decision, CognitionTrigger)
+    assert len(decision.observation_ids) == 2
 
 
 def test_tool_contracts_freeze_structured_values_without_executing_them() -> None:

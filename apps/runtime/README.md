@@ -3,16 +3,18 @@
 `apps/runtime` is the top-level process owner for Lilavel. It can start and
 remain healthy with no environments, conversations, model runtime, sidecar, or
 provider. It owns bounded observation admission, a recent observation window,
-registered environment tasks, explicit reactive routing, Core conversation
-sessions, and the destination choice for typed environment presentation
-actions.
+a deterministic observation-to-cognition gate, registered environment tasks,
+explicit reactive routing, Core conversation sessions, and the destination
+choice for typed environment presentation actions.
 
-MIND-1A deliberately keeps observation separate from response. Admission is a
-complete operation; it does not invoke a wake policy, Core, a model, tools, or
-a scheduler. The legacy DM path calls `reactive_step()` explicitly after it
-receives an admission receipt. `CoreConversationRouter` then owns
-session/runtime creation and relays semantic Core events as runtime-generated,
-trusted `ToolCall` presentation actions to the source environment. These are
+MIND-1B establishes both `observation != cognition` and the compatibility path
+for the existing DM experience. Admission is a complete operation; it does not
+invoke the cognition gate, Core, a model, tools, or a scheduler. The legacy DM
+path calls `reactive_step()` explicitly after it receives an admission receipt;
+that compatibility alias runs the deterministic gate first. Only a positive
+`CognitionTrigger` reaches `CoreConversationRouter`, which owns session/runtime
+creation and relays semantic Core events as runtime-generated, trusted
+`ToolCall` presentation actions to the source environment. These are
 application actions, not model-selected tools.
 
 ## Contracts
@@ -25,6 +27,11 @@ application actions, not model-selected tools.
   canonical conversation history.
 - `ObservationWindow` is finite in-memory working state. It evicts the oldest
   entries at capacity and is not memory, canonical history, or durable storage.
+- `CognitionGate` is a runtime-owned policy seam over admitted observations. It
+  returns exactly `NO_COGNITION` or a bounded `CognitionTrigger` containing one
+  or more observation IDs. `DirectMessageCognitionGate` recognizes only the
+  existing `direct_message` event kind and can coalesce an explicit ordered
+  batch without timers or model work.
 - `EnvironmentAdapter.run()` is a long-lived observation source owned by the
   kernel task group; `execute()` is its typed action boundary. Registration
   closes when startup begins.
@@ -32,11 +39,33 @@ application actions, not model-selected tools.
   Phase 3 uses trusted runtime-generated calls for presentation only;
   registration grants no model tool authority.
 - `admit_observation()` and its `submit()` compatibility alias only validate,
-  adopt, and return a receipt for an event. `reactive_step()` is the explicit compatibility
-  response path and accepts only an admitted receipt.
-- Wake/attention policy is not part of MIND-1A. The existing wake contract is
-  not wired into observation admission; MIND-1B will establish the separate
-  observation-to-cognition boundary.
+  adopt, and return a receipt for an event. `cognition_step()` is the explicit
+  gate-and-route path and accepts only an admitted receipt. `reactive_step()`
+  remains its response-compatible alias.
+- The cognition gate is not wired into observation admission. The default
+  direct-message policy is deterministic and provider-neutral; wake/attention
+  policy remains a separate deferred concern.
+
+## MIND-1B cognition gate
+
+The explicit sequence is:
+
+```text
+WorldEvent
+  → admit_observation()
+  → ObservationReceipt
+  → cognition_step(receipt)
+      ├── NO_COGNITION → stop
+      └── CognitionTrigger → existing reactive/Core route
+```
+
+The default gate recognizes only the already implemented `direct_message`
+event kind, preserving the current Discord DM route. Other event kinds end in
+`NO_COGNITION`. A caller may give the policy an explicit ordered batch; the
+policy emits at most the configured number of unique observation IDs in one
+trigger. The runtime compatibility step intentionally evaluates one receipt at
+a time, so no timer, debounce, scheduler, salience model, or autonomous loop
+is introduced here.
 
 ## P4-C application tool authorization seam
 
@@ -92,8 +121,8 @@ fencing remain authoritative.
 drop, overwrite, or silently accumulate pending events. The recent observation
 window is separately bounded and evicts its oldest transient entry when full.
 Events are rejected before startup and after shutdown begins. Admission does
-not route; only an explicit `reactive_step()` can start the legacy response
-path.
+not run the cognition gate or route; only an explicit `cognition_step()` (or
+its `reactive_step()` compatibility alias) can start the legacy response path.
 
 ## P5-B1 local presence
 

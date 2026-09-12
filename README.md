@@ -9,11 +9,12 @@ behavior is implemented.
 ## Product model
 
 Lilavel's top-level runtime owns persistent process lifecycle, bounded
-world-event admission, a recent in-memory observation window, registered
-environment tasks, explicit reactive DM routing, Core conversation-session
-lifecycle, and typed environment presentation actions. Wake/attention policy,
-autonomous scheduling, production model-selected tools, durable memory, and
-cross-environment state remain deferred.
+world-event admission, a recent in-memory observation window, a deterministic
+observation-to-cognition gate, registered environment tasks, explicit reactive
+DM routing, Core conversation-session lifecycle, and typed environment
+presentation actions. Model-based attention, autonomous scheduling, production
+model-selected tools, durable memory, and cross-environment state remain
+deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -24,14 +25,18 @@ world observations
         ▼
 environment adapter ──► LilavelRuntime kernel
         │                                  │
-        │                                  ▼
-        └──── approved actions ◄── ConversationCore / tools
-                                           │
-                                           ▼
-                                     ModelRuntime
-                                           │
-                                           ▼
-                                    model-sidecar
+        │                                  ├── Observation
+        │                                  │       │
+        │                                  │       ├── NO_COGNITION → stop
+        │                                  │       └── CognitionTrigger
+        │                                  │               │
+        │                                  │               ▼
+        │                                  │        ConversationCore / tools
+        │                                  │               │
+        │                                  │               ▼
+        │                                  │        ModelRuntime → model-sidecar
+        │                                  │
+        └──── approved actions ◄───────────┘
 ```
 
 The implemented Discord path is:
@@ -41,7 +46,8 @@ Discord one-to-one DM
   → apps/discord-adapter
   → WorldEvent
   → LilavelRuntime observation admission
-  → explicit reactive response step
+  → explicit cognition gate
+  → explicit reactive response step for the direct-message trigger
   → ConversationCore
   → ModelRuntime
   → apps/model-sidecar
@@ -49,13 +55,16 @@ Discord one-to-one DM
   → apps/discord-adapter
 ```
 
+The cognition gate decides whether work may begin; it does not select an action.
+The cognition/action boundary remains a later milestone.
+
 ## Current foundation
 
 - `apps/runtime` contains the persistent kernel, provider-neutral event and
   admitted-observation contracts, the bounded recent observation window,
-  explicit reactive DM routing, the Core-backed conversation router, and the
-  local-CLI-only bounded MIND-0 state loop. It still starts cleanly with zero
-  environments.
+  deterministic `NO_COGNITION`/`CognitionTrigger` gating, explicit reactive DM
+  routing, the Core-backed conversation router, and the local-CLI-only bounded
+  MIND-0 state loop. It still starts cleanly with zero environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,

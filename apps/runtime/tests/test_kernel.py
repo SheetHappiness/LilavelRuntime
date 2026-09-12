@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 
 from lilavel_runtime import (
+    NO_COGNITION,
     ActionExecutor,
+    CognitionTrigger,
     CoreConversationRouter,
     DuplicateEnvironment,
     DuplicateTool,
@@ -175,6 +177,37 @@ async def test_admission_does_not_invoke_reactive_step_or_wake_side_effects() ->
     assert runtime.active_route_count == 0
     assert runtime.health().reactive_steps == 0
     assert runtime.health().wake_decisions == 0
+    assert runtime.health().cognition_decisions == 0
+    assert runtime.health().cognition_triggers == 0
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_observation_can_stop_at_no_cognition_without_core_or_action_side_effects() -> None:
+    model_calls = 0
+
+    def runtime_factory() -> Any:
+        nonlocal model_calls
+        model_calls += 1
+        raise AssertionError("NO_COGNITION must not create a model runtime")
+
+    router = CoreConversationRouter(runtime_factory=runtime_factory)
+    adapter = _RecordingEnvironment()
+    runtime = LilavelRuntime(event_router=router)
+    runtime.register_environment(adapter)
+
+    await runtime.start()
+    receipt = await runtime.admit_observation(_event(1))
+    decision = await runtime.cognition_step(receipt)
+    await asyncio.sleep(0)
+
+    assert decision is NO_COGNITION
+    assert model_calls == 0
+    assert router.session_count == 0
+    assert adapter.actions == []
+    assert runtime.active_route_count == 0
+    assert runtime.health().cognition_decisions == 1
+    assert runtime.health().cognition_triggers == 0
     await runtime.stop()
 
 
@@ -342,16 +375,21 @@ async def test_reactive_step_routes_only_after_explicit_admission_receipt() -> N
     assert router.events == []
     assert adapter.actions == []
 
-    await runtime.reactive_step(receipt)
+    assert runtime.health().cognition_decisions == 0
+    decision = await runtime.cognition_step(receipt)
     while runtime.active_route_count:
         await asyncio.sleep(0)
     await runtime.stop()
 
     assert [observation.event.event_id for observation in router.events] == ["event-1"]
+    assert isinstance(decision, CognitionTrigger)
+    assert decision.observation_ids == (receipt.observation_id,)
     assert [call.tool_name for call in adapter.actions] == ["conversation.presentation.complete"]
     assert adapter.actions[0].model_trust == "untrusted"
     assert adapter.stopped.is_set()
     assert router.closed is True
+    assert runtime.health().cognition_decisions == 1
+    assert runtime.health().cognition_triggers == 1
 
 
 @dataclass(slots=True)

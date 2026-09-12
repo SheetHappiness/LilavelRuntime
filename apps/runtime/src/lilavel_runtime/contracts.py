@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -14,6 +14,10 @@ from lilavel_contracts import JsonValue, ToolCall, ToolResult, ToolSpec
 
 __all__ = [
     "ActionExecutor",
+    "CognitionDecision",
+    "CognitionGate",
+    "CognitionTrigger",
+    "DirectMessageCognitionGate",
     "DirectMessageWakePolicy",
     "EnvironmentAdapter",
     "EventRouter",
@@ -22,6 +26,8 @@ __all__ = [
     "EventTrust",
     "JsonValue",
     "NeverWakePolicy",
+    "NO_COGNITION",
+    "MAX_COGNITION_TRIGGER_OBSERVATIONS",
     "Observation",
     "ObservationReceipt",
     "ObservationReceiptStatus",
@@ -125,6 +131,88 @@ class ObservationReceipt:
         _require_text(self.event_id, "event_id")
         if isinstance(self.sequence, bool) or self.sequence <= 0:
             raise ValueError("sequence must be a positive integer")
+
+
+MAX_COGNITION_TRIGGER_OBSERVATIONS = 8
+
+
+class CognitionDecision(StrEnum):
+    """The explicit negative cognition outcome."""
+
+    NO_COGNITION = "no_cognition"
+
+
+NO_COGNITION = CognitionDecision.NO_COGNITION
+
+
+@dataclass(frozen=True, slots=True)
+class CognitionTrigger:
+    """A bounded runtime decision to start one cognition episode.
+
+    The trigger contains only provider-neutral IDs of already admitted
+    observations. It does not copy external payloads or authorize a response
+    or action.
+    """
+
+    observation_ids: tuple[str, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if type(self.observation_ids) is not tuple:
+            raise TypeError("observation_ids must be a tuple")
+        if not self.observation_ids:
+            raise ValueError("cognition trigger must reference an observation")
+        if len(self.observation_ids) > MAX_COGNITION_TRIGGER_OBSERVATIONS:
+            raise ValueError("cognition trigger observation bound exceeded")
+        if len(set(self.observation_ids)) != len(self.observation_ids):
+            raise ValueError("cognition trigger observation IDs must be unique")
+        for observation_id in self.observation_ids:
+            _require_text(observation_id, "observation_id")
+        _require_text(self.reason, "reason")
+
+
+class CognitionGate(Protocol):
+    """Decide whether an explicit batch of admitted observations merits cognition."""
+
+    def decide(
+        self, observations: Sequence[Observation]
+    ) -> CognitionDecision | CognitionTrigger: ...
+
+
+class DirectMessageCognitionGate:
+    """Small deterministic policy preserving the existing direct-message route.
+
+    Only the runtime event kind already emitted by the DM adapter is eligible.
+    An ordered batch is coalesced into one bounded trigger without timers,
+    scheduler state, model calls, or payload interpretation.
+    """
+
+    def __init__(self, *, max_observations: int = MAX_COGNITION_TRIGGER_OBSERVATIONS) -> None:
+        if (
+            isinstance(max_observations, bool)
+            or not 0 < max_observations <= MAX_COGNITION_TRIGGER_OBSERVATIONS
+        ):
+            raise ValueError("max_observations must be between 1 and the cognition trigger bound")
+        self._max_observations = max_observations
+
+    def decide(self, observations: Sequence[Observation]) -> CognitionDecision | CognitionTrigger:
+        for observation in observations:
+            if type(observation) is not Observation:
+                raise TypeError("cognition gates accept only Observations")
+
+        eligible_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for observation in observations:
+            if observation.observation_id in seen_ids:
+                continue
+            seen_ids.add(observation.observation_id)
+            if observation.event.kind == "direct_message":
+                eligible_ids.append(observation.observation_id)
+                if len(eligible_ids) == self._max_observations:
+                    break
+        if not eligible_ids:
+            return NO_COGNITION
+        return CognitionTrigger(tuple(eligible_ids), reason="explicit_direct_message")
 
 
 class ObservationWindow:
