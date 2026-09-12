@@ -33,10 +33,23 @@ legacy-lane exclusion, and clean shutdown.
 
 ## Validation
 
-Authoritative commands and results are recorded at closeout after the final
-diff is reviewed. Live provider/Discord behavior, restart-safe replay and
-durable wake recovery, Windows behavior, and the existing 256-entry
-application fence ceiling remain outside this phase or unverified.
+Executed on Linux with Python 3.14.7:
+
+- Focused D2 proofs: PASS, 9 passed.
+- Runtime full suite: PASS, 168 passed.
+- Runtime Ruff, formatting, strict Pyright, and lock: PASS.
+- Contracts suite: PASS, 7 passed; Ruff, formatting, Pyright, and lock: PASS.
+- Core suite: PASS, 180 passed and 4 skipped; Ruff, formatting, Pyright, and
+  lock: PASS.
+- Discord adapter suite: PASS, 95 passed and 10 existing deprecation
+  warnings; Ruff, formatting, Pyright, and lock: PASS.
+- Root sync, lock, and launcher help: PASS.
+- Documentation integrity, architecture guard, and `git diff --check`: PASS.
+
+Live provider/Discord behavior remains `UNVERIFIED`. Restart-safe replay,
+durable MindState/WakeIntent recovery, and Windows-specific behavior remain
+`UNVERIFIED`. The existing 256-entry application fence ceiling remains
+unchanged debt. Deterministic fixtures do not establish those claims.
 
 ## Exit gate
 
@@ -46,5 +59,5 @@ gated pending MIND-1F-E.
 
 ## Implementation
 
-- Implementation SHA: `TBD`
+- Implementation SHA: `0fe9c1e08d3594c2b3b8e2dfb4a130fca48fba03`
 - Closeout SHA: `TBD`
