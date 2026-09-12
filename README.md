@@ -10,11 +10,12 @@ behavior is implemented.
 
 Lilavel's top-level runtime owns persistent process lifecycle, bounded
 world-event admission, a recent in-memory observation window, a deterministic
-observation-to-cognition gate, registered environment tasks, explicit reactive
-DM routing, Core conversation-session lifecycle, and typed environment
-presentation actions. Model-based attention, autonomous scheduling, production
-model-selected tools, durable memory, and cross-environment state remain
-deferred.
+observation-to-cognition gate, registered environment tasks, one character-wide
+semantic actor, actor-owned USER and NON_USER routes, bounded temporal wake
+hosting, trusted application-tool execution, Core conversation-session
+lifecycle, and typed environment presentation actions. General or recurring
+scheduling, model-based attention, arbitrary model-selected tools, durable
+memory, and cross-environment state remain deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -34,12 +35,20 @@ environment adapter ──► LilavelRuntime kernel
         │                                  │        SemanticActor (USER)
         │                                  │               │
         │                                  │               ▼
-        │                                  │        ConversationCore / tools
+        │                                  │        ConversationCore
         │                                  │               │
         │                                  │               ▼
         │                                  │        ModelRuntime → model-sidecar
         │                                  │
         └──── approved actions ◄───────────┘
+```
+
+The complete production semantic model ownership is:
+
+```text
+USER     → SemanticActor → ConversationExecutionAdapter → ConversationCore
+NON_USER → SemanticActor → CognitionEpisodeRunner → LocalCognitionEngine
+                              → ProposalApplicationCoordinator
 ```
 
 The implemented Discord path is:
@@ -72,14 +81,15 @@ CLI input
 ```
 
 CLI and Discord user episodes serialize through one actor while their
-`ConversationCore` scopes and histories remain isolated. Legacy local
-appraisal and autonomous presence behavior remains a temporary compatibility
-lane, excluded while actor-owned user work is active.
+`ConversationCore` scopes and histories remain isolated. Conversation-completion
+appraisal and deterministic idle opportunities enter the same actor as
+`NON_USER` cognition; deprecated direct-generation classes are compatibility
+fixtures only and are excluded from canonical composition.
 
 The cognition gate decides whether work may begin; it does not select an action.
 MIND-1C ends at inert proposals. MIND-1D adds a separate runtime-owned
-validation, authorization, and application boundary; temporal wake proposals
-remain deferred to MIND-1E.
+validation, authorization, and application boundary. MIND-1E adds bounded
+one-shot temporal wake admission and dispatch; it is not a general scheduler.
 
 ## Current foundation
 
@@ -87,9 +97,9 @@ remain deferred to MIND-1E.
   admitted-observation contracts, the bounded recent observation window,
   deterministic `NO_COGNITION`/`CognitionTrigger` gating, the character-wide
   `SemanticActor`, actor-owned CLI and reactive DM admission, the Core-backed
-  conversation router, the local-CLI-only bounded MIND-0 state loop, and the
-  MIND-1D proposal application boundary. It still starts cleanly with zero
-  environments.
+  conversation router, the local-CLI-only bounded MIND-0 state loop, the
+  MIND-1D proposal application boundary, and the bounded MIND-1E temporal host.
+  It still starts cleanly with zero environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,
@@ -144,16 +154,16 @@ uv run --locked lilavel
 ```
 
 It keeps one local process alive, streams canonical user conversation, appraises
-successful turns into bounded in-memory intentions, and can optionally admit
-one noncanonical idle action caused by an active intention with
-`--wake-on-idle`.
+successful turns into bounded in-memory intentions through the actor-owned
+NON_USER route, and can optionally admit one noncanonical idle action caused by
+an active intention with `--wake-on-idle`.
 See the [runtime README](apps/runtime/README.md#p5-b1-local-presence) for the
 ownership and safety bounds.
 
 ## Explicitly deferred
 
-The current runtime does not add a general scheduler, probabilistic attention
-policy, world model, arbitrary model-selected tool activation, MCP integration,
+The current runtime does not add a general or recurring scheduler, probabilistic
+attention policy, world model, arbitrary model-selected tool activation, MCP integration,
 voice/guild behavior, retrieval, durable memory semantics, or cross-environment
 mind state. MIND-0 proves only one bounded local causal loop on top of P5-B1;
 P4-D proves only one explicitly composed, trusted-DM Discord send boundary.

@@ -619,6 +619,7 @@ class LilavelRuntime:
         shutdown_task: asyncio.Task[None] | None = None
         while True:
             wait_for_start = False
+            failed_supervisor: asyncio.Task[None] | None = None
             async with self._lifecycle_lock:
                 if self._state is RuntimeState.NEW:
                     self._state = RuntimeState.STOPPED
@@ -630,7 +631,8 @@ class LilavelRuntime:
                 if not stop_components and self._state is RuntimeState.STOPPED:
                     return
                 if not stop_components and self._state is RuntimeState.FAILED:
-                    raise RuntimeFailed("runtime is failed") from self._failure
+                    failed_supervisor = self._supervisor
+                    shutdown_task = None
                 if not stop_components and self._state is RuntimeState.STARTING:
                     wait_for_start = True
                     shutdown_task = None
@@ -655,6 +657,10 @@ class LilavelRuntime:
             if wait_for_start:
                 await self._started.wait()
                 continue
+            if failed_supervisor is not None:
+                if not failed_supervisor.done():
+                    await asyncio.shield(failed_supervisor)
+                raise RuntimeFailed("runtime is failed") from self._failure
             break
         if shutdown_task is None:
             self._state = RuntimeState.FAILED
@@ -685,6 +691,13 @@ class LilavelRuntime:
                 except BaseException as error:
                     if router_error is None:
                         router_error = error
+                if (
+                    self._semantic_actor.state is SemanticActorState.POISONED
+                    and router_error is None
+                ):
+                    router_error = self._semantic_actor.failure or RuntimeFailed(
+                        "semantic actor poisoned during shutdown"
+                    )
                 if self._user_exclusion_tasks:
                     await asyncio.gather(*self._user_exclusion_tasks, return_exceptions=True)
                     self._user_exclusion_tasks.clear()
@@ -711,7 +724,8 @@ class LilavelRuntime:
             ) from error
 
         if router_error is not None:
-            self._failure = router_error
+            if self._failure is None:
+                self._failure = router_error
             self._state = RuntimeState.FAILED
             if isinstance(router_error, Exception):
                 raise router_error
@@ -769,6 +783,9 @@ class LilavelRuntime:
             if self._presence is not None:
                 await self._presence.start()
             async with asyncio.TaskGroup() as group:
+                group.create_task(
+                    self._watch_semantic_actor(), name="lilavel-runtime-semantic-supervisor"
+                )
                 self._ingress_task = group.create_task(
                     self._consume_events(), name="lilavel-runtime-ingress"
                 )
@@ -789,7 +806,8 @@ class LilavelRuntime:
                 self._started.set()
                 await self._stop_requested.wait()
         except BaseExceptionGroup as error:
-            self._failure = error
+            if self._failure is None:
+                self._failure = error
             self._state = RuntimeState.FAILED
             self._admission_closed.set()
             self._started.set()
@@ -799,13 +817,19 @@ class LilavelRuntime:
             self._admission_closed.set()
             raise
         except BaseException as error:
-            self._failure = error
+            if self._failure is None:
+                self._failure = error
             self._state = RuntimeState.FAILED
             self._admission_closed.set()
             self._started.set()
         else:
             if self.health().state is RuntimeState.STOPPING:
-                self._state = RuntimeState.STOPPED
+                if self._semantic_actor.state is SemanticActorState.POISONED:
+                    self._state = RuntimeState.FAILED
+                    if self._failure is None:
+                        self._failure = self._semantic_actor.failure
+                else:
+                    self._state = RuntimeState.STOPPED
         finally:
             if self._temporal_host is not None and self._temporal_host.state.value not in {
                 "new",
@@ -826,6 +850,39 @@ class LilavelRuntime:
             if self._state is RuntimeState.FAILED and self._presence is not None:
                 with suppress(BaseException):
                     await self._presence.stop()
+
+    async def _watch_semantic_actor(self) -> None:
+        """Propagate actor poison through the runtime supervisor."""
+
+        failure_task = asyncio.create_task(
+            self._semantic_actor.wait_for_failure(),
+            name="lilavel-runtime-semantic-failure-wait",
+        )
+        stop_task = asyncio.create_task(
+            self._stop_requested.wait(), name="lilavel-runtime-semantic-stop-wait"
+        )
+        try:
+            done, _ = await asyncio.wait(
+                (failure_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if failure_task not in done:
+                return
+            failure = failure_task.result()
+            if self._state in {
+                RuntimeState.STOPPING,
+                RuntimeState.STOPPED,
+                RuntimeState.FAILED,
+            }:
+                return
+            self._failure = failure
+            self._state = RuntimeState.FAILED
+            self._admission_closed.set()
+            raise RuntimeFailed("semantic actor poisoned") from failure
+        finally:
+            for task in (failure_task, stop_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(failure_task, stop_task, return_exceptions=True)
 
     async def _run_adapter(self, adapter: EnvironmentAdapter) -> None:
         await adapter.run(self.submit)

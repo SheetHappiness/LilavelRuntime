@@ -480,14 +480,15 @@ class ProposalApplicationCoordinator:
                 prepared_state.reason_code or "state_version_conflict",
             )
             actions = self._actions_blocked(prepared_actions, "state_application_blocked")
+            temporal = self._temporal_blocked(outcome, "state_application_blocked")
             return ProposalApplicationResult(
                 application_id,
                 outcome.episode_id,
-                ProposalApplicationStatus.STALE,
+                self._aggregate_status(state, temporal, actions),
                 state,
                 actions,
                 "state_version_conflict",
-                self._temporal_blocked(outcome, "state_application_blocked"),
+                temporal,
             )
 
         if prepared_state.status is StateApplicationStatus.REJECTED or not prepared_actions.valid:
@@ -507,14 +508,15 @@ class ProposalApplicationCoordinator:
                 if outcome.action_proposals
                 else self._actions_not_requested()
             )
+            temporal = self._temporal_blocked(outcome, "proposal_batch_rejected")
             return ProposalApplicationResult(
                 application_id,
                 outcome.episode_id,
-                ProposalApplicationStatus.REJECTED,
+                self._aggregate_status(state, temporal, actions),
                 state,
                 actions,
                 reason,
-                self._temporal_blocked(outcome, "proposal_batch_rejected"),
+                temporal,
             )
 
         if prepared_state.deltas:
@@ -531,14 +533,15 @@ class ProposalApplicationCoordinator:
                     "state_version_conflict",
                 )
                 actions = self._actions_blocked(prepared_actions, "state_application_blocked")
+                temporal = self._temporal_blocked(outcome, "state_application_blocked")
                 return ProposalApplicationResult(
                     application_id,
                     outcome.episode_id,
-                    ProposalApplicationStatus.STALE,
+                    self._aggregate_status(state, temporal, actions),
                     state,
                     actions,
                     "state_version_conflict",
-                    self._temporal_blocked(outcome, "state_application_blocked"),
+                    temporal,
                 )
             except MindStateCapacityExceeded:
                 state = self._state_rejected(
@@ -548,14 +551,15 @@ class ProposalApplicationCoordinator:
                     "state_capacity_exceeded",
                 )
                 actions = self._actions_blocked(prepared_actions, "state_application_blocked")
+                temporal = self._temporal_blocked(outcome, "state_application_blocked")
                 return ProposalApplicationResult(
                     application_id,
                     outcome.episode_id,
-                    ProposalApplicationStatus.REJECTED,
+                    self._aggregate_status(state, temporal, actions),
                     state,
                     actions,
                     "state_capacity_exceeded",
-                    self._temporal_blocked(outcome, "state_application_blocked"),
+                    temporal,
                 )
             except Exception:
                 state = self._state_rejected(
@@ -565,14 +569,15 @@ class ProposalApplicationCoordinator:
                     "state_application_failed",
                 )
                 actions = self._actions_blocked(prepared_actions, "state_application_blocked")
+                temporal = self._temporal_blocked(outcome, "state_application_blocked")
                 return ProposalApplicationResult(
                     application_id,
                     outcome.episode_id,
-                    ProposalApplicationStatus.FAILED,
+                    self._aggregate_status(state, temporal, actions),
                     state,
                     actions,
                     "state_application_failed",
-                    self._temporal_blocked(outcome, "state_application_blocked"),
+                    temporal,
                 )
             state = StateApplication(
                 StateApplicationStatus.APPLIED,
@@ -601,15 +606,10 @@ class ProposalApplicationCoordinator:
                 if outcome.action_proposals
                 else self._actions_not_requested()
             )
-            status = (
-                ProposalApplicationStatus.PARTIAL
-                if state.status is StateApplicationStatus.APPLIED
-                else ProposalApplicationStatus.REJECTED
-            )
             return ProposalApplicationResult(
                 application_id,
                 outcome.episode_id,
-                status,
+                self._aggregate_status(state, temporal, actions),
                 state,
                 actions,
                 temporal.reason_code or "temporal_application_rejected",
@@ -617,36 +617,23 @@ class ProposalApplicationCoordinator:
             )
 
         if not outcome.action_proposals:
-            status = (
-                ProposalApplicationStatus.APPLIED
-                if (
-                    state.status is StateApplicationStatus.APPLIED
-                    or temporal.status
-                    in {
-                        TemporalApplicationStatus.APPLIED,
-                        TemporalApplicationStatus.DUPLICATE,
-                    }
-                )
-                else ProposalApplicationStatus.NO_PROPOSALS
-            )
             return ProposalApplicationResult(
                 application_id,
                 outcome.episode_id,
-                status,
+                self._aggregate_status(state, temporal, self._actions_not_requested()),
                 state,
                 self._actions_not_requested(),
                 temporal=temporal,
             )
 
         actions = self._execute_actions(prepared_actions, application_id)
-        status = self._combined_status(state, actions)
-        if (
-            temporal.status is TemporalApplicationStatus.DUPLICATE
-            and status is ProposalApplicationStatus.NO_PROPOSALS
-        ):
-            status = ProposalApplicationStatus.APPLIED
         return ProposalApplicationResult(
-            application_id, outcome.episode_id, status, state, actions, temporal=temporal
+            application_id,
+            outcome.episode_id,
+            self._aggregate_status(state, temporal, actions),
+            state,
+            actions,
+            temporal=temporal,
         )
 
     def _prepare_state(self, outcome: CognitionOutcome, current_version: int) -> _PreparedState:
@@ -1141,21 +1128,57 @@ class ProposalApplicationCoordinator:
         return ActionApplicationStatus.REJECTED
 
     @staticmethod
-    def _combined_status(
-        state: StateApplication, actions: ActionApplication
+    def _aggregate_status(
+        state: StateApplication,
+        temporal: TemporalApplication,
+        actions: ActionApplication,
     ) -> ProposalApplicationStatus:
-        if state.status is StateApplicationStatus.APPLIED:
+        """Summarize all effect boundaries without losing earlier effects."""
+
+        effectful = (
+            state.status is StateApplicationStatus.APPLIED
+            or temporal.status
+            in {
+                TemporalApplicationStatus.APPLIED,
+                TemporalApplicationStatus.DUPLICATE,
+            }
+            or actions.status
+            in {
+                ActionApplicationStatus.APPLIED,
+                ActionApplicationStatus.PARTIAL,
+            }
+        )
+        if state.status is StateApplicationStatus.STALE:
+            return ProposalApplicationStatus.STALE
+        if (
+            state.status is StateApplicationStatus.FAILED
+            or temporal.status is TemporalApplicationStatus.PARTIAL
+            or actions.status is ActionApplicationStatus.FAILED
+        ):
             return (
-                ProposalApplicationStatus.APPLIED
-                if actions.status is ActionApplicationStatus.APPLIED
-                else ProposalApplicationStatus.PARTIAL
+                ProposalApplicationStatus.PARTIAL if effectful else ProposalApplicationStatus.FAILED
             )
-        return {
-            ActionApplicationStatus.APPLIED: ProposalApplicationStatus.APPLIED,
-            ActionApplicationStatus.REJECTED: ProposalApplicationStatus.REJECTED,
-            ActionApplicationStatus.FAILED: ProposalApplicationStatus.FAILED,
-            ActionApplicationStatus.PARTIAL: ProposalApplicationStatus.PARTIAL,
-        }.get(actions.status, ProposalApplicationStatus.FAILED)
+        if (
+            state.status is StateApplicationStatus.REJECTED
+            or temporal.status is TemporalApplicationStatus.REJECTED
+            or actions.status is ActionApplicationStatus.REJECTED
+        ):
+            return (
+                ProposalApplicationStatus.PARTIAL
+                if effectful
+                else ProposalApplicationStatus.REJECTED
+            )
+        if actions.status is ActionApplicationStatus.NOT_ATTEMPTED:
+            return (
+                ProposalApplicationStatus.PARTIAL if effectful else ProposalApplicationStatus.FAILED
+            )
+        if actions.status is ActionApplicationStatus.PARTIAL:
+            return ProposalApplicationStatus.PARTIAL
+        return (
+            ProposalApplicationStatus.APPLIED
+            if effectful
+            else ProposalApplicationStatus.NO_PROPOSALS
+        )
 
     @staticmethod
     def _action_result(

@@ -141,6 +141,19 @@ forged-permit rejection, unused-permit retirement, and rotation only after
 application settlement. It remains a process-lifetime proof; restart replay
 and durable idempotency are `UNVERIFIED`.
 
+The RUNTIME-H2 failure/result and architecture-regression proofs can be rerun
+from `apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_runtime_h2.py
+```
+
+This focused suite proves actor-poison propagation to runtime failure,
+fail-closed USER/NON_USER admission, bounded shutdown containment, non-poisoning
+normal cancellation, three-way state/temporal/action status aggregation,
+temporal-success/action-failure partial reporting, unchanged duplicate fencing,
+and rejection of a synthetic direct-generation lane in `PersistentPresenceRuntime`.
+
 ### Core
 
 ```powershell

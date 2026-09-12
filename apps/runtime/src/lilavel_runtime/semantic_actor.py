@@ -28,9 +28,19 @@ class SemanticActorNotRunning(SemanticActorError):
 class SemanticActorPoisoned(SemanticActorError):
     """The actor failed closed after uncertain active-work containment."""
 
+    def __init__(self, reason_code: str = "actor_poisoned") -> None:
+        _require_bounded_text(reason_code, "reason_code", 128)
+        self.reason_code = reason_code
+        super().__init__(f"semantic actor poisoned: {reason_code}")
+
 
 class SemanticActorShutdownTimeout(SemanticActorError):
     """Owned semantic work did not settle before actor shutdown."""
+
+    def __init__(self, reason_code: str = "shutdown_timeout") -> None:
+        _require_bounded_text(reason_code, "reason_code", 128)
+        self.reason_code = reason_code
+        super().__init__(f"semantic actor shutdown failed: {reason_code}")
 
 
 class SemanticMailboxFull(SemanticActorError):
@@ -327,6 +337,8 @@ class SemanticActor:
         self._worker: asyncio.Task[None] | None = None
         self._active: _Record | None = None
         self._uncontained: set[asyncio.Task[object]] = set()
+        self._failure: SemanticActorError | None = None
+        self._failure_event = asyncio.Event()
         self._next_request_sequence = 0
         self._next_episode_sequence = 0
         self._max_active = 0
@@ -342,6 +354,26 @@ class SemanticActor:
     @property
     def state(self) -> SemanticActorState:
         return self._state
+
+    @property
+    def failure(self) -> SemanticActorError | None:
+        """Return typed, bounded terminal failure evidence when poisoned."""
+
+        return self._failure
+
+    async def wait_for_failure(self) -> SemanticActorError:
+        """Wait for an explicit actor failure notification.
+
+        The actor does not decide runtime policy.  It exposes this terminal
+        notification so its owning supervisor can propagate poison without
+        polling actor state or relying on a worker task disappearing.
+        """
+
+        await self._failure_event.wait()
+        failure = self._failure
+        if failure is None:  # pragma: no cover - event and failure are one boundary
+            raise RuntimeError("semantic actor failure notification was incomplete")
+        return failure
 
     @property
     def active_episode(self) -> SemanticEpisode | None:
@@ -513,6 +545,26 @@ class SemanticActor:
         if self._state is SemanticActorState.STOPPED:
             return
 
+        if self._state is SemanticActorState.POISONED:
+            self._reject_queued("actor_poisoned")
+            worker = self._worker
+            if worker is not None and not worker.done():
+                self._wake.set()
+                try:
+                    await asyncio.shield(
+                        asyncio.wait_for(
+                            asyncio.shield(worker), timeout=self._settlement_timeout * 2
+                        )
+                    )
+                except TimeoutError as error:
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+                    self._shutdown_failure("shutdown_timeout")
+                    raise SemanticActorShutdownTimeout("shutdown_timeout") from error
+            if self._uncontained:
+                raise SemanticActorShutdownTimeout("uncontained_work")
+            return
+
         self._state = SemanticActorState.STOPPING
         self._reject_queued("actor_shutdown")
         if self._active is not None:
@@ -524,8 +576,8 @@ class SemanticActor:
         self._wake.set()
         worker = self._worker
         if worker is None:
-            self._state = SemanticActorState.POISONED
-            raise SemanticActorShutdownTimeout("semantic actor worker is missing")
+            self._shutdown_failure("worker_missing")
+            raise SemanticActorShutdownTimeout("worker_missing")
         try:
             await asyncio.shield(
                 asyncio.wait_for(asyncio.shield(worker), timeout=self._settlement_timeout * 2)
@@ -533,13 +585,11 @@ class SemanticActor:
         except TimeoutError as error:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
-            self._state = SemanticActorState.POISONED
-            raise SemanticActorShutdownTimeout(
-                "semantic actor work did not settle before shutdown deadline"
-            ) from error
+            self._shutdown_failure("shutdown_timeout")
+            raise SemanticActorShutdownTimeout("shutdown_timeout") from error
         if self._uncontained:
-            self._state = SemanticActorState.POISONED
-            raise SemanticActorShutdownTimeout("semantic actor retains uncontained work")
+            self._shutdown_failure("uncontained_work")
+            raise SemanticActorShutdownTimeout("uncontained_work")
         if self._state is SemanticActorState.STOPPING:
             self._state = SemanticActorState.STOPPED
 
@@ -568,7 +618,7 @@ class SemanticActor:
                 self._active = None
                 self._settle(record, status, result=result, reason_code=reason_code)
                 if uncontained:
-                    self._state = SemanticActorState.POISONED
+                    self._poison("uncontainable_settlement")
                     self._reject_queued("actor_poisoned")
                     return
                 self._maybe_rotate_session()
@@ -589,7 +639,7 @@ class SemanticActor:
                 record = self._active
                 self._active = None
                 self._settle(record, SemanticEpisodeStatus.FAILED, reason_code="actor_failed")
-            self._state = SemanticActorState.POISONED
+            self._poison("actor_failed")
             self._reject_queued("actor_poisoned")
 
     async def _execute(
@@ -696,6 +746,18 @@ class SemanticActor:
         self._uncontained.discard(task)
         with suppress(asyncio.CancelledError):
             task.exception()
+
+    def _poison(self, reason_code: str) -> None:
+        self._state = SemanticActorState.POISONED
+        if self._failure is None:
+            self._failure = SemanticActorPoisoned(reason_code)
+            self._failure_event.set()
+
+    def _shutdown_failure(self, reason_code: str) -> None:
+        self._state = SemanticActorState.POISONED
+        if self._failure is None:
+            self._failure = SemanticActorShutdownTimeout(reason_code)
+            self._failure_event.set()
 
     def _pop_next(self) -> _Record:
         if self._user_queue:

@@ -549,7 +549,12 @@ model sidecar package, or a provider. Its normal lifecycle is
 cannot be restarted. It owns the `SemanticActor` lifecycle and registered
 adapter coroutines through an `asyncio.TaskGroup`; the actor owns one bounded
 worker task and settles or contains its semantic work before runtime shutdown
-completes. An unexpected owned-task failure fails the kernel closed.
+completes. An unexpected owned-task failure fails the kernel closed. The
+runtime also supervises the actor's explicit terminal failure notification:
+`SemanticActorState.POISONED` transitions a running runtime to `FAILED`, closes
+semantic admission, and preserves a bounded typed failure reason. Poison during
+`STOPPING` is handled as shutdown failure without reviving or double-transitioning
+the lifecycle.
 
 Observation admission uses a bounded `asyncio.Queue` plus a bounded in-memory
 `ObservationWindow`. `admit_observation()` (and the adapter-facing `submit()`
@@ -661,8 +666,11 @@ provider continuation remain outside this component.
 
 The static guard in `scripts/check_architecture.py` checks the current cheap
 regressions: Core cannot import Discord or the top-level runtime, the runtime
-cannot import Discord or Neuro implementations, and the Discord environment
-cannot import Core persistence or perform Core lifecycle operations.
+cannot import Discord or Neuro implementations, the Discord environment cannot
+import Core persistence or perform Core lifecycle operations, and runtime model
+generation remains on the canonical `LocalCognitionEngine` route or explicitly
+deprecated compatibility fixtures. `PersistentPresenceRuntime` and canonical
+composition modules cannot own a direct legacy semantic generation lane.
 
 ## Deferred boundaries
 

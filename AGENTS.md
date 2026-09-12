@@ -3,9 +3,11 @@
 ## Project
 
 Lilavel is modeled at the product boundary as a persistent agent runtime. This
-repository currently contains the migrated conversational foundation and its
-replaceable environment adapter; it does not yet implement autonomous
-scheduling, wake, attention, tools, or world-state behavior.
+repository currently contains the migrated conversational foundation, its
+replaceable environment adapter, a bounded local presence/temporal wake slice,
+and trusted runtime-owned application tools. It does not implement general or
+recurring scheduling, model-based attention, arbitrary model-selected tools, or
+world-state behavior.
 
 Do not invent requirements for capabilities that are not implemented or
 documented. Product direction is context, not an implementation specification.
@@ -16,9 +18,10 @@ documented. Product direction is context, not an implementation specification.
   chat logs are secondary leads, not historical evidence.
 - Never invent requirements or historical rationale; use `UNKNOWN` when the
   repository and approved evidence do not support a claim.
-- The future `LilavelRuntime` composition boundary owns agent lifecycle,
-  cross-environment orchestration, and agent state only when those contracts
-  are explicitly designed and implemented.
+- The `LilavelRuntime` composition boundary owns the implemented top-level
+  lifecycle, cross-environment task orchestration, semantic admission, and
+  bounded runtime state; broader agent state remains owned only where its
+  contract is explicitly designed and implemented.
 - `ConversationCore` owns conversational semantics and canonical conversation
   state. `ModelRuntime` owns the local generation lifecycle. The model sidecar
   owns provider/process transport. Environment adapters observe and act; they
