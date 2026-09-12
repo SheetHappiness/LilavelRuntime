@@ -1,8 +1,8 @@
 # PHASE COG-V1-A — Cognition Policy Contracts & Eval Corpus
 
-Status: `IMPLEMENTED`
+Status: `CLOSED`
 Baseline SHA: `f227193cda266f050873067eb49f5208935e047b`
-Implementation SHA: `<filled at closeout>`
+Implementation SHA: `1bc1c30b9a4928aa9fe46b2144e1da5c3c2a60da`
 Parent SHA: `c902cd78086143056902ee53d043d62982776363`
 
 ## Goal
@@ -76,8 +76,35 @@ ownership invariants are unchanged.
 
 ## Validation
 
-To be filled at closeout with exact commands and counts. Live/provider and
-platform-specific behavior are not established by this phase.
+Executed on Linux with Python 3.14.7. The `UV_CACHE_DIR` and
+`RUFF_CACHE_DIR` overrides only relocate tool caches because the shared
+environment cache is read-only; the locked commands and dependency graphs are
+unchanged.
+
+- Core `uv sync --locked` and `uv lock --check`: `PASS`.
+- Core Ruff check, format check, and strict Pyright: `PASS`.
+- Focused COG-V1-A tests (`tests/test_cognition_policy.py`): `PASS` — 12
+  passed.
+- Full Core pytest: `PASS` — 192 passed, 4 platform skips.
+- Contracts sync/lock, Ruff, format check, strict Pyright, and full pytest:
+  `PASS` — 7 passed.
+- Discord adapter sync/lock, Ruff, format check, strict Pyright, and full
+  pytest: `PASS` — 95 passed, 10 existing deprecation warnings.
+- Runtime sync/lock, Ruff check, strict Pyright, and source-only format check:
+  `PASS`. Runtime tests excluding the unchanged D1 conversation file:
+  `PASS` — 199 passed.
+- Full runtime format check: `FAIL` on two pre-existing formatting issues in
+  unchanged `apps/runtime/tests/test_runtime_h2.py`; no runtime file belongs
+  to this phase.
+- Full runtime pytest: `UNVERIFIED` — the unchanged
+  `test_temporal_non_user_work_waits_behind_active_user_conversation` did not
+  settle. The same hang reproduced against a temporary baseline Core checkout
+  at the expected starting state, so it is not attributed to this change.
+- Root sync/lock, launcher help, docs integrity, architecture guard, and
+  `git diff --check`: `PASS`.
+
+Live provider/Discord behavior, Windows-specific behavior, durable recovery,
+and future policy quality remain `UNVERIFIED`; no provider calls were made.
 
 ## Unknowns
 
