@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections.abc import Callable
 
@@ -26,6 +27,7 @@ from lilavel_runtime import (
     Observation,
     ObservationWindow,
     ProposalApplicationCoordinator,
+    ProposalApplicationResult,
     ProposalApplicationStatus,
     StateApplicationStatus,
     StateProposal,
@@ -43,6 +45,25 @@ class _FixtureEngine:
     async def run(self, episode: CognitionEpisode) -> object:
         del episode
         return self.candidate
+
+
+class _BlockingApplicationCoordinator(ProposalApplicationCoordinator):
+    def __init__(
+        self,
+        mind_state: MindState,
+        *,
+        scope_id: str,
+        started: threading.Event,
+        release: threading.Event,
+    ) -> None:
+        super().__init__(mind_state, scope_id=scope_id)
+        self._started = started
+        self._release = release
+
+    def apply_sync(self, outcome: CognitionOutcome) -> ProposalApplicationResult:
+        self._started.set()
+        self._release.wait(1.0)
+        return super().apply_sync(outcome)
 
 
 def _observation() -> Observation:
@@ -133,6 +154,33 @@ async def test_a_valid_state_proposal_uses_trusted_atomic_delta_and_increments_v
     assert [item.text for item in state.intentions()] == ["follow up later"]
     assert result.state.proposals[0].intention_id == state.intentions()[0].intention_id
     assert boundary.application_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_application_cancellation_waits_for_sync_settlement() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    boundary = _BlockingApplicationCoordinator(
+        MindState(),
+        scope_id="fixture-scope",
+        started=started,
+        release=release,
+    )
+    outcome = CognitionOutcome("episode-manual", "trigger-manual")
+
+    task = asyncio.create_task(boundary.apply(outcome))
+    while not started.is_set():
+        await asyncio.sleep(0.001)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert boundary.application_count == 1
+    assert boundary.applications()[0].status is ProposalApplicationStatus.INELIGIBLE
 
 
 @pytest.mark.asyncio
