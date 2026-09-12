@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
@@ -31,6 +31,13 @@ from .mind import (
     MindStateDelta,
     MindStateDeltaKind,
     MindStateVersionConflict,
+)
+from .temporal import (
+    TemporalApplication,
+    TemporalApplicationStatus,
+    TemporalCoordinator,
+    TemporalPreparation,
+    TemporalProposalApplication,
 )
 from .tool_registry import ApplicationToolRegistry, validate_tool_arguments
 
@@ -128,6 +135,9 @@ class ProposalApplicationResult:
     state: StateApplication
     actions: ActionApplication
     reason_code: str | None = None
+    temporal: TemporalApplication = field(
+        default_factory=lambda: TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +153,13 @@ class _PreparedActions:
     results: tuple[ActionProposalApplication, ...]
     valid: bool
     reason_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedTemporal:
+    preparation: TemporalPreparation | None
+    application: TemporalApplication
+    valid: bool
 
 
 class ProposalApplicationCoordinator:
@@ -163,6 +180,7 @@ class ProposalApplicationCoordinator:
         tool_registry: ApplicationToolRegistry | None = None,
         tool_session_factory: ApplicationToolSessionFactory | None = None,
         action_tool_names: Mapping[ActionProposalKind, str] | None = None,
+        temporal_coordinator: TemporalCoordinator | None = None,
         runtime_instance_id: str = "runtime",
         fence_capacity: int = MAX_APPLICATION_FENCES,
     ) -> None:
@@ -186,6 +204,7 @@ class ProposalApplicationCoordinator:
         self._state_provenance = state_provenance
         self._tool_registry = tool_registry
         self._tool_session_factory = tool_session_factory
+        self._temporal_coordinator = temporal_coordinator
         self._action_tool_names = cast(Mapping[ActionProposalKind, str], MappingProxyType(routes))
         self._fence_capacity = fence_capacity
         self._lock = threading.RLock()
@@ -261,6 +280,16 @@ class ProposalApplicationCoordinator:
                 "scope_mismatch",
             )
 
+        prepared_temporal = self._prepare_temporal(outcome)
+        if not prepared_temporal.valid:
+            return self._rejected_result(
+                outcome,
+                application_id,
+                ProposalApplicationStatus.REJECTED,
+                prepared_temporal.application.reason_code or "temporal_application_rejected",
+                temporal=prepared_temporal.application,
+            )
+
         prepared_state = self._prepare_state(outcome, current_version)
         prepared_actions = self._prepare_actions(outcome, application_id)
 
@@ -279,6 +308,7 @@ class ProposalApplicationCoordinator:
                 state,
                 actions,
                 "state_version_conflict",
+                self._temporal_blocked(outcome, "state_application_blocked"),
             )
 
         if prepared_state.status is StateApplicationStatus.REJECTED or not prepared_actions.valid:
@@ -305,6 +335,7 @@ class ProposalApplicationCoordinator:
                 state,
                 actions,
                 reason,
+                self._temporal_blocked(outcome, "proposal_batch_rejected"),
             )
 
         if prepared_state.deltas:
@@ -328,6 +359,7 @@ class ProposalApplicationCoordinator:
                     state,
                     actions,
                     "state_version_conflict",
+                    self._temporal_blocked(outcome, "state_application_blocked"),
                 )
             except MindStateCapacityExceeded:
                 state = self._state_rejected(
@@ -344,6 +376,7 @@ class ProposalApplicationCoordinator:
                     state,
                     actions,
                     "state_capacity_exceeded",
+                    self._temporal_blocked(outcome, "state_application_blocked"),
                 )
             except Exception:
                 state = self._state_rejected(
@@ -360,6 +393,7 @@ class ProposalApplicationCoordinator:
                     state,
                     actions,
                     "state_application_failed",
+                    self._temporal_blocked(outcome, "state_application_blocked"),
                 )
             state = StateApplication(
                 StateApplicationStatus.APPLIED,
@@ -381,19 +415,60 @@ class ProposalApplicationCoordinator:
         else:
             state = self._state_not_requested(current_version)
 
+        temporal = self._commit_temporal(prepared_temporal, outcome)
+        if temporal.status is TemporalApplicationStatus.REJECTED:
+            actions = (
+                self._actions_blocked(prepared_actions, "temporal_application_blocked")
+                if outcome.action_proposals
+                else self._actions_not_requested()
+            )
+            status = (
+                ProposalApplicationStatus.PARTIAL
+                if state.status is StateApplicationStatus.APPLIED
+                else ProposalApplicationStatus.REJECTED
+            )
+            return ProposalApplicationResult(
+                application_id,
+                outcome.episode_id,
+                status,
+                state,
+                actions,
+                temporal.reason_code or "temporal_application_rejected",
+                temporal,
+            )
+
         if not outcome.action_proposals:
             status = (
                 ProposalApplicationStatus.APPLIED
-                if state.status is StateApplicationStatus.APPLIED
+                if (
+                    state.status is StateApplicationStatus.APPLIED
+                    or temporal.status
+                    in {
+                        TemporalApplicationStatus.APPLIED,
+                        TemporalApplicationStatus.DUPLICATE,
+                    }
+                )
                 else ProposalApplicationStatus.NO_PROPOSALS
             )
             return ProposalApplicationResult(
-                application_id, outcome.episode_id, status, state, self._actions_not_requested()
+                application_id,
+                outcome.episode_id,
+                status,
+                state,
+                self._actions_not_requested(),
+                temporal=temporal,
             )
 
         actions = self._execute_actions(prepared_actions, application_id)
         status = self._combined_status(state, actions)
-        return ProposalApplicationResult(application_id, outcome.episode_id, status, state, actions)
+        if (
+            temporal.status is TemporalApplicationStatus.DUPLICATE
+            and status is ProposalApplicationStatus.NO_PROPOSALS
+        ):
+            status = ProposalApplicationStatus.APPLIED
+        return ProposalApplicationResult(
+            application_id, outcome.episode_id, status, state, actions, temporal=temporal
+        )
 
     def _prepare_state(self, outcome: CognitionOutcome, current_version: int) -> _PreparedState:
         if not outcome.state_proposals:
@@ -560,6 +635,83 @@ class ProposalApplicationCoordinator:
         settlement = getattr(session, "settlement", None)
         return ActionApplication(self._action_status(actions), actions, settlement, None)
 
+    def _prepare_temporal(self, outcome: CognitionOutcome) -> _PreparedTemporal:
+        if not outcome.temporal_proposals:
+            return _PreparedTemporal(
+                None,
+                TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED),
+                True,
+            )
+        coordinator = self._temporal_coordinator
+        if coordinator is None:
+            return _PreparedTemporal(
+                None,
+                self._temporal_rejected(outcome, "temporal_application_not_configured"),
+                False,
+            )
+        try:
+            preparation = coordinator.prepare(
+                outcome.temporal_proposals,
+                source_episode_id=outcome.episode_id,
+                source_trigger_id=outcome.trigger_id,
+            )
+        except Exception:
+            return _PreparedTemporal(
+                None,
+                self._temporal_rejected(outcome, "temporal_proposal_invalid"),
+                False,
+            )
+        if not preparation.valid:
+            return _PreparedTemporal(
+                preparation,
+                preparation.rejection
+                or self._temporal_rejected(outcome, preparation.reason_code or "temporal_rejected"),
+                False,
+            )
+        return _PreparedTemporal(
+            preparation,
+            TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED),
+            True,
+        )
+
+    def _commit_temporal(
+        self, prepared: _PreparedTemporal, outcome: CognitionOutcome
+    ) -> TemporalApplication:
+        if prepared.preparation is None:
+            return prepared.application
+        coordinator = self._temporal_coordinator
+        if coordinator is None:
+            return self._temporal_rejected(outcome, "temporal_application_not_configured")
+        try:
+            return coordinator.commit(
+                prepared.preparation,
+                source_episode_id=outcome.episode_id,
+                source_trigger_id=outcome.trigger_id,
+            )
+        except Exception:
+            return self._temporal_rejected(outcome, "temporal_commit_failed")
+
+    @staticmethod
+    def _temporal_rejected(outcome: CognitionOutcome, reason: str) -> TemporalApplication:
+        return TemporalApplication(
+            TemporalApplicationStatus.REJECTED,
+            tuple(
+                TemporalProposalApplication(
+                    index,
+                    TemporalApplicationStatus.REJECTED,
+                    reason_code=reason,
+                )
+                for index, _ in enumerate(outcome.temporal_proposals)
+            ),
+            reason,
+        )
+
+    @staticmethod
+    def _temporal_blocked(outcome: CognitionOutcome, reason: str) -> TemporalApplication:
+        if not outcome.temporal_proposals:
+            return TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED)
+        return ProposalApplicationCoordinator._temporal_rejected(outcome, reason)
+
     def _settlements(
         self,
         prepared: _PreparedActions,
@@ -640,6 +792,7 @@ class ProposalApplicationCoordinator:
             previous.state,
             previous.actions,
             "application_already_settled",
+            previous.temporal,
         )
 
     def _rejected_result(
@@ -648,6 +801,8 @@ class ProposalApplicationCoordinator:
         application_id: str,
         status: ProposalApplicationStatus,
         reason: str,
+        *,
+        temporal: TemporalApplication | None = None,
     ) -> ProposalApplicationResult:
         current = self._mind_state.version
         state = (
@@ -682,7 +837,18 @@ class ProposalApplicationCoordinator:
             else self._actions_not_requested()
         )
         return ProposalApplicationResult(
-            application_id, outcome.episode_id, status, state, actions, reason
+            application_id,
+            outcome.episode_id,
+            status,
+            state,
+            actions,
+            reason,
+            temporal
+            or (
+                self._temporal_rejected(outcome, reason)
+                if outcome.temporal_proposals
+                else TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED)
+            ),
         )
 
     @staticmethod
@@ -828,6 +994,7 @@ class ProposalApplicationCoordinator:
             state,
             actions,
             "invalid_outcome",
+            TemporalApplication(TemporalApplicationStatus.NOT_REQUESTED),
         )
 
 
@@ -849,4 +1016,7 @@ __all__ = [
     "StateApplicationStatus",
     "StateProposalApplication",
     "StateProvenanceResolver",
+    "TemporalApplication",
+    "TemporalApplicationStatus",
+    "TemporalProposalApplication",
 ]

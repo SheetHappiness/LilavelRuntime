@@ -145,6 +145,7 @@ class CognitionEpisodeRunner:
             trigger_id=episode.trigger.trigger_id,
             state_proposals=candidate.state_proposals,
             action_proposals=candidate.action_proposals,
+            temporal_proposals=candidate.temporal_proposals,
             scope_id=episode.scope_id,
             based_on_state_version=episode.context.mind_state_version,
             completion_proof=_contracts._COMPLETED_COGNITION_PROOF,  # pyright: ignore[reportPrivateUsage]

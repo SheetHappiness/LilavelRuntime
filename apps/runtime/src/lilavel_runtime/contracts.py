@@ -6,6 +6,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
@@ -28,6 +29,7 @@ __all__ = [
     "CognitionGate",
     "CognitionOutcome",
     "CognitionTrigger",
+    "CognitionTriggerSource",
     "DirectMessageCognitionGate",
     "DirectMessageWakePolicy",
     "EnvironmentAdapter",
@@ -42,6 +44,9 @@ __all__ = [
     "MAX_COGNITION_PROPOSALS",
     "MAX_ACTION_PROPOSAL_CONTENT_BYTES",
     "MAX_COGNITION_REASON_BYTES",
+    "MAX_COGNITION_SOURCE_REFS",
+    "MAX_TEMPORAL_INTENTION_REF_BYTES",
+    "MAX_TEMPORAL_REASON_BYTES",
     "Observation",
     "ObservationReceipt",
     "ObservationReceiptStatus",
@@ -49,6 +54,7 @@ __all__ = [
     "RuntimePresence",
     "StateProposal",
     "StateProposalKind",
+    "TemporalProposal",
     "ToolCall",
     "ToolResult",
     "ToolSpec",
@@ -153,6 +159,9 @@ MAX_COGNITION_TRIGGER_OBSERVATIONS = 8
 MAX_COGNITION_PROPOSALS = 8
 MAX_ACTION_PROPOSAL_CONTENT_BYTES = 4_096
 MAX_COGNITION_REASON_BYTES = 128
+MAX_TEMPORAL_REASON_BYTES = 128
+MAX_TEMPORAL_INTENTION_REF_BYTES = 128
+MAX_COGNITION_SOURCE_REFS = 8
 
 # This sentinel is intentionally private.  A CognitionOutcome constructed by
 # an arbitrary caller is inert data; only CognitionEpisodeRunner can mark the
@@ -169,6 +178,13 @@ class CognitionDecision(StrEnum):
 NO_COGNITION = CognitionDecision.NO_COGNITION
 
 
+class CognitionTriggerSource(StrEnum):
+    """The trusted runtime path that admitted a cognition opportunity."""
+
+    EXTERNAL = "external"
+    TEMPORAL = "temporal"
+
+
 @dataclass(frozen=True, slots=True)
 class CognitionTrigger:
     """A bounded runtime decision to start one cognition episode.
@@ -180,11 +196,14 @@ class CognitionTrigger:
 
     observation_ids: tuple[str, ...]
     reason: str
+    source: CognitionTriggerSource = CognitionTriggerSource.EXTERNAL
+    wake_intent_id: str | None = None
+    source_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.observation_ids) is not tuple:
             raise TypeError("observation_ids must be a tuple")
-        if not self.observation_ids:
+        if not self.observation_ids and self.source is CognitionTriggerSource.EXTERNAL:
             raise ValueError("cognition trigger must reference an observation")
         if len(self.observation_ids) > MAX_COGNITION_TRIGGER_OBSERVATIONS:
             raise ValueError("cognition trigger observation bound exceeded")
@@ -193,12 +212,45 @@ class CognitionTrigger:
         for observation_id in self.observation_ids:
             _require_text(observation_id, "observation_id")
         _require_bounded_text(self.reason, "reason", MAX_COGNITION_REASON_BYTES)
+        if type(self.source) is not CognitionTriggerSource:
+            raise TypeError("source must be a CognitionTriggerSource")
+        if type(self.source_refs) is not tuple:
+            raise TypeError("source_refs must be a tuple")
+        if len(self.source_refs) > MAX_COGNITION_SOURCE_REFS:
+            raise ValueError("cognition trigger source reference bound exceeded")
+        if len(set(self.source_refs)) != len(self.source_refs):
+            raise ValueError("cognition trigger source refs must be unique")
+        for source_ref in self.source_refs:
+            _require_bounded_text(source_ref, "source_ref", MAX_TEMPORAL_INTENTION_REF_BYTES)
+
+        if self.source is CognitionTriggerSource.EXTERNAL:
+            if self.wake_intent_id is not None:
+                raise ValueError("external cognition triggers cannot reference a wake intent")
+            if self.source_refs:
+                raise ValueError("external cognition triggers cannot carry temporal source refs")
+        else:
+            if self.observation_ids:
+                raise ValueError("temporal cognition triggers cannot reference observations")
+            _require_bounded_text(self.wake_intent_id or "", "wake_intent_id", 128)
+            if not self.source_refs:
+                raise ValueError("temporal cognition triggers require source refs")
 
     @property
     def trigger_id(self) -> str:
         """Return a stable evidence-derived identity without adding authority."""
 
-        material = "\x1f".join((*self.observation_ids, self.reason)).encode("utf-8")
+        if self.source is CognitionTriggerSource.EXTERNAL:
+            material = "\x1f".join((*self.observation_ids, self.reason)).encode("utf-8")
+        else:
+            material = "\x1f".join(
+                (
+                    self.source.value,
+                    *self.observation_ids,
+                    self.reason,
+                    self.wake_intent_id or "",
+                    *self.source_refs,
+                )
+            ).encode("utf-8")
         return f"trigger:{sha256(material).hexdigest()[:32]}"
 
 
@@ -290,6 +342,34 @@ class StateProposal:
         object.__setattr__(self, "text", self.text.strip())
 
 
+@dataclass(frozen=True, slots=True)
+class TemporalProposal:
+    """An inert request to reconsider an intention after a future time.
+
+    ``not_before`` is model-originated input, not a scheduler command. The
+    temporal application boundary normalizes it against its own clock and
+    creates a runtime-owned ``WakeIntent`` only after validation.
+    """
+
+    reason: str
+    not_before: datetime
+    intention_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_bounded_text(self.reason, "reason", MAX_TEMPORAL_REASON_BYTES)
+        if type(self.not_before) is not datetime:
+            raise TypeError("not_before must be a datetime")
+        if self.not_before.tzinfo is None or self.not_before.utcoffset() is None:
+            raise ValueError("not_before must be timezone-aware")
+        object.__setattr__(self, "reason", self.reason.strip())
+        object.__setattr__(self, "not_before", self.not_before.astimezone(UTC))
+        if self.intention_ref is not None:
+            _require_bounded_text(
+                self.intention_ref, "intention_ref", MAX_TEMPORAL_INTENTION_REF_BYTES
+            )
+            object.__setattr__(self, "intention_ref", self.intention_ref.strip())
+
+
 class ActionProposalKind(StrEnum):
     """The inert action intent vocabulary; destination and authority are absent."""
 
@@ -322,10 +402,12 @@ class CognitionCandidate:
 
     state_proposals: tuple[StateProposal, ...] = ()
     action_proposals: tuple[ActionProposal, ...] = ()
+    temporal_proposals: tuple[TemporalProposal, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_proposals(self.state_proposals, StateProposal, "state_proposals")
         _validate_proposals(self.action_proposals, ActionProposal, "action_proposals")
+        _validate_proposals(self.temporal_proposals, TemporalProposal, "temporal_proposals")
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,12 +424,14 @@ class CognitionOutcome:
     scope_id: str = ""
     based_on_state_version: int | None = None
     completion_proof: object | None = field(default=None, repr=False, compare=False)
+    temporal_proposals: tuple[TemporalProposal, ...] = ()
 
     def __post_init__(self) -> None:
         _require_text(self.episode_id, "episode_id")
         _require_text(self.trigger_id, "trigger_id")
         _validate_proposals(self.state_proposals, StateProposal, "state_proposals")
         _validate_proposals(self.action_proposals, ActionProposal, "action_proposals")
+        _validate_proposals(self.temporal_proposals, TemporalProposal, "temporal_proposals")
         if self.scope_id:
             _require_text(self.scope_id, "scope_id")
         if self.based_on_state_version is not None and (
@@ -368,7 +452,7 @@ class CognitionOutcome:
 
     @property
     def is_quiet(self) -> bool:
-        return not self.state_proposals and not self.action_proposals
+        return not (self.state_proposals or self.action_proposals or self.temporal_proposals)
 
 
 class CognitionEngine(Protocol):
