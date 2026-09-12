@@ -68,4 +68,4 @@ trigger. Only a successfully completed episode can return an inert outcome;
 MIND-1C cannot mutate MindState, execute actions, affect Discord, or append
 canonical conversation messages.
 
-Implementation SHA: recorded at commit close.
+Implementation SHA: `c001eb089188e3368b5865ab71f8b28afa346b54`.
