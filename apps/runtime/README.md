@@ -20,9 +20,10 @@ the same actor at `USER` priority; `ConversationExecutionAdapter` delegates to
 the existing `CoreConversationRouter`, while `ConversationCore` remains the
 canonical conversation/history owner. MIND-1F-D2 routes normal local CLI input
 through that same actor at `USER` priority and reuses the adapter for Core
-streaming and settlement. The transitional Presence component retains only the
-legacy idle/appraisal/autonomous duties behind a temporary actor-user exclusion
-gate. MIND-1D owns the separate proposal
+streaming and settlement. MIND-1F-E routes conversation-completion appraisal
+and deterministic idle opportunities through the same actor as `INTERNAL`
+`NON_USER` cognition. The canonical Presence component retains only local
+input/output plumbing and idle timing. MIND-1D owns the separate proposal
 validation, application, and authorization boundary. MIND-1E owns bounded
 temporal wake proposals and scheduler admission; it does not create a general
 scheduler or recurring autonomy.
@@ -150,8 +151,8 @@ atomic. Each path has its own status and per-proposal result. Confirmed or
 unknown external effects are never rolled back; a later failure is reported as
 partial application and fences the outcome. No application result writes
 ConversationCore history. Both reactive DM and normal CLI conversation routes
-are actor-owned; legacy Presence appraisal and autonomous production remain
-temporary compatibility lanes pending MIND-1F-E.
+are actor-owned; internal appraisal and deterministic idle cognition now use
+the same actor-owned `NON_USER` route.
 
 ## MIND-1E temporal intentions / self-wake
 
@@ -261,42 +262,69 @@ session and maps transient Core events to the CLI output sink. The CLI scope is
 serialization never merges their histories. Core remains the sole canonical
 user/assistant history authority.
 
-`PersistentPresenceRuntime` is still lifecycle-owned for the transitional
-idle, appraisal, and autonomous behavior. In the runtime composition its user
+`PersistentPresenceRuntime` is lifecycle-owned only for local input/output
+plumbing and deterministic idle timing in the canonical composition. Its user
 submitter is bound back to `LilavelRuntime`, so it cannot create a parallel
-semantic user queue. A temporary exclusion counter cancels and joins legacy
-appraisal/autonomous work before an actor `USER` request is admitted and holds
-the exclusion until that actor episode settles. Direct Presence construction
-retains its P5-B1 compatibility path for existing standalone callers; it is not
-the normal CLI composition.
+semantic user queue. After a successful Core turn it queues one runtime-owned
+internal appraisal opportunity through the actor without waiting for hidden
+post-processing. Direct Presence construction retains an explicitly deprecated
+P5-B1 compatibility path for existing standalone callers; it is not the normal
+CLI composition.
+
+## MIND-1F-E legacy cognition retirement
+
+The two actor-owned semantic routes are:
+
+```text
+USER     → SemanticActor → ConversationExecutionAdapter → ConversationCore
+NON_USER → SemanticActor → CognitionEpisodeRunner → CognitionOutcome
+                              → ProposalApplicationCoordinator
+```
+
+Conversation completion produces a bounded `INTERNAL` appraisal trigger. Idle
+opportunity production produces a bounded `INTERNAL` trigger referencing one
+runtime-owned active intention. Both are `NON_USER` actor requests and reuse
+the normal `CognitionEpisodeRunner` and `ProposalApplicationCoordinator`.
+Internal cognition never creates canonical conversation messages; state
+provenance comes from the trusted completed Core run. Presence `SPEAK` and
+`STAY_SILENT` actions use the existing P4 application registry/session seam,
+and only a confirmed `SPEAK` creates a noncanonical local self-action.
+
+`MindAppraiser` and `AutonomousCognitionRunner` are retired from production
+composition. Their direct-generation implementations remain only as
+deprecated standalone P5-B1 compatibility fixtures for existing tests/callers;
+they are not a third production semantic lane, and the canonical
+`PersistentPresenceRuntime` contains no direct semantic model call.
 
 ## P5-B1 local presence
 
 The optional local presence component is started, monitored, and stopped by
-`LilavelRuntime`. It owns one bounded input queue and one cognition lane over a
-shared `ConversationCore`/`ModelRuntimeV3`. Normal user input remains canonical;
-idle cognition never calls `ConversationCore.start_turn()` and never writes
-history.
+`LilavelRuntime`. It owns one bounded input queue, the local output sink, and a
+monotonic idle timer. It does not own semantic admission, a model runner, or a
+presence-only tool runtime. Normal user input remains canonical; internal
+cognition never calls `ConversationCore.start_turn()` and never writes history.
 
 True idle is a monotonic event-or-timeout wait with a one-shot latch. The safe
 default policy is `NO_WAKE`; explicit deterministic configuration may admit one
-run. Autonomous generations receive only `presence.say` and
-`presence.stay_silent`, while normal conversation generations receive no
-presence tools. The action executes through the existing application registry
-and tool-session path. Provider continuation text is consumed but suppressed,
-so one `say` produces exactly one noncanonical local utterance.
+run. Internal idle cognition produces only inert `ActionProposal` values. The
+action executes through the existing application registry and tool-session
+path. Provider continuation text is not a canonical turn, so one confirmed
+`SPEAK` produces exactly one noncanonical local utterance.
 
 MIND-0 adds a bounded in-memory `MindState` to this local composition. After a
-successful normal turn, one tool-free transient `MindAppraiser` may return
-strict JSON for `no_change` or one short `create_intention` result. The runtime
-binds the resulting intention to the completed Core user/assistant message IDs.
-Idle admission requires an active intention and passes that specific intention
-to autonomous cognition. A successful `presence.say` marks it expressed and
-records one bounded recent `SelfAction`; `presence.stay_silent` leaves it
-active. The read-only `MindProjection` is composed into later normal-turn
-guidance, so self-action context is available without adding autonomous speech
-to canonical history. This state is intentionally not persisted and does not
-apply to the Discord adapter.
+successful normal turn, one runtime-owned `INTERNAL` appraisal opportunity
+enters the actor as `NON_USER`; the normal `CognitionEpisodeRunner` can return
+`no_change` or one short `CREATE_INTENTION` proposal. Trusted runtime
+composition binds that proposal to the completed Core user/assistant message
+IDs. Idle admission requires an active intention and emits another `INTERNAL`
+actor request containing only its runtime-owned reference. A successful
+`SPEAK` marks it expressed and records one bounded recent `SelfAction`;
+`STAY_SILENT` leaves it active. The read-only `MindProjection` is composed into
+later normal-turn guidance, so self-action context is available without adding
+autonomous speech to canonical history. This state is intentionally not
+persisted and does not apply to the Discord adapter. The old direct-generation
+`MindAppraiser` and `AutonomousCognitionRunner` classes remain only as
+deprecated standalone compatibility fixtures for existing callers/tests.
 
 From the repository root, run:
 

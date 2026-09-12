@@ -11,8 +11,10 @@ intention admission and time-to-cognition dispatch; MIND-1F-B adds one
 runtime-owned, character-wide semantic admission actor; MIND-1F-C composes that
 actor with the new generic/temporal MIND path; MIND-1F-D1 moves production
 Discord reactive conversation admission under that actor; MIND-1F-D2 moves
-normal local CLI conversation admission under the same actor. Broader
-autonomous capabilities are not implied by these slices.
+normal local CLI conversation admission under the same actor; MIND-1F-E moves
+conversation-completion appraisal and deterministic idle opportunities into the
+same actor as `INTERNAL` `NON_USER` cognition. Broader autonomous capabilities
+are not implied by these slices.
 
 ## Top-level product boundary
 
@@ -31,9 +33,10 @@ positive Discord DM gates submit `USER` work to the same actor, while
 `CoreConversationRouter` and `ConversationCore` retain session and canonical
 conversation semantics. MIND-1F-D2 submits normal local CLI input as `USER`
 work to that same actor and uses the shared conversation execution seam for the
-CLI's `local-cli` Core session. P5-B1 adds one
-monotonic idle opportunity and
-transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
+CLI's `local-cli` Core session. MIND-1F-E keeps only narrow local-surface
+presence plumbing and deterministic idle-opportunity production; internal
+appraisal and idle cognition enter the actor as `INTERNAL` `NON_USER` work.
+MIND-0 adds bounded in-memory intentions
 and recent self-actions to the local CLI only; it adds no general scheduler,
 attention loop, world model, durable memory, or arbitrary model-selected tool
 authority. MIND-1C adds an effect-free, runtime-owned bounded cognition
@@ -41,6 +44,18 @@ episode seam whose successful result is an inert proposal set; MIND-1D owns
 proposal application and authorization. MIND-1E adds only a bounded in-memory
 temporal coordinator; it does not add recurring schedules, general attention,
 or durable agent state.
+
+The canonical semantic graph after MIND-1F-E is:
+
+```text
+USER     → SemanticActor → ConversationExecutionAdapter → ConversationCore
+NON_USER → SemanticActor → CognitionEpisodeRunner → CognitionOutcome
+                              → ProposalApplicationCoordinator
+```
+
+There is no third semantic model lane. `PersistentPresenceRuntime` produces
+only runtime-owned internal opportunities and local presentation plumbing in
+the canonical composition.
 
 The intended direction is:
 
@@ -112,9 +127,9 @@ classes: `USER` and `NON_USER`, with FIFO order within each class. One
 actor-owned worker admits at most one semantic episode at a time. MIND-1F-D1
 uses the actor for production Discord reactive conversation; MIND-1F-D2 uses
 the same lane for normal local CLI conversation; temporal and generic MIND
-clients also use it. Legacy Presence appraisal and autonomous clients remain
-temporary compatibility lanes and are excluded while actor-owned user work is
-active.
+clients also use it. MIND-1F-E adds runtime-owned internal appraisal and idle
+opportunities to this same `NON_USER` lane; the actor remains unaware of their
+surface meaning.
 
 When user-priority work arrives during active non-user work, the actor requests
 cooperative cancellation through an actor-owned token and waits for the active
@@ -141,8 +156,8 @@ MIND-1F-D2 uses it for normal local CLI conversations. The MIND path is:
 
 ```text
 generic CognitionTrigger ─┐
-                          ├─► LilavelRuntime.submit_cognition()
-temporal CognitionTrigger ┘             │
+temporal CognitionTrigger ─┼─► LilavelRuntime.submit_cognition()
+internal CognitionTrigger ┘             │
                                        ▼
                               SemanticActor (NON_USER)
                                        │
@@ -257,18 +272,52 @@ text and does not append canonical messages.
 The provider-neutral `ConversationExecutionAdapter` owns the Core bridge,
 transient event streaming, cancellation-before-run-bind, and joined Core/model
 settlement. The CLI's `local-cli` Core scope and each Discord
-`(environment, subject)` scope remain isolated. CLI completion is not reported
-until Core presentation and the transitional appraisal have settled, so the
-actor lane cannot be released into a parallel user decision early.
+`(environment, subject)` scope remain isolated. After a successful Core turn,
+Presence queues one runtime-owned internal appraisal opportunity through the
+actor. Admission of that `NON_USER` successor is not awaited as hidden
+post-processing, so a new user turn can preempt or outrank pending appraisal.
 
-P5-B1 Presence remains lifecycle-owned for idle opportunities,
-`MindAppraiser`, `AutonomousCognitionRunner`, `presence.say`, and
-`presence.stay_silent`. In a D2 runtime composition, Presence binds direct
-user submission back to `LilavelRuntime` and its temporary exclusion gate
-cancels and joins legacy appraisal/autonomous work before an actor USER
-episode, holding the exclusion until that episode settles. Standalone direct
-Presence construction retains its compatibility user lane for existing P5-B1
-callers; the normal CLI does not use that lane.
+The canonical CLI composition gives `PersistentPresenceRuntime` only local
+input/output plumbing and deterministic idle timing. It has no independent
+semantic scheduler or model call. Existing standalone P5-B1 callers may still
+use the explicitly deprecated compatibility runner path; it is not reachable
+from the canonical CLI composition.
+
+## MIND-1F-E legacy cognition retirement
+
+MIND-1F-E retires the production appraisal and autonomous model lanes. The
+runtime-owned local producers emit narrow `INTERNAL` triggers containing only
+bounded runtime references:
+
+```text
+successful Core turn
+  → INTERNAL appraisal opportunity
+  → SemanticActor (NON_USER)
+  → CognitionEpisodeRunner
+  → StateProposal(CREATE_INTENTION) or quiet outcome
+  → ProposalApplicationCoordinator
+
+deterministic idle opportunity + active intention
+  → INTERNAL idle opportunity
+  → SemanticActor (NON_USER)
+  → CognitionEpisodeRunner
+  → ActionProposal(SPEAK | STAY_SILENT)
+  → ProposalApplicationCoordinator → existing P4 application seam
+```
+
+`ConversationCore` remains the only canonical history owner. Internal
+cognition creates no synthetic user or assistant messages. Appraisal state
+provenance is captured by trusted runtime composition from the completed Core
+run; model output cannot invent message IDs. Local presence output is emitted
+only by an application-selected P4 binding, and `STAY_SILENT` is a terminal
+no-effect application.
+
+`MindAppraiser` and `AutonomousCognitionRunner` are retired from production
+composition. Their narrow direct-generation implementations remain only as
+deprecated standalone P5-B1 compatibility fixtures while existing legacy tests
+and callers are migrated; `PersistentPresenceRuntime` itself has no direct
+semantic generation call in canonical composition. The retained compatibility
+classes are not a third production semantic lane.
 
 ## MIND-1E temporal intention boundary
 
@@ -344,22 +393,22 @@ new user activity resets the latch. The safe production default is `NO_WAKE`
 with a 300-second idle interval; explicit CLI configuration can enable the
 deterministic wake path.
 
-After a successful normal Core turn, the runtime runs one transient,
-tool-free `MindAppraiser`. Its strict bounded result can create one
-runtime-owned intention, binding the actual completed Core user and assistant
-message IDs. Invalid or missing appraisal output is `no_change`; it is not
-retried. Idle cognition is admitted only for a selected active intention and
-receives that intention directly. A successful `presence.say` marks it
-`expressed` and records one bounded noncanonical `SelfAction`; silence leaves
-the intention active.
+After a successful normal Core turn, the runtime queues one transient internal
+appraisal opportunity. The opportunity enters the actor as `NON_USER` work and
+uses `CognitionEpisodeRunner`; its strict bounded result can create one
+runtime-owned intention through `ProposalApplicationCoordinator`, binding the
+actual completed Core user and assistant message IDs. Invalid or missing
+output is quiet and is not retried. Idle cognition follows the same path for a
+selected active intention. A successful `presence.say` is applied through the
+existing P4 application seam, marks the intention `expressed`, and records one
+bounded noncanonical `SelfAction`; `presence.stay_silent` has no effect and
+leaves the intention active.
 
-`AutonomousCognitionRunner` is a thin admission client of the existing V3 model
-host. It receives only the selected runtime-owned intention and immutable
-Character v0 guidance plus autonomous controls. It creates no user message,
-transcript, assistant commit, or durable memory. Only an explicitly
-application-permitted autonomous logical run identity receives the two
-presence tool specs; a matching string prefix alone grants no capability, and
-ordinary Core/appraisal runs receive an empty exposure snapshot.
+`PersistentPresenceRuntime` owns only local input/output plumbing and the
+deterministic idle timer in the canonical composition. It does not own a model
+runner, semantic admission, or presence-only tool runtime. The deprecated
+standalone `MindAppraiser` and `AutonomousCognitionRunner` compatibility
+classes are not used by the launcher and are not production semantic lanes.
 
 Normal CLI conversation receives a bounded read-only `MindProjection` through
 the trusted-guidance composition seam. It includes active intentions and
@@ -374,12 +423,11 @@ and emits nothing. Provider continuation remains mandatory after the result
 batch, but its semantic text is discarded. User input records priority
 cancellation before successor admission, including the pre-handle race, and
 waits for the existing provider/tool joined settlement before the user turn
-uses the shared model runtime. In the D2 composition, Presence binds direct
+uses the shared model runtime. In the canonical composition, Presence binds direct
 user submission back to `LilavelRuntime`; it retains no active user authority
-outside that actor path. Its legacy appraisal/autonomous lane is temporarily
-cancelled and joined before actor-owned user work and remains excluded until
-that work settles. Standalone Presence construction retains a compatibility
-path for existing P5-B1 callers.
+outside that actor path. Internal appraisal and idle work are actor-owned
+`NON_USER` episodes. Standalone Presence construction retains only the
+explicitly deprecated P5-B1 compatibility path.
 
 ## Conversational foundation
 
@@ -559,12 +607,11 @@ provider continuation remain outside this component.
   and Core fourth. A `NO_COGNITION` result is a valid completed path; it
   creates no actor request, Core turn, model call, or presentation action.
 - `SemanticActor` is the character-wide semantic admission authority for
-  Discord reactive conversation, normal CLI conversation, and generic/temporal
-  MIND work: one active episode, user priority over non-user work, cooperative
-  preemption with settlement-before-successor, replay fencing, and fail-closed
-  containment. Discord and CLI work are `USER`; all MIND-1F-C work is
-  `NON_USER`. Legacy Presence appraisal and autonomous production remain
-  outside the actor behind the temporary actor-user exclusion gate pending E.
+  Discord reactive conversation, normal CLI conversation, generic/temporal
+  MIND work, internal appraisal, and idle cognition: one active episode, user
+  priority over non-user work, cooperative preemption with
+  settlement-before-successor, replay fencing, and fail-closed containment.
+  Discord and CLI work are `USER`; all cognition work is `NON_USER`.
 - Actor cancellation/preemption never creates a synthetic Core history entry;
   only `ConversationCore` can append canonical user or successful assistant
   messages. Cancelled, failed, stale, or partial assistant candidates remain
