@@ -175,6 +175,86 @@ def test_mind_state_bounds_records_and_selects_only_active_intentions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_appraisal_rejects_redundant_advice_in_completed_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    presence, model, _ = _components("turn-semantics", wake=False, idle_timeout_s=1)
+    captured: list[tuple[str, ModelRequest]] = []
+    original_generate_for_run = model.generate_for_run
+
+    def capture_request(request: ModelRequest, *, scope_id: str, logical_run_id: str):
+        captured.append((logical_run_id, request))
+        return original_generate_for_run(request, scope_id=scope_id, logical_run_id=logical_run_id)
+
+    monkeypatch.setattr(model, "generate_for_run", capture_request)
+    await presence.start()
+    assert (
+        await presence.submit_user(
+            "I am thinking about moving fully to Linux, but I have not tested whether "
+            "my mouse works."
+        )
+        == "completed"
+    )
+    await presence.stop()
+
+    assert [(item.role, item.text) for item in presence.canonical_history] == [
+        (
+            "user",
+            "I am thinking about moving fully to Linux, but I have not tested whether "
+            "my mouse works.",
+        ),
+        ("assistant", "Use a Linux Live USB to test whether the mouse works."),
+    ]
+    assert presence.mind_state.intentions() == ()
+    appraisal_request = next(
+        request for run_id, request in captured if run_id.startswith("appraisal:")
+    )
+    assert appraisal_request.messages == presence.history
+
+
+@pytest.mark.asyncio
+async def test_appraisal_allows_distinct_future_follow_up() -> None:
+    presence, _, _ = _components("turn-semantics", wake=False, idle_timeout_s=1)
+    await presence.start()
+    assert (
+        await presence.submit_user(
+            "I will test the mouse tomorrow; check with me afterward whether it worked."
+        )
+        == "completed"
+    )
+    await presence.stop()
+
+    assert [intention.text for intention in presence.mind_state.intentions()] == [
+        "Finish the concrete matter later."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_appraisal_rejects_follow_up_already_asked_in_completed_turn() -> None:
+    presence, _, _ = _components("turn-semantics", wake=False, idle_timeout_s=1)
+    await presence.start()
+    assert (
+        await presence.submit_user(
+            "I tested the mouse on Linux; ask me whether the test succeeded."
+        )
+        == "completed"
+    )
+    await presence.stop()
+
+    assert presence.mind_state.intentions() == ()
+
+
+@pytest.mark.asyncio
+async def test_appraisal_keeps_closed_factual_turn_unchanged() -> None:
+    presence, _, _ = _components("turn-semantics", wake=False, idle_timeout_s=1)
+    await presence.start()
+    assert await presence.submit_user("What is 2 + 2?") == "completed"
+    await presence.stop()
+
+    assert presence.mind_state.intentions() == ()
+
+
+@pytest.mark.asyncio
 async def test_user_input_streams_commits_and_returns_to_idle() -> None:
     presence, _, sink = _components("say", wake=False, idle_timeout_s=0.2)
     await presence.start()

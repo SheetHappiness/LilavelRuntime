@@ -29,6 +29,19 @@ def call(call_id: str, name: str, arguments: dict[str, object]) -> dict[str, obj
     }
 
 
+def turn_semantics_reply(latest: str) -> str:
+    normalized = latest.casefold()
+    if "moving fully to linux" in normalized:
+        return "Use a Linux Live USB to test whether the mouse works."
+    if "ask me whether" in normalized:
+        return "Did the mouse test succeed?"
+    if "check with me" in normalized:
+        return "Okay, tell me how the test goes."
+    if "2 + 2" in normalized:
+        return "4"
+    return f"reply:{latest}"
+
+
 def main() -> int:
     mode = sys.argv[1]
     emit(
@@ -60,7 +73,7 @@ def main() -> int:
                 if mode == "block-first-appraisal" and appraisal_generations == 1:
                     continue
                 messages = command.get("messages", [])
-                latest = next(
+                latest_user = next(
                     (
                         message["text"]
                         for message in reversed(messages)
@@ -68,21 +81,36 @@ def main() -> int:
                     ),
                     "",
                 )
-                future_matter = any(
-                    marker in latest.casefold()
-                    for marker in (
-                        "future",
-                        "unfinished",
-                        "tomorrow",
-                        "later",
-                        "finish",
-                        "потом",
-                        "заверш",
-                    )
+                latest_assistant = next(
+                    (
+                        message["text"]
+                        for message in reversed(messages)
+                        if message["role"] == "assistant"
+                    ),
+                    "",
                 )
+                if mode == "turn-semantics":
+                    future_lilavel_action = "check with me" in latest_user.casefold()
+                    assistant_already_acted = (
+                        "live usb" in latest_assistant.casefold() or "?" in latest_assistant
+                    )
+                    create_intention = future_lilavel_action and not assistant_already_acted
+                else:
+                    create_intention = any(
+                        marker in latest_user.casefold()
+                        for marker in (
+                            "future",
+                            "unfinished",
+                            "tomorrow",
+                            "later",
+                            "finish",
+                            "потом",
+                            "заверш",
+                        )
+                    )
                 result = (
                     {"action": "create_intention", "text": "Finish the concrete matter later."}
-                    if future_matter
+                    if create_intention
                     else {"action": "no_change"}
                 )
                 emit({**identity("text_delta", generation_id, epoch), "delta": json.dumps(result)})
@@ -93,7 +121,10 @@ def main() -> int:
                 user_generations += 1
                 messages = command.get("messages", [])
                 latest = messages[-1]["text"] if messages else command.get("prompt", "")
-                emit({**identity("text_delta", generation_id, epoch), "delta": f"reply:{latest}"})
+                reply = (
+                    turn_semantics_reply(latest) if mode == "turn-semantics" else f"reply:{latest}"
+                )
+                emit({**identity("text_delta", generation_id, epoch), "delta": reply})
                 if mode != "block-first-user" or user_generations > 1:
                     emit(identity("completed", generation_id, epoch))
                     active = None

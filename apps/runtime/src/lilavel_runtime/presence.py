@@ -51,8 +51,16 @@ APPRAISAL_CONTROL_GUIDANCE: Final[tuple[str, ...]] = (
     "Do not speak, call tools, write conversation history, or create memory.",
     'Return exactly one JSON object: {"action":"no_change"} or '
     '{"action":"create_intention","text":"..."}. '
-    "Create at most one short concrete intention for an unfinished future matter; "
-    "otherwise return no_change.",
+    "Review the complete latest canonical user and assistant turn. The assistant "
+    "message is evidence of what Lilavel already did, not just background context.",
+    "An unfinished user situation is not automatically an unfinished Lilavel "
+    "intention. Create at most one short intention only when a concrete future "
+    "action for Lilavel remains after this turn, was not already performed in the "
+    "assistant response, and could add new value later.",
+    "Do not create an intention to repeat, paraphrase, or re-deliver advice, a "
+    "reminder, an explanation, or a follow-up question already given. Do not "
+    "create one merely because the topic may continue or because there is no "
+    "specific future Lilavel action. Otherwise return no_change.",
 )
 AUTONOMOUS_CONTROL_GUIDANCE: Final[tuple[str, ...]] = (
     "This is a transient, noncanonical idle cognition opportunity.",
