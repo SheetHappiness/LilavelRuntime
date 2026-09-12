@@ -324,6 +324,12 @@ class _DiscordEnvironment:
                 return ToolResult(
                     call.call_id, ToolResultStatus.INVALID, None, reason_code="unsupported_action"
                 )
+        except asyncio.CancelledError:
+            # The router owns cancellation settlement and will issue the
+            # presentation abort from the task that entered diagnostics.  A
+            # watcher task must not clean up a context manager created by the
+            # route task: ContextVar tokens are context-local.
+            raise
         except BaseException as error:
             state = self._presentations.get(str((call.arguments or {}).get("event_id", "")))
             if state is not None:

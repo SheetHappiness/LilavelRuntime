@@ -631,7 +631,9 @@ class SemanticActor:
                 return SemanticEpisodeStatus.CANCELLED, None, "cancelled", False
             except asyncio.CancelledError:
                 return SemanticEpisodeStatus.CANCELLED, None, "cancelled", False
-            except BaseException:
+            except BaseException as error:
+                if getattr(error, "semantic_uncontained", False) is True:
+                    return SemanticEpisodeStatus.FAILED, None, "uncontainable_settlement", True
                 return SemanticEpisodeStatus.FAILED, None, "executor_failed", False
             del result
             return SemanticEpisodeStatus.CANCELLED, None, "cancelled", False
@@ -654,7 +656,9 @@ class SemanticActor:
             result = execution.result()
         except asyncio.CancelledError:
             return SemanticEpisodeStatus.CANCELLED, None, "cancelled", False
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "semantic_uncontained", False) is True:
+                return SemanticEpisodeStatus.FAILED, None, "uncontainable_settlement", True
             return SemanticEpisodeStatus.FAILED, None, "executor_failed", False
         if record.cancellation_requested:
             return SemanticEpisodeStatus.CANCELLED, None, "cancelled_after_request", False
@@ -677,7 +681,11 @@ class SemanticActor:
             self._uncontained.add(execution)
             execution.add_done_callback(self._uncontained_done)
             return False
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "semantic_uncontained", False) is True:
+                self._uncontained.add(execution)
+                execution.add_done_callback(self._uncontained_done)
+                return False
             return True
         return True
 

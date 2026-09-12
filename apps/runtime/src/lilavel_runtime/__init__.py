@@ -46,6 +46,7 @@ from .contracts import (
     WakePolicy,
     WorldEvent,
 )
+from .conversation_adapter import ConversationExecutionAdapter
 from .conversation_router import (
     PRESENTATION_ABORT,
     PRESENTATION_BIND,
@@ -233,6 +234,7 @@ __all__ = [
     "CognitionTrigger",
     "CognitionTriggerSource",
     "CoreConversationRouter",
+    "ConversationExecutionAdapter",
     "DirectMessageCognitionGate",
     "DirectMessageWakePolicy",
     "DeterministicToolSession",

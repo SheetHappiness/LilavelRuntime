@@ -275,8 +275,12 @@ class CoreConversationRouter:
                 await asyncio.gather(event_task, return_exceptions=True)
             if watch_task is not None:
                 await asyncio.gather(watch_task, return_exceptions=True)
+            if run is not None and not run.settled:
+                await _await_blocking(lambda: run.wait(self._close_timeout_s))
             if bridge is not None:
-                await _await_blocking(lambda: bridge.join(self._close_timeout_s))
+                joined = await _await_blocking(lambda: bridge.join(self._close_timeout_s))
+                if not joined:
+                    raise RuntimeError("conversation event bridge did not settle")
             if run is not None:
                 self._active_runs.discard(run)
             if presentation_open and not presentation_bound:

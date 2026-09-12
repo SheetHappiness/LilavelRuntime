@@ -400,9 +400,10 @@ def test_channel_maps_to_opaque_core_session_without_discord_metadata_in_context
         channel_b = FakeChannel("dm-b")
         await edge.handle_message(inbound(channel_a, "message-a", "first"))
         await edge.handle_message(inbound(channel_b, "message-b", "second"))
-        await wait_until(lambda: len(runtimes) == 2 and len(runtimes[0].generations) == 1)
-        await wait_until(lambda: len(runtimes[1].generations) == 1)
+        await wait_until(lambda: len(runtimes) == 1 and len(runtimes[0].generations) == 1)
         finish(runtimes[0].generations[0], "a")
+        await wait_until(lambda: len(runtimes) == 2 and len(runtimes[1].generations) == 1)
+        await wait_until(lambda: len(runtimes[1].generations) == 1)
         finish(runtimes[1].generations[0], "b")
         await edge.wait_idle()
 
@@ -545,7 +546,7 @@ def test_edge_diagnostics_join_core_run_to_flush_operation_and_http_request_chai
     asyncio.run(scenario())
 
 
-def test_concurrent_edge_presentations_do_not_cross_correlate_diagnostics() -> None:
+def test_serialized_edge_presentations_do_not_cross_correlate_diagnostics() -> None:
     async def scenario() -> None:
         runtimes: list[FakeRuntime] = []
         cores: list[ConversationCore] = []
@@ -571,11 +572,9 @@ def test_concurrent_edge_presentations_do_not_cross_correlate_diagnostics() -> N
         channel_b = TracingFakeChannel("m4c3-channel-b", diagnostics)
         await edge.handle_message(inbound(channel_a, "m4c3-message-a", "first"))
         await edge.handle_message(inbound(channel_b, "m4c3-message-b", "second"))
-        await wait_until(
-            lambda: len(runtimes) == 2 and all(runtime.generations for runtime in runtimes)
-        )
-
+        await wait_until(lambda: len(runtimes) == 1 and runtimes[0].generations)
         finish(runtimes[0].generations[0], "reply-a")
+        await wait_until(lambda: len(runtimes) == 2 and runtimes[1].generations)
         finish(runtimes[1].generations[0], "reply-b")
         await edge.wait_idle()
 
@@ -637,7 +636,7 @@ def test_same_dm_channel_preserves_core_owned_multi_turn_continuity() -> None:
     asyncio.run(scenario())
 
 
-def test_supersede_marks_old_reply_interrupted_and_discards_partial_core_output() -> None:
+def test_actor_serializes_same_subject_turns_without_hidden_history_entries() -> None:
     async def scenario() -> None:
         runtime = FakeRuntime()
         cores: list[ConversationCore] = []
@@ -660,15 +659,19 @@ def test_supersede_marks_old_reply_interrupted_and_discards_partial_core_output(
         await wait_until(lambda: channel.messages and channel.messages[0].content == "partial")
 
         await edge.handle_message(inbound(channel, "new", "new turn"))
-        await wait_until(lambda: runtime.cancelled_ids == [old_generation.generation_id])
+        await asyncio.sleep(0)
+        assert runtime.cancelled_ids == []
+        assert len(runtime.generations) == 1
+        finish(old_generation, "done")
         await wait_until(lambda: len(runtime.generations) == 2)
         finish(runtime.generations[1], "fresh")
         await edge.wait_idle()
 
-        assert channel.messages[0].content.endswith(INTERRUPTED_MARKER)
+        assert not channel.messages[0].content.endswith(INTERRUPTED_MARKER)
         assert channel.messages[-1].content == "fresh"
         assert cores[0].history == (
             ContextMessage("user", "old turn"),
+            ContextMessage("assistant", "partialdone"),
             ContextMessage("user", "new turn"),
             ContextMessage("assistant", "fresh"),
         )
@@ -677,7 +680,7 @@ def test_supersede_marks_old_reply_interrupted_and_discards_partial_core_output(
     asyncio.run(scenario())
 
 
-def test_superseded_edge_presentation_remains_correlated_to_its_own_run() -> None:
+def test_serialized_edge_presentations_remain_correlated_to_their_own_run() -> None:
     async def scenario() -> None:
         runtime = FakeRuntime()
         cores: list[ConversationCore] = []
@@ -706,7 +709,10 @@ def test_superseded_edge_presentation_remains_correlated_to_its_own_run() -> Non
         await wait_until(lambda: channel.messages and channel.messages[0].content == "partial")
 
         await edge.handle_message(inbound(channel, "m4c3-new-message", "new turn"))
-        await wait_until(lambda: runtime.cancelled_ids == [old_generation.generation_id])
+        await asyncio.sleep(0)
+        assert runtime.cancelled_ids == []
+        assert len(runtime.generations) == 1
+        finish(old_generation, "done")
         await wait_until(lambda: len(runtime.generations) == 2)
         finish(runtime.generations[1], "fresh")
         await edge.wait_idle()
@@ -727,8 +733,8 @@ def test_superseded_edge_presentation_remains_correlated_to_its_own_run() -> Non
         old_outcome = next(event for event in old_events if event["kind"] == "presentation_outcome")
         new_outcome = next(event for event in new_events if event["kind"] == "presentation_outcome")
 
-        assert old_outcome["status"] == "interrupted"
-        assert old_outcome["reason"] == "superseded"
+        assert old_outcome["status"] == "completed"
+        assert old_outcome["reason"] is None
         assert new_outcome["status"] == "completed"
         assert new_outcome["reason"] is None
         assert any(event["kind"] == "http_request_start" for event in old_events)
@@ -738,10 +744,10 @@ def test_superseded_edge_presentation_remains_correlated_to_its_own_run() -> Non
         assert any(
             record.run_id == old_run_id
             and record.kind == "run_terminal"
-            and record.result == "superseded"
+            and record.result == "completed"
             for record in cores[0].runtime_evidence()
         )
-        assert channel.messages[0].content.endswith(INTERRUPTED_MARKER)
+        assert not channel.messages[0].content.endswith(INTERRUPTED_MARKER)
         assert channel.messages[-1].content == "fresh"
         serialized = json.dumps(diagnostics.events, sort_keys=True)
         assert "m4c3-supersede-channel" not in serialized

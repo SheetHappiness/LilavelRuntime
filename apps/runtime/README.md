@@ -4,30 +4,35 @@
 remain healthy with no environments, conversations, model runtime, sidecar, or
 provider. It owns bounded observation admission, a recent observation window,
 a deterministic observation-to-cognition gate, registered environment tasks,
-explicit reactive routing, Core conversation sessions, and the destination
-choice for typed environment presentation actions. MIND-1D adds the separate
-runtime-owned boundary for applying completed cognition proposals. MIND-1E adds
-bounded, in-memory one-shot temporal wake admission and due-trigger dispatch.
+the character-wide semantic actor, actor-owned reactive conversation
+admission, Core conversation sessions, and the destination choice for typed
+environment presentation actions. MIND-1D adds the separate runtime-owned
+boundary for applying completed cognition proposals. MIND-1E adds bounded,
+in-memory one-shot temporal wake admission and due-trigger dispatch.
 
 MIND-1C adds a separate `CognitionEpisodeRunner`. A positive
 `CognitionTrigger` can be given a bounded immutable observation/MindState
 snapshot and an effect-free cognition engine, producing one validated
 `CognitionOutcome`. The outcome contains only typed inert proposals; MIND-1C
 does not apply state, execute actions, schedule work, write memory, or append
-conversation messages. The existing explicit DM/Core route remains unchanged;
-MIND-1D owns the separate proposal validation, application, and authorization
-boundary. MIND-1E owns bounded temporal wake proposals and scheduler admission;
-it does not create a general scheduler or recurring autonomy.
+conversation messages. MIND-1F-D1 routes the production Discord DM path through
+the same actor at `USER` priority; `ConversationExecutionAdapter` delegates to
+the existing `CoreConversationRouter`, while `ConversationCore` remains the
+canonical conversation/history owner. MIND-1D owns the separate proposal
+validation, application, and authorization boundary. MIND-1E owns bounded
+temporal wake proposals and scheduler admission; it does not create a general
+scheduler or recurring autonomy.
 
 MIND-1B establishes both `observation != cognition` and the compatibility path
 for the existing DM experience. Admission is a complete operation; it does not
-invoke the cognition gate, Core, a model, tools, or a scheduler. The legacy DM
-path calls `reactive_step()` explicitly after it receives an admission receipt;
+invoke the cognition gate, Core, a model, tools, or a scheduler. The DM adapter
+calls `reactive_step()` explicitly after it receives an admission receipt;
 that compatibility alias runs the deterministic gate first. Only a positive
-`CognitionTrigger` reaches `CoreConversationRouter`, which owns session/runtime
-creation and relays semantic Core events as runtime-generated, trusted
-`ToolCall` presentation actions to the source environment. These are
-application actions, not model-selected tools.
+`CognitionTrigger` reaches the character-wide `SemanticActor` at `USER`
+priority. Its conversation execution adapter invokes `CoreConversationRouter`,
+which owns session/runtime creation and relays semantic Core events as
+runtime-generated, trusted `ToolCall` presentation actions to the source
+environment. These are application actions, not model-selected tools.
 
 ## Contracts
 
@@ -80,7 +85,7 @@ WorldEvent
   → ObservationReceipt
   → cognition_step(receipt)
       ├── NO_COGNITION → stop
-      └── CognitionTrigger → existing reactive/Core route
+      └── CognitionTrigger → SemanticActor (USER) → conversation adapter → Core
 ```
 
 The default gate recognizes only the already implemented `direct_message`
@@ -140,7 +145,9 @@ State is applied before external actions, but the two paths are not globally
 atomic. Each path has its own status and per-proposal result. Confirmed or
 unknown external effects are never rolled back; a later failure is reported as
 partial application and fences the outcome. No application result writes
-ConversationCore history, and the current reactive DM route remains unchanged.
+ConversationCore history. The reactive DM route is actor-owned, while CLI,
+presence, appraisal, and autonomous production behavior remain outside this
+convergence until MIND-1F-D2 / 1F-E.
 
 ## MIND-1E temporal intentions / self-wake
 
@@ -230,7 +237,9 @@ drop, overwrite, or silently accumulate pending events. The recent observation
 window is separately bounded and evicts its oldest transient entry when full.
 Events are rejected before startup and after shutdown begins. Admission does
 not run the cognition gate or route; only an explicit `cognition_step()` (or
-its `reactive_step()` compatibility alias) can start the legacy response path.
+its `reactive_step()` compatibility alias) can submit a user conversation
+episode to the actor. `NO_COGNITION` remains terminal and creates no actor or
+Core work.
 
 ## P5-B1 local presence
 

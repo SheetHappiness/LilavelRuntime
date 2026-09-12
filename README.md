@@ -31,6 +31,9 @@ environment adapter ──► LilavelRuntime kernel
         │                                  │       └── CognitionTrigger
         │                                  │               │
         │                                  │               ▼
+        │                                  │        SemanticActor (USER)
+        │                                  │               │
+        │                                  │               ▼
         │                                  │        ConversationCore / tools
         │                                  │               │
         │                                  │               ▼
@@ -47,7 +50,8 @@ Discord one-to-one DM
   → WorldEvent
   → LilavelRuntime observation admission
   → explicit cognition gate
-  → explicit reactive response step for the direct-message trigger
+  → SemanticActor (USER) via the explicit reactive response step
+  → ConversationExecutionAdapter
   → ConversationCore
   → ModelRuntime
   → apps/model-sidecar
@@ -64,10 +68,11 @@ remain deferred to MIND-1E.
 
 - `apps/runtime` contains the persistent kernel, provider-neutral event and
   admitted-observation contracts, the bounded recent observation window,
-  deterministic `NO_COGNITION`/`CognitionTrigger` gating, explicit reactive DM
-  routing, the Core-backed conversation router, the local-CLI-only bounded
-  MIND-0 state loop, and the MIND-1D proposal application boundary. It still
-  starts cleanly with zero environments.
+  deterministic `NO_COGNITION`/`CognitionTrigger` gating, the character-wide
+  `SemanticActor`, actor-owned reactive DM admission, the Core-backed
+  conversation router, the local-CLI-only bounded MIND-0 state loop, and the
+  MIND-1D proposal application boundary. It still starts cleanly with zero
+  environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,

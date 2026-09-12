@@ -432,6 +432,13 @@ async def _run_discord_interruption() -> ScenarioCapture:
                 "fresh",
             )
         )
+        active_run = cores[0].active_run
+        if active_run is None:
+            raise RuntimeError("Discord scenario lost its active Core run")
+        # The actor queues the second USER episode. Exercise the existing
+        # Core supersession seam explicitly so this scenario continues to
+        # cover interrupted presentation without creating a second actor lane.
+        active_run.request_cancel("superseded")
         await _wait_until_async(lambda: len(runtimes[0].generations) == 2)
         _emit_fake_generation(runtimes[0].generations[1], "fresh", complete=True)
         await _wait_until_async(

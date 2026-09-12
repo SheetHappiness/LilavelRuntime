@@ -45,12 +45,14 @@ resume event actually occurred, but does not manufacture a disconnect.
 
 Normal DM sessions follow
 `Discord → WorldEvent → Observation admission → explicit cognition gate →
-CognitionTrigger → explicit reactive step → ConversationCore → ModelRuntime →
-typed presentation action → Discord`.
+CognitionTrigger → SemanticActor(USER) → ConversationExecutionAdapter →
+CoreConversationRouter → ConversationCore → ModelRuntime → typed presentation
+action → Discord`.
 Runtime composition uses Core-owned `production_cognition.create_conversation`;
 injected custom `core_factory` values remain responsible for their own
 guidance. Admission is observation-only; the explicit reactive step runs the
-deterministic direct-message gate and preserves the legacy interaction route.
+deterministic direct-message gate and submits the resulting user episode to the
+character-wide actor.
 
 ```powershell
 uv run --locked python scripts/run_edge.py
@@ -61,9 +63,11 @@ opaque runtime subject. Only the opaque subject and message text enter the
 `WorldEvent`; Discord channel, message, and author IDs stay adapter-local and
 never enter Core history or a `ModelRequest`. Runtime returns a bounded
 admission receipt before the adapter requests the reactive response step. The
-runtime gate emits one bounded direct-message trigger, then maps that subject
-to its own `ConversationCore`/`ModelRuntime` session. No provider continuation
-or new provider state is added.
+runtime gate emits one bounded direct-message trigger, then submits a stable
+observation-derived request identity to the single character-wide actor. The
+actor serializes the episode and maps that subject to its own
+`ConversationCore`/`ModelRuntime` session. No provider continuation or new
+provider state is added.
 
 Only `MESSAGE_CREATE` is handled. Bot/self-authored messages, guild messages,
 group DMs, edits, deletes, and imported Discord history are ignored. A bounded
@@ -72,8 +76,12 @@ Gateway replay within one process cannot create a second semantic turn. The
 bound and process lifetime are explicit limitations; there is no durable
 Discord idempotency store in this slice.
 
-Core remains responsible for canonical history, successful assistant commit,
-one active run per conversation, supersession, and physical cancellation.
+The actor owns semantic admission, priority, serialization, preemption, replay
+fencing, and settlement. Discord user work has `USER` priority; queued non-user
+temporal/MIND work waits behind an active conversation, and active non-user work
+is cooperatively cancelled before a user successor begins. Core remains
+responsible for canonical history, successful assistant commit, one active run
+per conversation, supersession, and physical cancellation.
 Runtime consumes semantic run events and issues trusted presentation
 `ToolCall`s to the source environment; these are not model-selected tools.
 The adapter starts typing before Core/model work and gives each response an
@@ -125,8 +133,9 @@ emphasis balancing is intentionally out of scope for this small experiment.
 
 The current `ModelRuntime` admits one physical generation at a time. Keeping
 one runtime with each mapped Core session preserves that existing boundary and
-isolates histories; a future shared-runtime scheduler would be a separate
-design decision.
+isolates histories; the actor serializes those sessions character-wide without
+collapsing their Core histories. A future shared-runtime scheduler would be a
+separate design decision.
 
 ## P4-D explicit Discord tool proof
 

@@ -27,6 +27,7 @@ from .contracts import (
     ToolSpec,
     WorldEvent,
 )
+from .conversation_adapter import ConversationExecutionAdapter
 from .mind import MindState
 from .mind_convergence import MindExecutionAdapter
 from .proposal_application import ProposalApplicationCoordinator
@@ -148,6 +149,9 @@ class LilavelRuntime:
         self._queue: asyncio.Queue[Observation] = asyncio.Queue(maxsize=event_queue_size)
         self._observation_window = ObservationWindow(observation_window_size)
         self._event_router = event_router
+        self._conversation_executor = (
+            ConversationExecutionAdapter(event_router) if event_router is not None else None
+        )
         self._cognition_gate = (
             DirectMessageCognitionGate() if cognition_gate is None else cognition_gate
         )
@@ -205,7 +209,6 @@ class LilavelRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._ingress_task: asyncio.Task[None] | None = None
         self._adapter_tasks: tuple[asyncio.Task[None], ...] = ()
-        self._route_tasks: set[asyncio.Task[None]] = set()
         self._route_failure: BaseException | None = None
         self._failure: BaseException | None = None
         self._pending_submissions = 0
@@ -223,7 +226,9 @@ class LilavelRuntime:
 
     @property
     def active_route_count(self) -> int:
-        return len(self._route_tasks)
+        """Return active or queued reactive work owned by the actor."""
+
+        return self._semantic_actor.active_count + self._semantic_actor.queued_count
 
     @property
     def observation_window(self) -> ObservationWindow:
@@ -390,9 +395,10 @@ class LilavelRuntime:
         """Explicitly gate one admitted observation before routing cognition.
 
         This step is intentionally separate from admission. A negative gate
-        outcome is complete and has no router, Core, model, tool, or action
-        side effects. A positive outcome schedules the existing explicit
-        reactive route, which remains responsible for ConversationCore work.
+        outcome is complete and has no actor, router, Core, model, tool, or
+        action side effects. A positive outcome submits the existing explicit
+        reactive route to the character-wide actor; the router remains
+        responsible for ConversationCore work.
         """
 
         if type(receipt) is not ObservationReceipt:
@@ -409,20 +415,34 @@ class LilavelRuntime:
                 observation.observation_id,
             ):
                 raise RuntimeFailed("cognition gate returned an invalid single-observation trigger")
-            router = self._event_router
-            if router is None:
+            conversation_executor = self._conversation_executor
+            if conversation_executor is None:
                 raise ReactiveStepUnavailable("runtime has no explicit reactive response route")
             adapter = self._environments.get(observation.event.source.environment)
             if adapter is None:
                 raise RuntimeFailed(
                     f"no registered environment for {observation.event.source.environment!r}"
                 )
-            task = asyncio.create_task(
-                router.route(observation, adapter.execute),
-                name=f"lilavel-reactive-{observation.event.event_id}",
+
+            async def execute(
+                episode: SemanticEpisode, cancellation: SemanticCancellationToken
+            ) -> object:
+                del episode
+                try:
+                    return await conversation_executor.execute(
+                        observation, adapter.execute, cancellation
+                    )
+                except Exception as error:
+                    self._route_failure = error
+                    raise
+
+            request = self._semantic_actor.create_request(
+                decision.trigger_id,
+                source_kind=SemanticSourceKind.USER,
+                priority=SemanticPriority.USER,
+                executor=execute,
             )
-            self._route_tasks.add(task)
-            task.add_done_callback(self._route_done)
+            await self._semantic_actor.submit(request)
             self._cognition_triggers += 1
             self._reactive_steps += 1
         await asyncio.sleep(0)
@@ -523,11 +543,11 @@ class LilavelRuntime:
                 if ingress_task is not None and not ingress_task.done():
                     ingress_task.cancel()
                     await asyncio.gather(ingress_task, return_exceptions=True)
-                route_tasks = tuple(self._route_tasks)
-                for task in route_tasks:
-                    task.cancel()
-                if route_tasks:
-                    await asyncio.gather(*route_tasks, return_exceptions=True)
+                try:
+                    await self._semantic_actor.stop()
+                except BaseException as error:
+                    if router_error is None:
+                        router_error = error
                 if self._event_router is not None:
                     try:
                         await self._event_router.close()
@@ -539,11 +559,6 @@ class LilavelRuntime:
                     except BaseException as error:
                         if router_error is None:
                             router_error = error
-                try:
-                    await self._semantic_actor.stop()
-                except BaseException as error:
-                    if router_error is None:
-                        router_error = error
                 self._stop_requested.set()
                 await supervisor
         except TimeoutError as error:
@@ -658,6 +673,9 @@ class LilavelRuntime:
             }:
                 with suppress(BaseException):
                     await self._temporal_host.stop()
+            if self._state is RuntimeState.FAILED:
+                with suppress(BaseException):
+                    await self._semantic_actor.stop()
             if self._event_router is not None:
                 try:
                     await self._event_router.close()
@@ -668,9 +686,6 @@ class LilavelRuntime:
             if self._state is RuntimeState.FAILED and self._presence is not None:
                 with suppress(BaseException):
                     await self._presence.stop()
-            if self._state is RuntimeState.FAILED:
-                with suppress(BaseException):
-                    await self._semantic_actor.stop()
 
     async def _run_adapter(self, adapter: EnvironmentAdapter) -> None:
         await adapter.run(self.submit)
@@ -689,11 +704,3 @@ class LilavelRuntime:
                 self._processed_events += 1
             finally:
                 self._queue.task_done()
-
-    def _route_done(self, task: asyncio.Task[None]) -> None:
-        self._route_tasks.discard(task)
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is not None:
-            self._route_failure = error
