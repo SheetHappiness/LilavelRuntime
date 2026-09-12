@@ -33,6 +33,11 @@ time → external action
   application remains front-loaded and inert until trusted coordinator
   admission; state/action application is not performed when temporal
   validation rejects the complete mixed outcome.
+- Replaced the async application bridge's implicit `asyncio.to_thread` use
+  with a runtime-owned non-daemon thread and non-blocking completion polling.
+  This preserves the existing synchronous application and cancellation
+  settlement boundary without depending on the event loop's default executor
+  teardown.
 - Preserved the existing reactive DM/Core path and P4 action boundary.
 - Added no background loop, recurring schedule, Discord action, Core history
   write, model-selected tool authority, or chain-of-thought persistence.
@@ -66,13 +71,14 @@ provenance isolation, and preservation of the inert pre-application boundary.
 ## Validation
 
 - MIND-1E focused pytest: `PASS` — 10 tests.
-- Runtime regression subset excluding two host-blocked async P4 application
+- Pre-fix runtime regression subset excluding the two async P4 application
   tests: `PASS` — 129 passed, 2 deselected.
-- Full runtime pytest: `BLOCKED` by this host's Python 3.14
-  `asyncio.to_thread` executor shutdown behavior; a standalone
-  `asyncio.run(asyncio.to_thread(lambda: 1))` reproduces the same non-returning
-  teardown outside the repository. The two excluded tests are legacy MIND-1D
-  async application tests; the first reaches `PASSED` before teardown hangs.
+- Full runtime pytest: `PASS` — 131 passed in 8.91 seconds. The prior hang was
+  traced to the host sandbox denying `send()` on asyncio's cross-thread
+  socketpair (`EPERM`). `call_soon_threadsafe()` queues its callback but cannot
+  wake the selector, so `asyncio.run()` stalls in default-executor teardown.
+  The runtime-owned async bridge avoids that default-executor dependency while
+  retaining joined application settlement.
 - Runtime Ruff check, format check, and strict Pyright: `PASS`.
 - Contracts pytest: `PASS` — 7 tests; Core pytest: `PASS` — 180 passed, 4
   platform skips; Discord adapter pytest: `PASS` — 95 tests, 10 existing
@@ -85,7 +91,9 @@ provenance isolation, and preservation of the inert pre-application boundary.
 
 The implementation commit is
 `13009570b7080d13679fd42f55a59379b1a72c06`, parent
-`e693f7b5d3f8f73ec35e2a745dbc79bd4d126458`. The documentation closeout is a
+`e693f7b5d3f8f73ec35e2a745dbc79bd4d126458`. The async bridge fix is
+`afb682a1053f4ff7c08b4aec09d314be9543b94e`, parent
+`26db861d99bdefb397a799bdcc56bef45e8d67c6`; the documentation closeout is a
 separate follow-up commit.
 
 ## Exit gate
