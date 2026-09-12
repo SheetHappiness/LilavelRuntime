@@ -42,6 +42,7 @@ from .temporal import (
 from .tool_registry import ApplicationToolRegistry, validate_tool_arguments
 
 MAX_APPLICATION_FENCES = 256
+_ASYNC_APPLY_POLL_INTERVAL_S = 0.001
 
 type StateProvenanceResolver = Callable[[CognitionOutcome], "MindStateProvenance"]
 
@@ -252,7 +253,13 @@ class ProposalApplicationCoordinator:
     async def apply(self, outcome: CognitionOutcome) -> ProposalApplicationResult:
         """Apply without blocking the event loop and join cancellation safely."""
 
-        operation = asyncio.create_task(asyncio.to_thread(self.apply_sync, outcome))
+        # Do not use the loop's default executor here. Apart from making
+        # executor ownership implicit, completion of ``to_thread`` relies on
+        # asyncio's cross-thread self-pipe to wake the loop. The explicit
+        # thread keeps the same synchronous application/settlement boundary,
+        # while the event-loop side observes completion without a blocking
+        # wait or a cross-thread callback.
+        operation = asyncio.create_task(self._apply_in_thread(outcome))
         try:
             return await asyncio.shield(operation)
         except asyncio.CancelledError:
@@ -260,6 +267,30 @@ class ProposalApplicationCoordinator:
             # operation to settle before propagating caller cancellation.
             await asyncio.shield(operation)
             raise
+
+    async def _apply_in_thread(self, outcome: CognitionOutcome) -> ProposalApplicationResult:
+        completed = threading.Event()
+        result: list[ProposalApplicationResult] = []
+        error: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                result.append(self.apply_sync(outcome))
+            except BaseException as exc:
+                error.append(exc)
+            finally:
+                completed.set()
+
+        threading.Thread(
+            target=run,
+            name="lilavel-proposal-application",
+            daemon=False,
+        ).start()
+        while not completed.is_set():
+            await asyncio.sleep(_ASYNC_APPLY_POLL_INTERVAL_S)
+        if error:
+            raise error[0]
+        return result[0]
 
     def _apply_locked(
         self, outcome: CognitionOutcome, application_id: str
