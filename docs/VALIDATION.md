@@ -85,7 +85,10 @@ registration, provider-neutral immutable contracts, observation-only admission,
 the deterministic `NO_COGNITION`/bounded `CognitionTrigger` gate, the
 serialized MIND-1C bounded cognition episode, immutable context snapshots,
 typed inert state/action proposals, fail-closed episode lifecycle, and
-proposal/conversation/action isolation, the explicit
+proposal/conversation/action isolation, the MIND-1D proposal application
+coordinator, version-fenced atomic state deltas, front-loaded mixed-proposal
+validation, P4 action compilation, effect certainty, partial application, and
+duplicate application fencing, the explicit
 reactive single-route dispatch to the source action boundary, the application-
 owned tool registry/exposure/authorization seam, and deterministic tool-session
 execution/containment. P5-B1 coverage adds runtime-owned local presence,

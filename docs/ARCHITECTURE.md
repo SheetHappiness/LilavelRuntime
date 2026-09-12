@@ -5,8 +5,9 @@ This document records the current ownership boundaries of the canonical
 the proven conversational foundation, a replaceable Discord environment
 adapter, the bounded P5-B1/MIND-0 local presence slice, and the MIND-1A/MIND-1B
 observation-admission and observation-to-cognition boundaries. MIND-1C adds a
-bounded, effect-free cognition episode that ends at inert proposals. Broader
-autonomous capabilities are not implied by these slices.
+bounded, effect-free cognition episode that ends at inert proposals; MIND-1D
+adds the separate trusted application boundary. Broader autonomous
+capabilities are not implied by these slices.
 
 ## Top-level product boundary
 
@@ -14,8 +15,9 @@ The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
 event admission, a recent in-memory observation window, a deterministic
 observation-to-cognition gate, registered environment tasks, explicit reactive
 conversation routing, the optional local presence component, Core/ModelRuntime
-session lifecycle, and selection of the source environment for typed
-presentation actions. P5-B1 adds one monotonic idle opportunity and
+session lifecycle, selection of the source environment for typed presentation
+actions, and the MIND-1D proposal application coordinator. P5-B1 adds one
+monotonic idle opportunity and
 transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
 and recent self-actions to the local CLI only; it adds no general scheduler,
 attention loop, world model, durable memory, or arbitrary model-selected tool
@@ -73,11 +75,32 @@ This episode path is not yet the production DM route. It is intentionally
 effect-free and does not apply proposals; the existing explicit reactive/Core
 route remains the compatibility path until a later convergence phase.
 
+MIND-1D begins only after a runner-produced completed outcome. The application
+coordinator front-loads structural validation for the complete proposal set,
+checks the outcome's runtime scope and state snapshot version, then commits
+trusted state deltas atomically before executing any action. Actions are
+compiled from proposal kinds into application-selected canonical tool names
+and model-owned content; the P4 registry, exposure, authorization, liveness,
+argument validation, executor, settlement, and effect-certainty rules remain
+authoritative. The local state and external-action subpaths have separate
+statuses and evidence. External effects are never claimed to be rolled back.
+
+```text
+CognitionOutcome (completed, scoped, versioned)
+  → ProposalApplicationCoordinator
+  → validate the complete proposal set
+      ├── StateProposal → trusted MindStateDelta → atomic MindState apply
+      └── ActionProposal → trusted ToolCall → existing P4 runtime → ToolResult
+```
+
+MIND-1E is reserved for temporal wake proposals and scheduler admission; it is
+not part of this application boundary.
+
 ## Ownership map
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, model-based attention, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, and the MIND-1D proposal application boundary | Canon, canonical history semantics, Discord transport identity, model-based attention, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -262,7 +285,9 @@ seam, and returns a validated inert `CognitionOutcome` or no outcome on
 failure/cancellation/timeout. A quiet outcome is cognition that completed with
 zero proposals; it is not `NO_COGNITION`. The runner never mutates `MindState`,
 executes tools, sends Discord output, schedules wakes, writes memory, or
-commits an assistant message. The Core router's existing compatibility path
+commits an assistant message. `ProposalApplicationCoordinator` is the only
+MIND-1D path that can turn a runner-completed outcome into a trusted state
+delta or P4 tool call. The Core router's existing compatibility path
 continues to convert semantic run events into trusted runtime-generated
 presentation `ToolCall`s and checks `ToolResult`s; this grants no authority to
 model-selected tools.
@@ -303,7 +328,13 @@ provider continuation remain outside this component.
   `NO_COGNITION` result is a valid completed path; only a bounded
   `CognitionTrigger` reaches the reactive/Core route.
 - A `CognitionTrigger` permits a cognition episode but does not select or
-  authorize an action; MIND-1C will establish `cognition != action`.
+  authorize an action. MIND-1C ends with inert proposals; MIND-1D owns their
+  trusted validation, authorization, application, and evidence.
+- `ProposalApplicationCoordinator` validates a complete proposal set before
+  effectful work, applies state first as one version-fenced local batch, and
+  executes external actions in deterministic order through P4. Local state and
+  external effects are not globally atomic; confirmed or unknown external
+  effects are never rolled back or automatically retried.
 - User acceptance is immediate and canonical; assistant commit occurs only
   after successful completion and persistence.
 - Streaming consumers receive bounded transient output and exactly one
@@ -324,8 +355,9 @@ cannot import Core persistence or perform Core lifecycle operations.
 
 ## Deferred boundaries
 
-The following are intentionally `DEFERRED` rather than implied: a durable
-agent-state model, general scheduler, probabilistic or LLM attention policy,
+The following are intentionally `DEFERRED` rather than implied: temporal wake
+proposals and scheduler admission (MIND-1E), a durable agent-state model,
+general scheduler, probabilistic or LLM attention policy,
 arbitrary autonomous tool activation, retrieval or memory semantics, and
 additional production environment adapters. Each needs an explicit decision
 and proportionate validation before code is added.

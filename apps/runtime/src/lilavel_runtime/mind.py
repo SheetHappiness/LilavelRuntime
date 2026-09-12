@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from threading import Lock
+from typing import Literal
 from uuid import uuid4
 
 MAX_INTENTIONS = 8
@@ -19,6 +21,45 @@ MAX_PROJECTED_SELF_ACTION_TEXT_BYTES = 1_024
 class IntentionStatus(StrEnum):
     ACTIVE = "active"
     EXPRESSED = "expressed"
+
+
+class MindStateDeltaKind(StrEnum):
+    """The narrow runtime command vocabulary accepted by MindState."""
+
+    CREATE_INTENTION = "create_intention"
+
+
+class MindStateApplyError(RuntimeError):
+    """A trusted state delta batch cannot be applied."""
+
+
+class MindStateVersionConflict(MindStateApplyError):
+    """The state changed after the cognition snapshot was captured."""
+
+
+class MindStateCapacityExceeded(MindStateApplyError):
+    """A complete delta batch cannot fit the bounded state."""
+
+
+@dataclass(frozen=True, slots=True)
+class MindStateDelta:
+    """A trusted runtime-owned command produced from one StateProposal.
+
+    This is deliberately not a patch or a generic JSON mutation.  The
+    application boundary is the only MIND-1D producer of this value.
+    """
+
+    kind: Literal[MindStateDeltaKind.CREATE_INTENTION]
+    text: str
+    user_message_id: str
+    assistant_message_id: str
+
+    def __post_init__(self) -> None:
+        if self.kind is not MindStateDeltaKind.CREATE_INTENTION:
+            raise TypeError("unsupported mind-state delta kind")
+        _require_text(self.text, "text", MAX_INTENTION_TEXT_BYTES)
+        _require_text(self.user_message_id, "user_message_id", 128)
+        _require_text(self.assistant_message_id, "assistant_message_id", 128)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +203,63 @@ class MindState:
                 recent_self_actions=tuple(self._self_actions),
             )
 
+    def apply_deltas(
+        self,
+        deltas: Sequence[MindStateDelta],
+        *,
+        expected_version: int,
+    ) -> tuple[MindIntention, ...]:
+        """Atomically apply one trusted, narrow state-delta batch.
+
+        Validation and capacity simulation happen against local copies before
+        the live bounded collections or version are changed.  A version
+        conflict or capacity failure therefore leaves the complete state
+        untouched.
+        """
+
+        if isinstance(expected_version, bool) or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer")
+        delta_snapshot = tuple(deltas)
+        if not delta_snapshot:
+            return ()
+        if not all(type(delta) is MindStateDelta for delta in delta_snapshot):
+            raise TypeError("deltas must contain only MindStateDelta values")
+
+        with self._lock:
+            if self._version != expected_version:
+                raise MindStateVersionConflict(
+                    f"expected mind-state version {expected_version}, current is {self._version}"
+                )
+
+            retained = list(self._intentions)
+            created: list[MindIntention] = []
+            for delta in delta_snapshot:
+                if len(retained) >= self._intentions_capacity:
+                    evictable = next(
+                        (
+                            index
+                            for index, item in enumerate(retained)
+                            if item.status is IntentionStatus.EXPRESSED
+                        ),
+                        None,
+                    )
+                    if evictable is None:
+                        raise MindStateCapacityExceeded("mind-state intention capacity is full")
+                    del retained[evictable]
+                created.append(
+                    MindIntention(
+                        intention_id=str(uuid4()),
+                        text=delta.text,
+                        user_message_id=delta.user_message_id,
+                        assistant_message_id=delta.assistant_message_id,
+                    )
+                )
+                retained.append(created[-1])
+
+            self._intentions = deque(retained)
+            self._version += len(created)
+            return tuple(created)
+
     def create_intention(
         self,
         text: str,
@@ -236,9 +334,14 @@ __all__ = [
     "MAX_RECENT_SELF_ACTIONS",
     "MAX_SELF_ACTION_TEXT_BYTES",
     "IntentionStatus",
+    "MindStateApplyError",
+    "MindStateCapacityExceeded",
+    "MindStateDelta",
+    "MindStateDeltaKind",
     "MindIntention",
     "MindProjection",
     "MindStateSnapshot",
+    "MindStateVersionConflict",
     "MindState",
     "SelfAction",
 ]

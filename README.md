@@ -56,15 +56,18 @@ Discord one-to-one DM
 ```
 
 The cognition gate decides whether work may begin; it does not select an action.
-The cognition/action boundary remains a later milestone.
+MIND-1C ends at inert proposals. MIND-1D adds a separate runtime-owned
+validation, authorization, and application boundary; temporal wake proposals
+remain deferred to MIND-1E.
 
 ## Current foundation
 
 - `apps/runtime` contains the persistent kernel, provider-neutral event and
   admitted-observation contracts, the bounded recent observation window,
   deterministic `NO_COGNITION`/`CognitionTrigger` gating, explicit reactive DM
-  routing, the Core-backed conversation router, and the local-CLI-only bounded
-  MIND-0 state loop. It still starts cleanly with zero environments.
+  routing, the Core-backed conversation router, the local-CLI-only bounded
+  MIND-0 state loop, and the MIND-1D proposal application boundary. It still
+  starts cleanly with zero environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,

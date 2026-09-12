@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
@@ -153,6 +153,11 @@ MAX_COGNITION_TRIGGER_OBSERVATIONS = 8
 MAX_COGNITION_PROPOSALS = 8
 MAX_ACTION_PROPOSAL_CONTENT_BYTES = 4_096
 MAX_COGNITION_REASON_BYTES = 128
+
+# This sentinel is intentionally private.  A CognitionOutcome constructed by
+# an arbitrary caller is inert data; only CognitionEpisodeRunner can mark the
+# outcome as eligible for MIND-1D application.
+_COMPLETED_COGNITION_PROOF = object()
 
 
 class CognitionDecision(StrEnum):
@@ -325,18 +330,41 @@ class CognitionCandidate:
 
 @dataclass(frozen=True, slots=True)
 class CognitionOutcome:
-    """A successful, inert cognition result; MIND-1C never applies its proposals."""
+    """A successful, inert cognition result awaiting MIND-1D application."""
 
     episode_id: str
     trigger_id: str
     state_proposals: tuple[StateProposal, ...] = ()
     action_proposals: tuple[ActionProposal, ...] = ()
+    # These fields are runtime provenance, not model authority.  Defaults keep
+    # the original inert value constructor compatible; MIND-1D rejects an
+    # outcome without the fields populated by CognitionEpisodeRunner.
+    scope_id: str = ""
+    based_on_state_version: int | None = None
+    completion_proof: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_text(self.episode_id, "episode_id")
         _require_text(self.trigger_id, "trigger_id")
         _validate_proposals(self.state_proposals, StateProposal, "state_proposals")
         _validate_proposals(self.action_proposals, ActionProposal, "action_proposals")
+        if self.scope_id:
+            _require_text(self.scope_id, "scope_id")
+        if self.based_on_state_version is not None and (
+            isinstance(self.based_on_state_version, bool) or self.based_on_state_version < 0
+        ):
+            raise ValueError("based_on_state_version must be a non-negative integer")
+        if (
+            self.completion_proof is not None
+            and self.completion_proof is not _COMPLETED_COGNITION_PROOF
+        ):
+            raise ValueError("completion_proof is runtime-owned")
+
+    @property
+    def is_completed(self) -> bool:
+        """Whether the private runner-owned completion proof is present."""
+
+        return self.completion_proof is _COMPLETED_COGNITION_PROOF
 
     @property
     def is_quiet(self) -> bool:

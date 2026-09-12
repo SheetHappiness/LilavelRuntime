@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+from . import contracts as _contracts
 from .contracts import (
     CognitionCandidate,
     CognitionContext,
@@ -144,4 +145,7 @@ class CognitionEpisodeRunner:
             trigger_id=episode.trigger.trigger_id,
             state_proposals=candidate.state_proposals,
             action_proposals=candidate.action_proposals,
+            scope_id=episode.scope_id,
+            based_on_state_version=episode.context.mind_state_version,
+            completion_proof=_contracts._COMPLETED_COGNITION_PROOF,  # pyright: ignore[reportPrivateUsage]
         )

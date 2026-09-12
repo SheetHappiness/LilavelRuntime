@@ -5,7 +5,8 @@ remain healthy with no environments, conversations, model runtime, sidecar, or
 provider. It owns bounded observation admission, a recent observation window,
 a deterministic observation-to-cognition gate, registered environment tasks,
 explicit reactive routing, Core conversation sessions, and the destination
-choice for typed environment presentation actions.
+choice for typed environment presentation actions. MIND-1D adds the separate
+runtime-owned boundary for applying completed cognition proposals.
 
 MIND-1C adds a separate `CognitionEpisodeRunner`. A positive
 `CognitionTrigger` can be given a bounded immutable observation/MindState
@@ -13,7 +14,9 @@ snapshot and an effect-free cognition engine, producing one validated
 `CognitionOutcome`. The outcome contains only typed inert proposals; MIND-1C
 does not apply state, execute actions, schedule work, write memory, or append
 conversation messages. The existing explicit DM/Core route remains unchanged;
-MIND-1D will own proposal validation, application, and authorization.
+MIND-1D owns the separate proposal validation, application, and authorization
+boundary. MIND-1E will later own temporal wake proposals and scheduler
+admission.
 
 MIND-1B establishes both `observation != cognition` and the compatibility path
 for the existing DM experience. Admission is a complete operation; it does not
@@ -106,8 +109,36 @@ The runner snapshots the trigger's admitted observations and current bounded
 context. It has no Core, Discord, tool executor, scheduler, memory, or
 conversation-history capability, so successful state/action proposals remain
 inert. MIND-1D is the future owner of proposal validation/application and
-effect authorization. No Character snapshot is added here because the runtime
+effect authorization. MIND-1D owns that boundary now, while MIND-1E remains
+reserved for temporal wake proposals and scheduler admission. No Character snapshot is added here because the runtime
 repository has no supported Character composition seam at this boundary.
+
+## MIND-1D proposal application boundary
+
+`ProposalApplicationCoordinator` accepts only a `CognitionOutcome` carrying the
+private completion proof from `CognitionEpisodeRunner`. An outcome constructed
+outside that completed path is ineligible. The coordinator checks the trusted
+runtime scope and front-loads structural validation of the whole proposal set
+before state mutation or tool-session creation.
+
+State proposals remain the narrow `create_intention` vocabulary. The
+coordinator requires application-supplied Core provenance, converts each
+accepted proposal into a runtime-owned `MindStateDelta`, checks the captured
+state version, and applies the complete delta batch atomically. The version
+increases once per committed delta; stale or over-capacity batches fail closed.
+
+Action proposals contain no destination or authority. Trusted application
+composition maps their kind to an exposed canonical tool name and the
+model-owned content becomes only the tool argument. The existing P4 registry,
+exposure snapshot, strict argument validator, authorization and liveness hooks,
+sequential executor, settlement, and `none`/`confirmed`/`unknown` effect
+semantics remain the sole action runtime. `effect=unknown` is never retried.
+
+State is applied before external actions, but the two paths are not globally
+atomic. Each path has its own status and per-proposal result. Confirmed or
+unknown external effects are never rolled back; a later failure is reported as
+partial application and fences the outcome. No application result writes
+ConversationCore history, and the current reactive DM route remains unchanged.
 
 ## P4-C application tool authorization seam
 
