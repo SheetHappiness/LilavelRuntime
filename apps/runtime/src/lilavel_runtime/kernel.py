@@ -210,6 +210,7 @@ class LilavelRuntime:
                     self._observation_window,
                     mind_state,
                     scope_id=self._semantic_actor.scope_id,
+                    application_authority=proposal_application_coordinator.application_authority,
                 ),
                 proposal_application_coordinator,
             )

@@ -212,6 +212,7 @@ async def test_internal_appraisal_is_actor_owned_and_applies_trusted_state() -> 
     user = asyncio.create_task(runtime.submit_user("there is unfinished work"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "acknowledged")
+    await _wait_for(user.done)
     assert await user == "completed"
     await _wait_for(lambda: len(state.intentions()) == 1)
     await _wait_for(lambda: any(item.kind == "intention_created" for item in presence.evidence()))
@@ -236,6 +237,7 @@ async def test_local_cognition_engine_uses_one_actor_owned_model_generation() ->
     user = asyncio.create_task(runtime.submit_user("evaluate this turn"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "acknowledged")
+    await _wait_for(user.done)
     assert await user == "completed"
     await _wait_for(lambda: len(model.generations) == 2)
     _finish(model.generations[1], '{"action":"create_intention","text":"follow up"}')
@@ -260,6 +262,7 @@ async def test_quiet_internal_appraisal_has_no_effect_and_no_retry() -> None:
     user = asyncio.create_task(runtime.submit_user("closed matter"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "done")
+    await _wait_for(user.done)
     assert await user == "completed"
     await _wait_for(lambda: any(item.kind == "appraisal_settled" for item in presence.evidence()))
     await asyncio.sleep(0.01)
@@ -302,6 +305,7 @@ async def test_user_preempts_active_internal_cognition_before_successor_generati
     assert not user.done()
     assert (await internal.wait()).status is SemanticEpisodeStatus.CANCELLED
     _finish(model.generations[0], "priority reply")
+    await _wait_for(user.done)
     assert await user == "completed"
     assert engine.max_active == 1
     release.set()
@@ -328,6 +332,7 @@ async def test_idle_speak_uses_p4_application_and_marks_intention_expressed() ->
     user = asyncio.create_task(runtime.submit_user("create an intention"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "noted")
+    await _wait_for(user.done)
     assert await user == "completed"
     await _wait_for(
         lambda: any(item.kind == "self_action_recorded" for item in presence.evidence())
@@ -360,6 +365,7 @@ async def test_stay_silent_is_a_terminal_no_effect_application() -> None:
     user = asyncio.create_task(runtime.submit_user("create a quiet intention"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "noted")
+    await _wait_for(user.done)
     assert await user == "completed"
     await _wait_for(lambda: any(item.kind == "cognition_settled" for item in presence.evidence()))
 
@@ -396,6 +402,7 @@ async def test_application_in_progress_waits_for_settlement_before_user_successo
     assert (await internal.wait()).status is SemanticEpisodeStatus.CANCELLED
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "after")
+    await _wait_for(user.done)
     assert await user == "completed"
     assert application.application_count == 1
     assert [item.text for item in sink.outputs if item.kind == "autonomous"] == ["effect"]

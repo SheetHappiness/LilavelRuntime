@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
 from typing import cast
+from uuid import uuid4
 
 from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus
 from lilavel_core.tool_runtime import (
@@ -21,6 +25,7 @@ from lilavel_core.tool_runtime import (
 
 from .contracts import (
     ActionProposalKind,
+    ApplicationPermit,
     CognitionOutcome,
     StateProposal,
     StateProposalKind,
@@ -41,8 +46,13 @@ from .temporal import (
 )
 from .tool_registry import ApplicationToolRegistry, validate_tool_arguments
 
-MAX_APPLICATION_FENCES = 256
+MAX_APPLICATION_REPLAY_WINDOW = 256
+# Kept as a compatibility name.  This is a per-epoch replay-window bound,
+# not a lifetime application ceiling.
+MAX_APPLICATION_FENCES = MAX_APPLICATION_REPLAY_WINDOW
 _ASYNC_APPLY_POLL_INTERVAL_S = 0.001
+_APPLICATION_PERMIT_DOMAIN = "lilavel-application-permit-v1"
+type _ReplayKey = tuple[str, int]
 
 type StateProvenanceResolver = Callable[[CognitionOutcome], "MindStateProvenance | None"]
 
@@ -163,6 +173,56 @@ class _PreparedTemporal:
     valid: bool
 
 
+def _proposal_digest(outcome: CognitionOutcome) -> str:
+    """Hash the complete effect-relevant outcome using a stable wire encoding."""
+
+    temporal = [
+        {
+            "reason": proposal.reason,
+            "not_before": proposal.not_before.astimezone(UTC)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+            "intention_ref": proposal.intention_ref,
+        }
+        for proposal in outcome.temporal_proposals
+    ]
+    payload = {
+        "domain": _APPLICATION_PERMIT_DOMAIN,
+        "scope_id": outcome.scope_id,
+        "episode_id": outcome.episode_id,
+        "trigger_id": outcome.trigger_id,
+        "based_on_state_version": outcome.based_on_state_version,
+        "state_proposals": [
+            {"kind": proposal.kind.value, "text": proposal.text}
+            for proposal in outcome.state_proposals
+        ],
+        "action_proposals": [
+            {"kind": proposal.kind.value, "content": proposal.content}
+            for proposal in outcome.action_proposals
+        ],
+        "temporal_proposals": temporal,
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+class _CoordinatorApplicationPermitIssuer:
+    """Bind-only façade; it intentionally exposes no application operation."""
+
+    __slots__ = ("_coordinator",)
+
+    def __init__(self, coordinator: ProposalApplicationCoordinator) -> None:
+        self._coordinator = coordinator
+
+    def bind_outcome(self, outcome: CognitionOutcome) -> CognitionOutcome:
+        return self._coordinator.bind_outcome(outcome)
+
+
 class ProposalApplicationCoordinator:
     """Apply one completed MIND-1C outcome through trusted runtime seams.
 
@@ -209,25 +269,87 @@ class ProposalApplicationCoordinator:
         self._action_tool_names = cast(Mapping[ActionProposalKind, str], MappingProxyType(routes))
         self._fence_capacity = fence_capacity
         self._lock = threading.RLock()
-        self._fences: dict[str, ProposalApplicationResult] = {}
+        self._fences: dict[_ReplayKey, ProposalApplicationResult] = {}
+        self._rejections: deque[ProposalApplicationResult] = deque(maxlen=fence_capacity)
+        self._epoch_id = f"application:{uuid4()}"
+        self._next_application_sequence = 0
+        self._retired_through = 0
+        self._capability = object()
+        self._application_issuer = _CoordinatorApplicationPermitIssuer(self)
+
+    @property
+    def application_authority(self) -> _CoordinatorApplicationPermitIssuer:
+        """Return the bind-only seam for the matching cognition runner."""
+
+        return self._application_issuer
+
+    @property
+    def replay_epoch_id(self) -> str:
+        with self._lock:
+            return self._epoch_id
+
+    @property
+    def retired_application_sequence(self) -> int:
+        with self._lock:
+            return self._retired_through
+
+    @property
+    def retained_replay_count(self) -> int:
+        with self._lock:
+            return len(self._fences)
 
     @property
     def application_count(self) -> int:
         with self._lock:
-            return len(self._fences)
+            return len(self._fences) + len(self._rejections)
 
     def applications(self) -> tuple[ProposalApplicationResult, ...]:
         """Return bounded lifecycle results, including rejected attempts."""
 
         with self._lock:
-            return tuple(self._fences.values())
+            return (*self._fences.values(), *self._rejections)
 
     def application_id_for(self, outcome: CognitionOutcome) -> str:
-        """Return the deterministic fence identity for one outcome."""
+        """Return the bounded correlation identity for one outcome."""
 
         if type(outcome) is not CognitionOutcome:
             raise TypeError("outcome must be a CognitionOutcome")
         return self._application_id(outcome)
+
+    def bind_outcome(self, outcome: CognitionOutcome) -> CognitionOutcome:
+        """Stamp a completed outcome with coordinator-owned replay authority."""
+
+        if type(outcome) is not CognitionOutcome:
+            raise TypeError("outcome must be a CognitionOutcome")
+        if not outcome.is_completed:
+            raise ValueError("application permits require a completed outcome")
+        if outcome.scope_id != self._scope_id:
+            raise ValueError("application permit scope mismatch")
+        if outcome.application_permit is not None:
+            raise ValueError("outcome already has an application permit")
+
+        with self._lock:
+            if len(self._fences) >= self._fence_capacity:
+                self._rotate_epoch_locked()
+            self._next_application_sequence += 1
+            permit = ApplicationPermit(
+                self._epoch_id,
+                self._next_application_sequence,
+                outcome.scope_id,
+                outcome.episode_id,
+                outcome.trigger_id,
+                _proposal_digest(outcome),
+                self._capability,
+            )
+        return replace(outcome, application_permit=permit)
+
+    def _rotate_epoch_locked(self) -> None:
+        """Retire the complete settled window at a safe, lock-held boundary."""
+
+        self._retired_through = self._next_application_sequence
+        self._fences.clear()
+        self._rejections.clear()
+        self._epoch_id = f"application:{uuid4()}"
 
     def apply_sync(self, outcome: CognitionOutcome) -> ProposalApplicationResult:
         """Apply outside an event loop, waiting for P4 settlement."""
@@ -237,18 +359,44 @@ class ProposalApplicationCoordinator:
 
         application_id = self._application_id(outcome)
         with self._lock:
-            previous = self._fences.get(application_id)
+            if not outcome.is_completed:
+                return self._record_rejection(
+                    outcome,
+                    self._rejected_result(
+                        outcome,
+                        application_id,
+                        ProposalApplicationStatus.INELIGIBLE,
+                        "cognition_not_completed",
+                    ),
+                )
+
+            validation = self._validate_permit_locked(outcome)
+            if isinstance(validation, str):
+                return self._record_rejection(
+                    outcome,
+                    self._rejected_result(
+                        outcome,
+                        application_id,
+                        ProposalApplicationStatus.REJECTED,
+                        validation,
+                    ),
+                )
+            replay_key, application_id = validation
+            previous = self._fences.get(replay_key)
             if previous is not None:
                 return self._duplicate_result(previous)
             if len(self._fences) >= self._fence_capacity:
-                return self._rejected_result(
+                return self._record_rejection(
                     outcome,
-                    application_id,
-                    ProposalApplicationStatus.REJECTED,
-                    "application_fence_full",
+                    self._rejected_result(
+                        outcome,
+                        application_id,
+                        ProposalApplicationStatus.REJECTED,
+                        "application_replay_window_full",
+                    ),
                 )
             result = self._apply_locked(outcome, application_id)
-            return self._record(application_id, result)
+            return self._record(replay_key, result)
 
     async def apply(self, outcome: CognitionOutcome) -> ProposalApplicationResult:
         """Apply without blocking the event loop and join cancellation safely."""
@@ -809,10 +957,35 @@ class ProposalApplicationCoordinator:
             return None
         return provenance if type(provenance) is MindStateProvenance else None
 
+    def _validate_permit_locked(self, outcome: CognitionOutcome) -> tuple[_ReplayKey, str] | str:
+        permit = outcome.application_permit
+        if type(permit) is not ApplicationPermit:
+            return "missing_application_permit"
+        if permit._capability is not self._capability:  # pyright: ignore[reportPrivateUsage]
+            return "application_permit_invalid"
+        if permit.scope_id != self._scope_id or outcome.scope_id != self._scope_id:
+            return "application_scope_mismatch"
+        if permit.episode_id != outcome.episode_id or permit.trigger_id != outcome.trigger_id:
+            return "application_permit_mismatch"
+        if permit.epoch_id != self._epoch_id or permit.sequence <= self._retired_through:
+            return "application_permit_retired"
+        if permit.sequence > self._next_application_sequence:
+            return "application_permit_unissued"
+        if permit.proposal_digest != _proposal_digest(outcome):
+            return "application_permit_mismatch"
+        return (permit.epoch_id, permit.sequence), self._application_id(outcome)
+
     def _record(
-        self, application_id: str, result: ProposalApplicationResult
+        self, replay_key: _ReplayKey, result: ProposalApplicationResult
     ) -> ProposalApplicationResult:
-        self._fences[application_id] = result
+        self._fences[replay_key] = result
+        return result
+
+    def _record_rejection(
+        self, outcome: CognitionOutcome, result: ProposalApplicationResult
+    ) -> ProposalApplicationResult:
+        del outcome
+        self._rejections.append(result)
         return result
 
     def _duplicate_result(self, previous: ProposalApplicationResult) -> ProposalApplicationResult:
@@ -1002,7 +1175,13 @@ class ProposalApplicationCoordinator:
 
     @staticmethod
     def _application_id(outcome: CognitionOutcome) -> str:
-        material = f"{outcome.scope_id}\x1f{outcome.episode_id}".encode()
+        permit = outcome.application_permit
+        if type(permit) is ApplicationPermit:
+            material = (
+                f"{permit.epoch_id}\x1f{permit.sequence}\x1f{permit.proposal_digest}"
+            ).encode()
+        else:
+            material = f"{outcome.scope_id}\x1f{outcome.episode_id}".encode()
         return f"application:{sha256(material).hexdigest()[:32]}"
 
     @staticmethod
@@ -1039,6 +1218,7 @@ __all__ = [
     "ActionApplicationStatus",
     "ActionProposalApplication",
     "MAX_APPLICATION_FENCES",
+    "MAX_APPLICATION_REPLAY_WINDOW",
     "MindStateProvenance",
     "ProposalApplicationCoordinator",
     "ProposalApplicationResult",

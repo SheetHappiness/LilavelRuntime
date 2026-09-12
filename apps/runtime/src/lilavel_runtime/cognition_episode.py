@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from . import contracts as _contracts
 from .contracts import (
+    ApplicationPermitIssuer,
     CognitionCandidate,
     CognitionContext,
     CognitionEngine,
@@ -27,8 +28,9 @@ class CognitionEpisodeRunner:
 
     The runner owns no effectful capability. It snapshots the observation window
     and MindState before invoking the effect-free engine seam, validates the
-    structured candidate, and stops. Proposal application and action
-    authorization belong to MIND-1D.
+    structured candidate, and stops. A narrow runtime-owned issuer may bind the
+    completed outcome to application replay authority; that issuer performs no
+    application. Proposal application and action authorization belong to MIND-1D.
     """
 
     def __init__(
@@ -39,6 +41,7 @@ class CognitionEpisodeRunner:
         *,
         scope_id: str = "runtime",
         timeout_s: float | None = None,
+        application_authority: ApplicationPermitIssuer | None = None,
     ) -> None:
         if not scope_id.strip():
             raise ValueError("scope_id must be non-empty")
@@ -49,6 +52,7 @@ class CognitionEpisodeRunner:
         self._mind_state = mind_state
         self._scope_id = scope_id
         self._timeout_s = timeout_s
+        self._application_authority = application_authority
         self._serial = asyncio.Lock()
         self._active_episode: CognitionEpisode | None = None
         self._last_episode: CognitionEpisode | None = None
@@ -70,6 +74,12 @@ class CognitionEpisodeRunner:
     @property
     def invocation_count(self) -> int:
         return self._invocation_count
+
+    @property
+    def application_authority(self) -> ApplicationPermitIssuer | None:
+        """Return the narrow runtime-owned outcome-binding seam, if configured."""
+
+        return self._application_authority
 
     async def run(self, trigger: CognitionTrigger) -> CognitionOutcome | None:
         """Run exactly one episode for ``trigger`` or fail closed.
@@ -97,6 +107,8 @@ class CognitionEpisodeRunner:
             try:
                 candidate = await self._invoke(episode)
                 outcome = self._normalize(episode, candidate)
+                if self._application_authority is not None:
+                    outcome = self._application_authority.bind_outcome(outcome)
             except TimeoutError:
                 self._last_status = CognitionEpisodeStatus.TIMED_OUT
                 return None

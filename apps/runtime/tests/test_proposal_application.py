@@ -143,6 +143,7 @@ async def test_a_valid_state_proposal_uses_trusted_atomic_delta_and_increments_v
         scope_id="fixture-scope",
         state_provenance=MindStateProvenance("user-1", "assistant-1"),
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = await boundary.apply(outcome)
 
@@ -202,6 +203,7 @@ async def test_b_stale_state_proposal_fails_closed_without_mutation() -> None:
         scope_id="fixture-scope",
         state_provenance=MindStateProvenance("user-1", "assistant-1"),
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -233,6 +235,7 @@ async def test_b_state_batch_capacity_failure_is_all_or_nothing() -> None:
         scope_id="fixture-scope",
         state_provenance=MindStateProvenance("user-1", "assistant-1"),
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -258,6 +261,7 @@ async def test_c_valid_action_compiles_to_trusted_p4_call_only_at_application() 
         state,
     )
     boundary, factory = _action_boundary(state, executor)
+    outcome = boundary.application_authority.bind_outcome(outcome)
     assert calls == []
 
     result = boundary.apply_sync(outcome)
@@ -291,6 +295,7 @@ async def test_d_denied_action_has_zero_executor_calls_and_zero_effects() -> Non
         executor,
         authorize=lambda correlation, call: ToolAuthorization.DENIED,
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -320,6 +325,7 @@ async def test_d_invalid_action_is_rejected_by_front_loaded_schema_validation() 
         CognitionCandidate(action_proposals=(ActionProposal(ActionProposalKind.SPEAK, "too long"),))
     )
     boundary, _ = _action_boundary(state, executor, spec=spec)
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -352,6 +358,7 @@ async def test_e_unknown_effect_is_preserved_and_never_retried() -> None:
         )
     )
     boundary, _ = _action_boundary(state, executor)
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     first = boundary.apply_sync(outcome)
     second = boundary.apply_sync(outcome)
@@ -377,6 +384,7 @@ async def test_f_duplicate_application_is_fenced_before_second_external_attempt(
         CognitionCandidate(action_proposals=(ActionProposal(ActionProposalKind.SPEAK, "once"),))
     )
     boundary, _ = _action_boundary(state, executor)
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     first = await boundary.apply(outcome)
     second = await boundary.apply(outcome)
@@ -420,6 +428,7 @@ async def test_g_invalid_member_in_mixed_batch_prevents_state_and_external_effec
         state,
     )
     boundary, _ = _action_boundary(state, executor, spec=spec)
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -461,6 +470,7 @@ async def test_h_partial_external_application_records_each_settlement_without_ro
         )
     )
     boundary, _ = _action_boundary(state, executor)
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 
@@ -490,6 +500,7 @@ async def test_i_application_does_not_write_canonical_conversation_history() -> 
         scope_id="fixture-scope",
         state_provenance=MindStateProvenance("user-1", "assistant-1"),
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
 
     result = boundary.apply_sync(outcome)
 

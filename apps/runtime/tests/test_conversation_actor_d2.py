@@ -207,6 +207,7 @@ async def test_cli_user_is_one_actor_episode_and_core_is_canonical() -> None:
     assert runtime.semantic_actor.active_episode.priority.value == "user"
 
     _finish(model.generations[0], "reply")
+    await _wait_for(user.done)
     assert await user == "completed"
     assert [(item.role, item.text) for item in presence.canonical_history] == [
         ("user", "hello"),
@@ -234,6 +235,7 @@ async def test_composed_presence_submission_is_bound_back_to_runtime_actor() -> 
     user = asyncio.create_task(presence.submit_user("bound"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "reply")
+    await _wait_for(user.done)
     assert await user == "completed"
     assert any(
         item.request_id.startswith("cli:") and item.status is SemanticEpisodeStatus.COMPLETED
@@ -274,6 +276,7 @@ async def test_cli_user_preempts_actor_non_user_work_before_core_starts() -> Non
     assert (await mind_admission.wait()).status is SemanticEpisodeStatus.CANCELLED
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "cli reply")
+    await _wait_for(cli.done)
     assert await cli == "completed"
     await runtime.stop()
 
@@ -302,6 +305,7 @@ async def test_temporal_non_user_work_waits_behind_actor_owned_cli_turn() -> Non
     await asyncio.sleep(0)
     assert not temporal_started.is_set()
     _finish(model.generations[0], "cli reply")
+    await _wait_for(cli.done)
     assert await cli == "completed"
     await temporal_started.wait()
     assert (await temporal_admission.wait()).status is SemanticEpisodeStatus.COMPLETED
@@ -325,6 +329,7 @@ async def test_cli_and_discord_user_episodes_serialize_in_both_directions() -> N
     await _wait_for(lambda: len(model.generations) == 2)
     assert model.requests[1].messages == (ContextMessage("user", "from discord"),)
     _finish(model.generations[1], "discord reply")
+    await _wait_for(cli.done)
     assert await cli == "completed"
     await _wait_for(lambda: runtime.active_route_count == 0)
 
@@ -352,6 +357,7 @@ async def test_discord_then_cli_also_waits_without_environment_preference() -> N
     await _wait_for(lambda: len(model.generations) == 2)
     assert model.requests[1].messages == (ContextMessage("user", "cli"),)
     _finish(model.generations[1], "cli reply")
+    await _wait_for(cli.done)
     assert await cli == "completed"
     await _wait_for(lambda: runtime.active_route_count == 0)
     assert [(item.role, item.text) for item in presence.history] == [
@@ -369,6 +375,7 @@ async def test_cli_replay_fence_and_distinct_identical_text_submissions() -> Non
     first = asyncio.create_task(runtime.submit_user("same", submission_id="submission-1"))
     await _wait_for(lambda: len(model.generations) == 1)
     _finish(model.generations[0], "one")
+    await _wait_for(first.done)
     assert await first == "completed"
     assert await runtime.submit_user("different", submission_id="submission-1") == "completed"
     assert len(model.generations) == 1
@@ -376,6 +383,7 @@ async def test_cli_replay_fence_and_distinct_identical_text_submissions() -> Non
     second = asyncio.create_task(runtime.submit_user("same"))
     await _wait_for(lambda: len(model.generations) == 2)
     _finish(model.generations[1], "two")
+    await _wait_for(second.done)
     assert await second == "completed"
     assert (
         len(
@@ -426,6 +434,7 @@ async def test_cli_user_excludes_legacy_presence_lane_for_full_actor_lifetime() 
     assert presence.actor_user_block_count == 1
     assert presence.legacy_lane_active is False
     _finish(model.generations[0], "done")
+    await _wait_for(user.done)
     assert await user == "completed"
     assert presence.actor_user_block_count == 0
     await runtime.stop()

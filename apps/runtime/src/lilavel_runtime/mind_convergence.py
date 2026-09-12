@@ -113,6 +113,8 @@ class MindExecutionAdapter:
             raise TypeError("runner must be a CognitionEpisodeRunner")
         if not isinstance(application, ProposalApplicationCoordinator):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError("application must be a ProposalApplicationCoordinator")
+        if runner.application_authority is not application.application_authority:
+            raise ValueError("runner and application must share the same permit issuer")
         self._runner = runner
         self._application = application
 

@@ -126,6 +126,7 @@ async def test_a_future_wake_is_inert_until_trusted_application() -> None:
         scope_id="fixture-scope",
         temporal_coordinator=coordinator,
     )
+    outcome = boundary.application_authority.bind_outcome(outcome)
     result = boundary.apply_sync(outcome)
 
     assert result.status is ProposalApplicationStatus.APPLIED
@@ -174,9 +175,11 @@ async def test_c_due_wake_emits_cognition_only() -> None:
     proposal = _temporal_proposal(clock, seconds=2)
     outcome, state = await _run_outcome(proposal)
     temporal = TemporalCoordinator(scope_id="fixture-scope", clock=clock.now)
-    ProposalApplicationCoordinator(
+    boundary = ProposalApplicationCoordinator(
         state, scope_id="fixture-scope", temporal_coordinator=temporal
-    ).apply_sync(outcome)
+    )
+    outcome = boundary.application_authority.bind_outcome(outcome)
+    boundary.apply_sync(outcome)
     clock.advance(3)
 
     triggers = temporal.poll_due()

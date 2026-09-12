@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Protocol, cast
+from typing import NoReturn, Protocol, cast
 
 from lilavel_contracts import JsonValue, ToolCall, ToolResult, ToolSpec
 
@@ -20,6 +20,8 @@ __all__ = [
     "ActionExecutor",
     "ActionProposal",
     "ActionProposalKind",
+    "ApplicationPermit",
+    "ApplicationPermitIssuer",
     "CognitionCandidate",
     "CognitionDecision",
     "CognitionContext",
@@ -167,6 +169,43 @@ MAX_COGNITION_SOURCE_REFS = 8
 # an arbitrary caller is inert data; only CognitionEpisodeRunner can mark the
 # outcome as eligible for MIND-1D application.
 _COMPLETED_COGNITION_PROOF = object()
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationPermit:
+    """A process-local runtime capability for one completed outcome.
+
+    The visible fields are replay metadata only.  The coordinator-owned
+    capability is intentionally excluded from representation and cannot be
+    reconstructed by model output or by serializing this value.
+    """
+
+    epoch_id: str
+    sequence: int
+    scope_id: str
+    episode_id: str
+    trigger_id: str
+    proposal_digest: str
+    _capability: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _require_text(self.epoch_id, "epoch_id")
+        _require_text(self.scope_id, "scope_id")
+        _require_text(self.episode_id, "episode_id")
+        _require_text(self.trigger_id, "trigger_id")
+        if isinstance(self.sequence, bool) or self.sequence <= 0:
+            raise ValueError("application permit sequence must be positive")
+        if (
+            type(self.proposal_digest) is not str
+            or len(self.proposal_digest) != 64
+            or any(character not in "0123456789abcdef" for character in self.proposal_digest)
+        ):
+            raise ValueError("application permit proposal digest is invalid")
+
+    def __reduce__(self) -> NoReturn:
+        """Prevent a permit from becoming an authority through serialization."""
+
+        raise TypeError("application permits are process-local")
 
 
 class CognitionDecision(StrEnum):
@@ -437,6 +476,7 @@ class CognitionOutcome:
     based_on_state_version: int | None = None
     completion_proof: object | None = field(default=None, repr=False, compare=False)
     temporal_proposals: tuple[TemporalProposal, ...] = ()
+    application_permit: ApplicationPermit | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_text(self.episode_id, "episode_id")
@@ -455,6 +495,11 @@ class CognitionOutcome:
             and self.completion_proof is not _COMPLETED_COGNITION_PROOF
         ):
             raise ValueError("completion_proof is runtime-owned")
+        if (
+            self.application_permit is not None
+            and type(self.application_permit) is not ApplicationPermit
+        ):
+            raise TypeError("application_permit is runtime-owned")
 
     @property
     def is_completed(self) -> bool:
@@ -465,6 +510,12 @@ class CognitionOutcome:
     @property
     def is_quiet(self) -> bool:
         return not (self.state_proposals or self.action_proposals or self.temporal_proposals)
+
+
+class ApplicationPermitIssuer(Protocol):
+    """Narrow runtime seam that binds a completed outcome to application authority."""
+
+    def bind_outcome(self, outcome: CognitionOutcome) -> CognitionOutcome: ...
 
 
 class CognitionEngine(Protocol):

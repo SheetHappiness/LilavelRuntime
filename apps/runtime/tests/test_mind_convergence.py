@@ -327,8 +327,14 @@ async def test_g_actor_cancellation_cancels_runner_before_successor_admission() 
     state = MindState()
     window = ObservationWindow(4)
     window.admit(_observation())
-    runner = CognitionEpisodeRunner(engine, window, state, scope_id="runtime")
     application = ProposalApplicationCoordinator(state, scope_id="runtime")
+    runner = CognitionEpisodeRunner(
+        engine,
+        window,
+        state,
+        scope_id="runtime",
+        application_authority=application.application_authority,
+    )
     adapter = MindExecutionAdapter(runner, application)
     actor = SemanticActor(scope_id="runtime", settlement_timeout=0.2)
     trigger = CognitionTrigger(("observation-1",), "cancel_fixture")
@@ -380,13 +386,19 @@ async def test_g_application_cancellation_waits_for_application_settlement() -> 
     state = MindState()
     window = ObservationWindow(4)
     window.admit(_observation())
-    runner = CognitionEpisodeRunner(engine, window, state, scope_id="runtime")
     application_started = threading.Event()
     application_release = threading.Event()
     application = _BlockingApplicationCoordinator(
         state,
         started=application_started,
         release=application_release,
+    )
+    runner = CognitionEpisodeRunner(
+        engine,
+        window,
+        state,
+        scope_id="runtime",
+        application_authority=application.application_authority,
     )
     adapter = MindExecutionAdapter(runner, application)
     cancellation = SemanticCancellationToken()

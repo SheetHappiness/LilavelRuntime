@@ -16,6 +16,8 @@ from .contracts import (
     ActionExecutor,
     ActionProposal,
     ActionProposalKind,
+    ApplicationPermit,
+    ApplicationPermitIssuer,
     CognitionCandidate,
     CognitionContext,
     CognitionDecision,
@@ -127,6 +129,7 @@ from .presence import (
 )
 from .proposal_application import (
     MAX_APPLICATION_FENCES,
+    MAX_APPLICATION_REPLAY_WINDOW,
     ActionApplication,
     ActionApplicationStatus,
     ActionProposalApplication,
@@ -219,6 +222,8 @@ __all__ = [
     "ActionExecutor",
     "ActionProposal",
     "ActionProposalKind",
+    "ApplicationPermit",
+    "ApplicationPermitIssuer",
     "ApplicationToolRegistry",
     "AutonomousCognitionRunner",
     "AutonomousOutcome",
@@ -324,6 +329,7 @@ __all__ = [
     "PresenceWakePolicy",
     "parse_mind_appraisal",
     "MAX_APPLICATION_FENCES",
+    "MAX_APPLICATION_REPLAY_WINDOW",
     "ActionApplication",
     "ActionApplicationStatus",
     "ActionProposalApplication",
