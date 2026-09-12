@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal
 
 from .sidecar_protocol import MAX_GUIDANCE_BLOCKS, MAX_GUIDANCE_BYTES, ProtocolError
@@ -19,6 +20,50 @@ Aim = Literal[
 ]
 Level = Literal["low", "normal", "high"]
 Stance = Literal["neutral", "curious", "skeptical", "playful", "supportive"]
+QuestionPolicy = Literal["avoid", "required", "invite"]
+
+
+class AttentionDecision(StrEnum):
+    """Whether an observation merits no, lightweight, or full cognition."""
+
+    DROP = "drop"
+    NOTE = "note"
+    THINK = "think"
+
+
+class InterventionDecision(StrEnum):
+    """Whether cognition should remain silent, answer, or interrupt."""
+
+    NONE = "none"
+    RESPOND = "respond"
+    INTERJECT = "interject"
+
+
+class CognitionReasonCode(StrEnum):
+    """The bounded, provider-neutral reasons a policy may expose."""
+
+    DIRECT_ADDRESS = "direct_address"
+    EXPLICIT_QUESTION = "explicit_question"
+    CONTRADICTION = "contradiction"
+    EVIDENCE_UPDATE = "evidence_update"
+    AMBIGUITY_MATERIAL = "ambiguity_material"
+    LOW_INFORMATION_GAP = "low_information_gap"
+    SOCIAL_FOLLOWUP = "social_followup"
+    CRITICAL_EVENT = "critical_event"
+    HIGH_RELEVANCE = "high_relevance"
+    HIGH_NOVELTY = "high_novelty"
+    INTEREST_AFFINITY = "interest_affinity"
+    INTERRUPTION_COST_HIGH = "interruption_cost_high"
+    REPETITION = "repetition"
+    NO_NEW_VALUE = "no_new_value"
+    VULNERABILITY = "vulnerability"
+    PLAYFUL_CONTEXT = "playful_context"
+    AMBIENT_CONTEXT = "ambient_context"
+    NOT_ADDRESSED = "not_addressed"
+    LOW_RELEVANCE = "low_relevance"
+
+
+MAX_COGNITION_REASON_CODES = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +152,82 @@ class ResponseDisposition:
     directness: Level = "normal"
     desired_length: Level = "normal"
     humor_allowed: bool = False
-    question_policy: Literal["avoid", "required", "invite"] = "avoid"
+    question_policy: QuestionPolicy = "avoid"
     initiative: Level = "normal"
+
+
+@dataclass(frozen=True, slots=True)
+class CognitionPolicyDecision:
+    """A fail-closed, provider-neutral cognition policy result.
+
+    Attention, intervention, and response disposition are deliberately
+    separate decisions.  The policy may think without speaking, but speaking
+    always requires a disposition.  This contract carries no identity fields
+    and cannot mutate ``IdentityCanon``.
+    """
+
+    attention: AttentionDecision
+    intervention: InterventionDecision
+    working_state: WorkingState | None = None
+    response_disposition: ResponseDisposition | None = None
+    reason_codes: tuple[CognitionReasonCode, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.attention) is not AttentionDecision:
+            raise TypeError("attention must be an AttentionDecision")
+        if type(self.intervention) is not InterventionDecision:
+            raise TypeError("intervention must be an InterventionDecision")
+        if type(self.reason_codes) is not tuple:
+            raise TypeError("reason_codes must be a tuple")
+        if not self.reason_codes:
+            raise ValueError("cognition policy decisions require a reason code")
+        if len(self.reason_codes) > MAX_COGNITION_REASON_CODES:
+            raise ValueError("cognition policy reason-code bound exceeded")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("cognition policy reason codes must be unique")
+        if not all(type(code) is CognitionReasonCode for code in self.reason_codes):
+            raise TypeError("reason_codes must contain only CognitionReasonCode values")
+        if self.working_state is not None and type(self.working_state) is not WorkingState:
+            raise TypeError("working_state must be a WorkingState")
+        if (
+            self.response_disposition is not None
+            and type(self.response_disposition) is not ResponseDisposition
+        ):
+            raise TypeError("response_disposition must be a ResponseDisposition")
+
+        if self.attention is not AttentionDecision.THINK:
+            if self.intervention is not InterventionDecision.NONE:
+                raise ValueError("DROP/NOTE decisions must have NONE intervention")
+            if self.working_state is not None or self.response_disposition is not None:
+                raise ValueError("DROP/NOTE decisions cannot carry dynamic behavior")
+            return
+
+        if self.intervention is InterventionDecision.NONE:
+            if self.response_disposition is not None:
+                raise ValueError("NONE intervention cannot carry a response disposition")
+        elif self.response_disposition is None:
+            raise ValueError("speaking interventions require a response disposition")
+
+
+__all__ = [
+    "Aim",
+    "AttentionDecision",
+    "BehavioralAnchor",
+    "CognitionPolicyDecision",
+    "CognitionReasonCode",
+    "DialogueExample",
+    "IdentityCanon",
+    "InterventionDecision",
+    "Level",
+    "MAX_COGNITION_REASON_CODES",
+    "QuestionPolicy",
+    "ResponseDisposition",
+    "SelfConcept",
+    "Stance",
+    "TemperamentTrait",
+    "WorkingState",
+    "compile_guidance",
+]
 
 
 def compile_guidance(
