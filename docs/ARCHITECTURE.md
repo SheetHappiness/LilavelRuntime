@@ -8,8 +8,9 @@ observation-admission and observation-to-cognition boundaries. MIND-1C adds a
 bounded, effect-free cognition episode that ends at inert proposals; MIND-1D
 adds the separate trusted application boundary; MIND-1E adds one-shot temporal
 intention admission and time-to-cognition dispatch; MIND-1F-B adds one
-runtime-owned, character-wide semantic admission actor. Broader autonomous
-capabilities are not implied by these slices.
+runtime-owned, character-wide semantic admission actor; MIND-1F-C composes that
+actor with the new generic/temporal MIND path. Broader autonomous capabilities
+are not implied by these slices.
 
 ## Top-level product boundary
 
@@ -19,7 +20,11 @@ in-memory observation window, a deterministic observation-to-cognition gate,
 registered environment tasks, explicit reactive conversation routing, the
 optional local presence component, Core/ModelRuntime session lifecycle,
 selection of the source environment for typed presentation actions, and the
-MIND-1D proposal application coordinator. P5-B1 adds one
+MIND-1D proposal application coordinator. MIND-1F-C adds an optional
+runtime-owned MIND execution adapter and deadline-driven temporal host: all
+generic and temporal non-conversational cognition enters the actor before the
+runner, and completed outcomes settle through the trusted application
+coordinator. P5-B1 adds one
 monotonic idle opportunity and
 transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
 and recent self-actions to the local CLI only; it adds no general scheduler,
@@ -110,11 +115,34 @@ user content, model results, tool arguments/results, and credentials are not
 stored.
 
 The actor is composed and lifecycle-owned by `LilavelRuntime` but inert by
-default. MIND-1F-B does not route Discord, CLI, temporal, presence, appraisal,
-or autonomous production paths through it. `ConversationCore` keeps canonical
-history and assistant commit semantics; `CognitionEpisodeRunner` remains
-effect-free and proposal-producing; `ProposalApplicationCoordinator` remains
-the trusted effect boundary.
+default. MIND-1F-C activates it only when an explicit MIND composition is
+supplied. The new path is:
+
+```text
+generic CognitionTrigger ─┐
+                          ├─► LilavelRuntime.submit_cognition()
+temporal CognitionTrigger ┘             │
+                                       ▼
+                              SemanticActor (NON_USER)
+                                       │
+                                       ▼
+                              MindExecutionAdapter
+                                       │
+                         ┌─────────────┴─────────────┐
+                         ▼                           ▼
+                CognitionEpisodeRunner       ProposalApplicationCoordinator
+                  (inert outcome)              (trusted application)
+```
+
+The actor fences `CognitionTrigger.trigger_id`, so duplicate submission in one
+actor session admits at most one cognition/application sequence. The adapter
+returns bounded `MindExecutionResult` metadata only after the runner and, when
+present, application coordinator have settled. Known runner/application
+failures settle as terminal actor outcomes; uncertain containment remains
+fail-closed under the actor rules. `ConversationCore` keeps canonical history
+and assistant commit semantics; `CognitionEpisodeRunner` remains effect-free
+and proposal-producing; `ProposalApplicationCoordinator` remains the trusted
+effect boundary.
 
 MIND-1D begins only after a runner-produced completed outcome. The application
 coordinator front-loads structural validation for the complete proposal set,
@@ -147,7 +175,10 @@ CognitionOutcome
   → WakeIntent (pending)
   → deadline
   → CognitionTrigger(source=temporal, wake_intent_id, source_refs)
-  → existing serialized CognitionEpisodeRunner
+  → TemporalHost
+  → SemanticActor (NON_USER)
+  → CognitionEpisodeRunner
+  → ProposalApplicationCoordinator
 ```
 
 The `TemporalCoordinator` owns the normalized deadline, one-second minimum
@@ -162,10 +193,15 @@ Temporal dispatch emits no `ActionProposal` or tool call and has no Core,
 Discord, assistant-message, or canonical-history capability. A temporal
 trigger has no observation payload; it carries a bounded reason as data plus
 runtime-owned wake and source IDs. The reason is not trusted instruction or
-authority. The existing episode runner serializes temporal and external
-triggers in one cognition lane, so an active episode cannot run in parallel
-with a due wake. A dispatched wake remains fenced even if its later episode
-fails or is cancelled.
+authority. The runtime-owned `TemporalHost` waits on the earliest deadline or
+a narrow coordinator change notification, then calls `poll_due()` and submits
+each returned trigger once. It has no model, runner, application, environment,
+or tool capability. The actor serializes temporal and external triggers in one
+cognition lane, so an active episode cannot run in parallel with a due wake;
+the runner's local serial lock is defensive containment, not character-wide
+admission authority. A dispatched wake remains fenced even if its later
+episode fails or is cancelled. Fake-clock tests use the host's read-only wake
+seam to advance deterministic time; this is not live-clock evidence.
 
 Accepted wakes are in-memory only in MIND-1E. Restart recovery, durable wake
 records, and overdue-at-restart policy are `UNVERIFIED`/deferred because the
@@ -176,7 +212,7 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canon, canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canon, canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -405,11 +441,12 @@ provider continuation remain outside this component.
   cognition gate second, reactive step third, Core conversation fourth. A
   `NO_COGNITION` result is a valid completed path; only a bounded
   `CognitionTrigger` reaches the reactive/Core route.
-- `SemanticActor` is the future character-wide semantic admission authority:
-  one active episode, user priority over non-user work, cooperative
-  preemption with settlement-before-successor, and fail-closed containment.
-  Existing Discord, CLI, temporal, presence, appraisal, and autonomous paths
-  remain outside it until later convergence subphases.
+- `SemanticActor` is the character-wide semantic admission authority for the
+  new generic/temporal MIND path: one active episode, user priority over
+  non-user work, cooperative preemption with settlement-before-successor, and
+  fail-closed containment. All MIND-1F-C work is `NON_USER`; future user
+  conversation integration remains a later phase. Existing Discord, CLI,
+  presence, appraisal, and autonomous production paths remain outside it.
 - A `CognitionTrigger` permits a cognition episode but does not select or
   authorize an action. MIND-1C ends with inert proposals; MIND-1D owns their
   trusted validation, authorization, application, and evidence.

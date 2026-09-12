@@ -103,7 +103,13 @@ strict appraisal parsing, bounded runtime intentions/self-actions, canonical
 provenance binding, appraisal preemption, intention-specific idle admission,
 noncanonical expression, and next-turn self-action projection. These checks do
 not prove live providers, live Discord, Neuro, general or recurring scheduling,
-arbitrary model-selected tools, durable memory, or restart persistence. MIND-1E
+arbitrary model-selected tools, durable memory, or restart persistence. MIND-1F-C
+coverage additionally proves the optional runtime composition of generic and
+temporal triggers through `SemanticActor`, trigger replay fencing,
+runner-to-application sequencing, deadline-driven temporal hosting with
+earlier-wake and cancellation reactions, single-active Mind execution,
+quiet/failure/rejection settlement, cooperative cancellation, and shutdown
+ordering. MIND-1E
 deterministic coverage additionally proves inert temporal proposals, deadline
 clamping, bounded wake admission, deduplication, cancellation/supersession,
 deterministic due ordering, one-shot dispatch fencing, serialized temporal

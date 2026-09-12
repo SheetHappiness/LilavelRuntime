@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import uuid4
 
+from .cognition_episode import CognitionEpisodeRunner
 from .contracts import (
     NO_COGNITION,
     CognitionDecision,
+    CognitionEngine,
     CognitionGate,
     CognitionTrigger,
+    CognitionTriggerSource,
     DirectMessageCognitionGate,
     EnvironmentAdapter,
     EventRouter,
@@ -24,7 +27,20 @@ from .contracts import (
     ToolSpec,
     WorldEvent,
 )
-from .semantic_actor import SemanticActor, SemanticActorState
+from .mind import MindState
+from .mind_convergence import MindExecutionAdapter
+from .proposal_application import ProposalApplicationCoordinator
+from .semantic_actor import (
+    SemanticActor,
+    SemanticActorState,
+    SemanticAdmission,
+    SemanticCancellationToken,
+    SemanticEpisode,
+    SemanticPriority,
+    SemanticSourceKind,
+)
+from .temporal import TemporalCoordinator
+from .temporal_host import TemporalHost, TemporalHostState
 
 
 class RuntimeState(StrEnum):
@@ -62,6 +78,10 @@ class ObservationUnavailable(LilavelRuntimeError):
 
 class ReactiveStepUnavailable(LilavelRuntimeError):
     """No explicit response route is configured for the runtime."""
+
+
+class MindCompositionUnavailable(LilavelRuntimeError):
+    """The optional new Mind/temporal composition was not configured."""
 
 
 class DuplicateEnvironment(LilavelRuntimeError):
@@ -109,6 +129,11 @@ class LilavelRuntime:
         cognition_gate: CognitionGate | None = None,
         presence: RuntimePresence | None = None,
         semantic_actor: SemanticActor | None = None,
+        mind_executor: MindExecutionAdapter | None = None,
+        cognition_engine: CognitionEngine | None = None,
+        mind_state: MindState | None = None,
+        proposal_application_coordinator: ProposalApplicationCoordinator | None = None,
+        temporal_coordinator: TemporalCoordinator | None = None,
         shutdown_timeout: float = 5.0,
     ) -> None:
         if event_queue_size <= 0:
@@ -128,6 +153,45 @@ class LilavelRuntime:
         )
         self._presence = presence
         self._semantic_actor = semantic_actor or SemanticActor(scope_id="runtime")
+        if mind_executor is not None and (
+            cognition_engine is not None
+            or mind_state is not None
+            or proposal_application_coordinator is not None
+        ):
+            raise ValueError("mind_executor cannot be combined with Mind component inputs")
+        if cognition_engine is not None and (
+            mind_state is None or proposal_application_coordinator is None
+        ):
+            raise ValueError(
+                "cognition_engine requires mind_state and proposal_application_coordinator"
+            )
+        if cognition_engine is None and (
+            mind_state is not None or proposal_application_coordinator is not None
+        ):
+            raise ValueError(
+                "mind_state and proposal_application_coordinator require cognition_engine"
+            )
+        if cognition_engine is not None:
+            assert mind_state is not None
+            assert proposal_application_coordinator is not None
+            mind_executor = MindExecutionAdapter(
+                CognitionEpisodeRunner(
+                    cognition_engine,
+                    self._observation_window,
+                    mind_state,
+                    scope_id=self._semantic_actor.scope_id,
+                ),
+                proposal_application_coordinator,
+            )
+        if temporal_coordinator is not None and mind_executor is None:
+            raise ValueError("temporal_coordinator requires a configured Mind executor")
+        self._mind_executor = mind_executor
+        self._temporal_coordinator = temporal_coordinator
+        self._temporal_host = (
+            TemporalHost(temporal_coordinator, self.submit_cognition)
+            if temporal_coordinator is not None
+            else None
+        )
         self._shutdown_timeout = shutdown_timeout
         self._environments: dict[str, EnvironmentAdapter] = {}
         self._tools: dict[str, ToolSpec] = {}
@@ -174,6 +238,58 @@ class LilavelRuntime:
         """Return the one character-wide actor owned by this runtime."""
 
         return self._semantic_actor
+
+    @property
+    def mind_executor(self) -> MindExecutionAdapter | None:
+        """Return the optional new Mind executor beneath the actor."""
+
+        return self._mind_executor
+
+    @property
+    def temporal_host(self) -> TemporalHost | None:
+        """Return the runtime-owned temporal deadline host, when configured."""
+
+        return self._temporal_host
+
+    @property
+    def temporal_coordinator(self) -> TemporalCoordinator | None:
+        """Return the optional runtime-owned temporal coordinator."""
+
+        return self._temporal_coordinator
+
+    async def submit_cognition(self, trigger: CognitionTrigger) -> SemanticAdmission:
+        """Admit generic or temporal cognition through the semantic actor."""
+
+        if type(trigger) is not CognitionTrigger:
+            raise TypeError("trigger must be a CognitionTrigger")
+        async with self._lifecycle_lock:
+            if self._state is not RuntimeState.RUNNING:
+                raise RuntimeNotRunning(f"runtime is {self._state.value}")
+            executor = self._mind_executor
+            if executor is None:
+                raise MindCompositionUnavailable("runtime has no configured Mind executor")
+            source_kind = (
+                SemanticSourceKind.EXTERNAL
+                if trigger.source is CognitionTriggerSource.EXTERNAL
+                else SemanticSourceKind.TEMPORAL
+            )
+
+            async def execute(
+                episode: SemanticEpisode, cancellation: SemanticCancellationToken
+            ) -> object:
+                del episode
+                return await executor.execute(trigger, cancellation)
+
+            request = self._semantic_actor.create_request(
+                trigger.trigger_id,
+                source_kind=source_kind,  # type: ignore[arg-type]
+                priority=SemanticPriority.NON_USER,
+                executor=execute,
+            )
+            return await self._semantic_actor.submit(request)
+
+    submit_mind_trigger = submit_cognition
+    submit_trigger = submit_cognition
 
     def register_environment(self, adapter: EnvironmentAdapter) -> None:
         self._ensure_registration_open()
@@ -350,20 +466,20 @@ class LilavelRuntime:
                 if self._state is RuntimeState.NEW:
                     self._state = RuntimeState.STOPPED
                     self._admission_closed.set()
-                    stop_actor = True
+                    stop_components = True
                     shutdown_task = None
                 else:
-                    stop_actor = False
-                if not stop_actor and self._state is RuntimeState.STOPPED:
+                    stop_components = False
+                if not stop_components and self._state is RuntimeState.STOPPED:
                     return
-                if not stop_actor and self._state is RuntimeState.FAILED:
+                if not stop_components and self._state is RuntimeState.FAILED:
                     raise RuntimeFailed("runtime is failed") from self._failure
-                if not stop_actor and self._state is RuntimeState.STARTING:
+                if not stop_components and self._state is RuntimeState.STARTING:
                     wait_for_start = True
                     shutdown_task = None
-                elif not stop_actor and self._state is RuntimeState.STOPPING:
+                elif not stop_components and self._state is RuntimeState.STOPPING:
                     shutdown_task = self._shutdown_task
-                elif not stop_actor:
+                elif not stop_components:
                     self._state = RuntimeState.STOPPING
                     self._admission_closed.set()
                     supervisor = self._supervisor
@@ -374,7 +490,9 @@ class LilavelRuntime:
                         self._settle_shutdown(supervisor), name="lilavel-runtime-shutdown"
                     )
                     self._shutdown_task = shutdown_task
-            if stop_actor:
+            if stop_components:
+                if self._temporal_host is not None:
+                    await self._temporal_host.stop()
                 await self._semantic_actor.stop()
                 return
             if wait_for_start:
@@ -390,6 +508,11 @@ class LilavelRuntime:
         router_error: BaseException | None = None
         try:
             async with asyncio.timeout(self._shutdown_timeout):
+                if self._temporal_host is not None:
+                    try:
+                        await self._temporal_host.stop()
+                    except BaseException as error:
+                        router_error = error
                 for task in self._adapter_tasks:
                     task.cancel()
                 if self._adapter_tasks:
@@ -448,6 +571,10 @@ class LilavelRuntime:
             healthy=(
                 self._state is RuntimeState.RUNNING
                 and self._semantic_actor.state is SemanticActorState.RUNNING
+                and (
+                    self._temporal_host is None
+                    or self._temporal_host.state is TemporalHostState.RUNNING
+                )
             ),
             environments=len(self._environments),
             tools=len(self._tools),
@@ -502,6 +629,8 @@ class LilavelRuntime:
                     for environment_id, adapter in self._environments.items()
                 )
                 self._state = RuntimeState.RUNNING
+                if self._temporal_host is not None:
+                    await self._temporal_host.start()
                 self._started.set()
                 await self._stop_requested.wait()
         except BaseExceptionGroup as error:
@@ -523,6 +652,12 @@ class LilavelRuntime:
             if self.health().state is RuntimeState.STOPPING:
                 self._state = RuntimeState.STOPPED
         finally:
+            if self._temporal_host is not None and self._temporal_host.state.value not in {
+                "new",
+                "stopped",
+            }:
+                with suppress(BaseException):
+                    await self._temporal_host.stop()
             if self._event_router is not None:
                 try:
                     await self._event_router.close()

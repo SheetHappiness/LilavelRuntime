@@ -63,6 +63,7 @@ from .kernel import (
     LilavelRuntime,
     LilavelRuntimeError,
     LilavelRuntimeHealth,
+    MindCompositionUnavailable,
     ObservationUnavailable,
     ReactiveStepUnavailable,
     RuntimeFailed,
@@ -89,6 +90,11 @@ from .mind import (
     MindStateSnapshot,
     MindStateVersionConflict,
     SelfAction,
+)
+from .mind_convergence import (
+    MindExecutionAdapter,
+    MindExecutionResult,
+    MindExecutionStatus,
 )
 from .presence import (
     DEFAULT_IDLE_TIMEOUT_S,
@@ -165,12 +171,21 @@ from .temporal import (
     MAX_WAKE_HORIZON,
     MIN_WAKE_DELAY,
     PreparedTemporalProposal,
+    TemporalChangeListener,
     TemporalClock,
     TemporalClockSource,
     TemporalCoordinator,
     TemporalPreparation,
     WakeIntent,
     WakeIntentStatus,
+)
+from .temporal_host import (
+    TemporalDispatchEvidence,
+    TemporalDispatchStatus,
+    TemporalHost,
+    TemporalHostError,
+    TemporalHostShutdownTimeout,
+    TemporalHostState,
 )
 from .tool_registry import (
     MAX_EXPOSED_TOOL_BYTES,
@@ -239,6 +254,10 @@ __all__ = [
     "LilavelRuntime",
     "LilavelRuntimeError",
     "LilavelRuntimeHealth",
+    "MindCompositionUnavailable",
+    "MindExecutionAdapter",
+    "MindExecutionResult",
+    "MindExecutionStatus",
     "MAX_EXPOSED_TOOL_BYTES",
     "MAX_EXPOSED_TOOLS",
     "MAX_ACTION_PROPOSAL_CONTENT_BYTES",
@@ -323,6 +342,7 @@ __all__ = [
     "TemporalApplication",
     "TemporalApplicationStatus",
     "TemporalClock",
+    "TemporalChangeListener",
     "TemporalClockSource",
     "TemporalCoordinator",
     "TemporalPreparation",
@@ -356,6 +376,12 @@ __all__ = [
     "MIN_WAKE_DELAY",
     "WakeIntent",
     "WakeIntentStatus",
+    "TemporalDispatchEvidence",
+    "TemporalDispatchStatus",
+    "TemporalHost",
+    "TemporalHostError",
+    "TemporalHostShutdownTimeout",
+    "TemporalHostState",
     "STAY_SILENT_SPEC",
     "ToolCall",
     "ToolAuthorization",

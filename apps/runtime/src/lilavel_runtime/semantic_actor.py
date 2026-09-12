@@ -658,6 +658,14 @@ class SemanticActor:
             return SemanticEpisodeStatus.FAILED, None, "executor_failed", False
         if record.cancellation_requested:
             return SemanticEpisodeStatus.CANCELLED, None, "cancelled_after_request", False
+        executor_status = getattr(result, "semantic_status", None)
+        if type(executor_status) is SemanticEpisodeStatus:
+            return (
+                executor_status,
+                result,
+                getattr(result, "reason_code", None),
+                False,
+            )
         return SemanticEpisodeStatus.COMPLETED, result, None, False
 
     async def _cancel_and_join(self, execution: asyncio.Task[object], record: _Record) -> bool:

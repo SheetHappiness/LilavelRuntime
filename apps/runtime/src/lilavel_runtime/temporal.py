@@ -29,6 +29,7 @@ class TemporalClock(Protocol):
 
 
 type TemporalClockSource = Callable[[], datetime] | TemporalClock
+type TemporalChangeListener = Callable[[], None]
 
 
 class WakeIntentStatus(StrEnum):
@@ -169,6 +170,8 @@ class TemporalCoordinator:
         self._next_sequence = 0
         self._intents: dict[str, WakeIntent] = {}
         self._dedup_keys: dict[str, str] = {}
+        self._listeners: dict[int, TemporalChangeListener] = {}
+        self._next_listener_id = 0
 
     @property
     def scope_id(self) -> str:
@@ -192,6 +195,40 @@ class TemporalCoordinator:
     def intent(self, wake_intent_id: str) -> WakeIntent | None:
         with self._lock:
             return self._intents.get(wake_intent_id)
+
+    def now(self) -> datetime:
+        """Return the normalized coordinator clock without changing state."""
+
+        with self._lock:
+            return self._now()
+
+    def next_deadline(self) -> datetime | None:
+        """Return the earliest pending wake deadline without changing state."""
+
+        with self._lock:
+            pending = [item for item in self._intents.values() if self._is_pending(item)]
+            if not pending:
+                return None
+            return min(
+                pending,
+                key=lambda item: (item.not_before, item.sequence, item.wake_intent_id),
+            ).not_before
+
+    def subscribe(self, listener: TemporalChangeListener) -> Callable[[], None]:
+        """Subscribe to wake-state changes and return an idempotent removal hook."""
+
+        if not callable(listener):
+            raise TypeError("listener must be callable")
+        with self._lock:
+            self._next_listener_id += 1
+            listener_id = self._next_listener_id
+            self._listeners[listener_id] = listener
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._listeners.pop(listener_id, None)
+
+        return unsubscribe
 
     def prepare(
         self,
@@ -306,7 +343,9 @@ class TemporalCoordinator:
                 if all(item.status is TemporalApplicationStatus.DUPLICATE for item in records)
                 else TemporalApplicationStatus.APPLIED
             )
-            return TemporalApplication(status, tuple(records))
+            listeners = tuple(self._listeners.values()) if new_keys else ()
+        self._notify(listeners)
+        return TemporalApplication(status, tuple(records))
 
     def apply(
         self,
@@ -340,7 +379,9 @@ class TemporalCoordinator:
             updated = replace(intent, status=status)
             self._intents[wake_intent_id] = updated
             self._trim_history()
-            return updated
+            listeners = tuple(self._listeners.values())
+        self._notify(listeners)
+        return updated
 
     def poll_due(self, now: datetime | None = None) -> tuple[CognitionTrigger, ...]:
         """Fence each due wake once and emit only temporal cognition triggers.
@@ -381,7 +422,9 @@ class TemporalCoordinator:
                         source_refs=tuple(refs),
                     )
                 )
-            return tuple(triggers)
+            listeners = tuple(self._listeners.values()) if due else ()
+        self._notify(listeners)
+        return tuple(triggers)
 
     def _normalize_deadline(self, requested: datetime, now: datetime) -> datetime:
         if requested <= now + self._minimum_delay:
@@ -458,6 +501,16 @@ class TemporalCoordinator:
             if len(self._intents) <= MAX_WAKE_HISTORY:
                 break
 
+    @staticmethod
+    def _notify(listeners: Sequence[TemporalChangeListener]) -> None:
+        for listener in listeners:
+            try:
+                listener()
+            except Exception:
+                # A wait notification must never change trusted temporal
+                # admission or dispatch semantics.
+                continue
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -478,6 +531,7 @@ __all__ = [
     "TemporalApplicationStatus",
     "TemporalClock",
     "TemporalClockSource",
+    "TemporalChangeListener",
     "TemporalCoordinator",
     "TemporalPreparation",
     "TemporalProposalApplication",
