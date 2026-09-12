@@ -4,7 +4,7 @@
 remain healthy with no environments, conversations, model runtime, sidecar, or
 provider. It owns bounded observation admission, a recent observation window,
 a deterministic observation-to-cognition gate, registered environment tasks,
-the character-wide semantic actor, actor-owned reactive conversation
+the character-wide semantic actor, actor-owned CLI and reactive conversation
 admission, Core conversation sessions, and the destination choice for typed
 environment presentation actions. MIND-1D adds the separate runtime-owned
 boundary for applying completed cognition proposals. MIND-1E adds bounded,
@@ -18,7 +18,11 @@ does not apply state, execute actions, schedule work, write memory, or append
 conversation messages. MIND-1F-D1 routes the production Discord DM path through
 the same actor at `USER` priority; `ConversationExecutionAdapter` delegates to
 the existing `CoreConversationRouter`, while `ConversationCore` remains the
-canonical conversation/history owner. MIND-1D owns the separate proposal
+canonical conversation/history owner. MIND-1F-D2 routes normal local CLI input
+through that same actor at `USER` priority and reuses the adapter for Core
+streaming and settlement. The transitional Presence component retains only the
+legacy idle/appraisal/autonomous duties behind a temporary actor-user exclusion
+gate. MIND-1D owns the separate proposal
 validation, application, and authorization boundary. MIND-1E owns bounded
 temporal wake proposals and scheduler admission; it does not create a general
 scheduler or recurring autonomy.
@@ -145,9 +149,9 @@ State is applied before external actions, but the two paths are not globally
 atomic. Each path has its own status and per-proposal result. Confirmed or
 unknown external effects are never rolled back; a later failure is reported as
 partial application and fences the outcome. No application result writes
-ConversationCore history. The reactive DM route is actor-owned, while CLI,
-presence, appraisal, and autonomous production behavior remain outside this
-convergence until MIND-1F-D2 / 1F-E.
+ConversationCore history. Both reactive DM and normal CLI conversation routes
+are actor-owned; legacy Presence appraisal and autonomous production remain
+temporary compatibility lanes pending MIND-1F-E.
 
 ## MIND-1E temporal intentions / self-wake
 
@@ -240,6 +244,31 @@ not run the cognition gate or route; only an explicit `cognition_step()` (or
 its `reactive_step()` compatibility alias) can submit a user conversation
 episode to the actor. `NO_COGNITION` remains terminal and creates no actor or
 Core work.
+
+## MIND-1F-D2 CLI conversation convergence
+
+Normal CLI input is submitted to `LilavelRuntime.submit_user()`, which creates
+an opaque runtime-owned `cli:<submission-id>` request at `USER` priority on the
+same character-wide `SemanticActor` used by Discord. The actor serializes CLI
+and Discord user episodes together, preempts actor-owned non-user MIND work,
+fences replayed submission IDs, and waits for Core/model/presentation
+settlement before releasing its lane. Identical text in separate submissions
+gets separate identities.
+
+The shared `ConversationExecutionAdapter` runs the local `ConversationCore`
+session and maps transient Core events to the CLI output sink. The CLI scope is
+`local-cli`; Discord `(environment, subject)` scopes remain separate, so actor
+serialization never merges their histories. Core remains the sole canonical
+user/assistant history authority.
+
+`PersistentPresenceRuntime` is still lifecycle-owned for the transitional
+idle, appraisal, and autonomous behavior. In the runtime composition its user
+submitter is bound back to `LilavelRuntime`, so it cannot create a parallel
+semantic user queue. A temporary exclusion counter cancels and joins legacy
+appraisal/autonomous work before an actor `USER` request is admitted and holds
+the exclusion until that actor episode settles. Direct Presence construction
+retains its P5-B1 compatibility path for existing standalone callers; it is not
+the normal CLI composition.
 
 ## P5-B1 local presence
 

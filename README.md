@@ -59,6 +59,23 @@ Discord one-to-one DM
   → apps/discord-adapter
 ```
 
+The normal local CLI path now shares the same character-wide admission point:
+
+```text
+CLI input
+  → LilavelRuntime.submit_user()
+  → SemanticActor (USER)
+  → ConversationExecutionAdapter
+  → local-cli ConversationCore
+  → ModelRuntime
+  → PromptToolkitOutputSink
+```
+
+CLI and Discord user episodes serialize through one actor while their
+`ConversationCore` scopes and histories remain isolated. Legacy local
+appraisal and autonomous presence behavior remains a temporary compatibility
+lane, excluded while actor-owned user work is active.
+
 The cognition gate decides whether work may begin; it does not select an action.
 MIND-1C ends at inert proposals. MIND-1D adds a separate runtime-owned
 validation, authorization, and application boundary; temporal wake proposals
@@ -69,7 +86,7 @@ remain deferred to MIND-1E.
 - `apps/runtime` contains the persistent kernel, provider-neutral event and
   admitted-observation contracts, the bounded recent observation window,
   deterministic `NO_COGNITION`/`CognitionTrigger` gating, the character-wide
-  `SemanticActor`, actor-owned reactive DM admission, the Core-backed
+  `SemanticActor`, actor-owned CLI and reactive DM admission, the Core-backed
   conversation router, the local-CLI-only bounded MIND-0 state loop, and the
   MIND-1D proposal application boundary. It still starts cleanly with zero
   environments.

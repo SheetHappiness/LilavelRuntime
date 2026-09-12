@@ -114,7 +114,17 @@ deterministic coverage additionally proves inert temporal proposals, deadline
 clamping, bounded wake admission, deduplication, cancellation/supersession,
 deterministic due ordering, one-shot dispatch fencing, serialized temporal
 cognition, failure non-resurrection, and provenance isolation. It does not
-prove durable accepted wakes or restart recovery.
+prove durable accepted wakes or restart recovery. MIND-1F-D2 coverage
+additionally proves actor-owned CLI USER submission, shared CLI/Discord
+serialization, isolated `local-cli` Core history, runtime-owned submission
+replay fencing, cancellation/settlement, legacy Presence exclusion, and clean
+CLI composition shutdown.
+
+The focused D2 proofs can be rerun from `apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_conversation_actor_d2.py
+```
 
 ### Core
 

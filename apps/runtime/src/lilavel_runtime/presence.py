@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Protocol, cast
@@ -19,6 +19,7 @@ from lilavel_core import (
     ConversationCancelled,
     ConversationCompleted,
     ConversationCore,
+    ConversationEvent,
     ConversationFailed,
     ConversationRun,
     ConversationTextDelta,
@@ -34,7 +35,9 @@ from lilavel_core import (
 )
 from lilavel_core.production_cognition import build_character_guidance
 
+from .conversation_adapter import ConversationExecutionAdapter, ConversationExecutionResult
 from .mind import MAX_INTENTION_TEXT_BYTES, MindIntention, MindProjection, MindState
+from .semantic_actor import SemanticCancellationToken
 from .tool_registry import ApplicationToolRegistry, ToolAuthorization, ToolBinding
 from .tool_session import DeterministicToolSession, DeterministicToolSessionFactory
 
@@ -597,6 +600,7 @@ class PersistentPresenceRuntime:
         self._mind_state = mind_state or MindState()
         self._appraiser = appraiser or MindAppraiser(model_runtime)
         self._wake_policy = wake_policy or FixedPresenceWakePolicy()
+        self._conversation_execution = ConversationExecutionAdapter()
         self._idle_timeout_s = idle_timeout_s
         self._max_consecutive = max_consecutive_autonomous
         self._clock = clock
@@ -610,6 +614,11 @@ class PersistentPresenceRuntime:
         self._evidence: deque[PresenceEvidence] = deque(maxlen=PRESENCE_EVIDENCE_CAPACITY)
         self._evidence_sequence = 1
         self._closing = False
+        self._actor_user_submitter: Callable[[str], Awaitable[str]] | None = None
+        self._actor_user_blocks = 0
+        self._legacy_active = False
+        self._legacy_settled = asyncio.Event()
+        self._legacy_settled.set()
 
     @property
     def history(self) -> tuple[ContextMessage, ...]:
@@ -618,6 +627,12 @@ class PersistentPresenceRuntime:
     @property
     def canonical_history(self) -> tuple[CanonicalMessage, ...]:
         return self._core.canonical_history
+
+    @property
+    def conversation_core(self) -> ConversationCore:
+        """Expose the CLI Core session to the runtime composition boundary."""
+
+        return self._core
 
     def evidence(self) -> tuple[PresenceEvidence, ...]:
         return tuple(self._evidence)
@@ -629,6 +644,77 @@ class PersistentPresenceRuntime:
     @property
     def mind_projection(self) -> MindProjection:
         return self._mind_state.projection()
+
+    @property
+    def actor_user_block_count(self) -> int:
+        """Return the number of actor USER episodes excluding legacy lanes."""
+
+        return self._actor_user_blocks
+
+    @property
+    def legacy_lane_active(self) -> bool:
+        """Return whether transitional appraisal/autonomy work is running."""
+
+        return self._legacy_active
+
+    def bind_actor_user_submitter(self, submitter: Callable[[str], Awaitable[str]]) -> None:
+        """Route direct callers through the runtime actor when composed."""
+
+        if not callable(submitter):
+            raise TypeError("submitter must be callable")
+        if self._actor_user_submitter is not None and self._actor_user_submitter is not submitter:
+            raise RuntimeError("presence actor submitter is already bound")
+        self._actor_user_submitter = submitter
+
+    async def begin_actor_user(self) -> None:
+        """Exclude legacy appraisal/autonomy before an actor USER episode."""
+
+        if self._task is None or self._closing:
+            raise RuntimeError("presence runtime is not accepting actor work")
+        self._actor_user_blocks += 1
+        try:
+            self._idle_latched = True
+            self._last_activity = self._now()
+            conversation = self._active_conversation
+            if conversation is not None and not conversation.settled:
+                await _await_daemon(conversation.cancel)
+            await _await_daemon(self._runner.cancel)
+            await _await_daemon(self._appraiser.cancel)
+            await self._legacy_settled.wait()
+        except BaseException:
+            self._actor_user_blocks -= 1
+            raise
+
+    async def end_actor_user(self) -> None:
+        """Release one actor-owned USER exclusion after full settlement."""
+
+        if self._actor_user_blocks > 0:
+            self._actor_user_blocks -= 1
+        self._last_activity = self._now()
+
+    async def execute_actor_user(
+        self,
+        text: str,
+        conversation_executor: ConversationExecutionAdapter,
+        cancellation: SemanticCancellationToken,
+    ) -> ConversationExecutionResult:
+        """Execute one actor-admitted CLI turn and then its legacy appraisal.
+
+        This method is an execution callback, not an admission queue. The
+        character-wide actor owns ordering, cancellation, replay fencing, and
+        settlement; Presence supplies only its Core session and presentation
+        sink, then keeps the transitional appraisal inside the actor episode.
+        """
+
+        result = await conversation_executor.execute_core_turn(
+            self._core,
+            text,
+            self._present_conversation_event,
+            cancellation,
+        )
+        if result.outcome.status == "completed":
+            await self._run_actor_appraisal(result.run, cancellation)
+        return result
 
     async def start(self) -> None:
         if self._task is not None:
@@ -642,6 +728,12 @@ class PersistentPresenceRuntime:
         self._task = asyncio.create_task(self._run(), name="lilavel-persistent-presence")
 
     async def submit_user(self, text: str) -> str:
+        submitter = self._actor_user_submitter
+        if submitter is not None:
+            return await submitter(text)
+        return await self._submit_legacy_user(text)
+
+    async def _submit_legacy_user(self, text: str) -> str:
         if self._task is None or self._closing:
             raise RuntimeError("presence runtime is not accepting input")
         if not text or not text.strip():
@@ -705,38 +797,41 @@ class PersistentPresenceRuntime:
                 self._queue.task_done()
 
     async def _run_user(self, submission: _UserSubmission) -> None:
+        self._legacy_active = True
+        self._legacy_settled.clear()
         try:
-            outcome = await _await_daemon(lambda: self._consume_user(submission.text))
-        except BaseException as error:
-            if not submission.future.done():
-                submission.future.set_exception(error)
-        else:
-            if not submission.future.done():
-                submission.future.set_result(outcome)
+            try:
+                outcome = await _await_daemon(lambda: self._consume_user(submission.text))
+            except BaseException as error:
+                if not submission.future.done():
+                    submission.future.set_exception(error)
+            else:
+                if not submission.future.done():
+                    submission.future.set_result(outcome)
+            finally:
+                self._last_activity = self._now()
         finally:
-            self._last_activity = self._now()
+            self._legacy_active = False
+            self._legacy_settled.set()
 
     def _consume_user(self, text: str) -> str:
-        run = self._core.start_turn(text, supersede=True)
-        self._active_conversation = run
+        result: ConversationExecutionResult | None = None
         try:
-            for event in run.events():
-                if isinstance(event, ConversationTextDelta):
-                    self._sink.publish(PresenceOutput("conversation_delta", event.delta))
-                elif isinstance(event, ConversationCompleted):
-                    self._sink.publish(PresenceOutput("conversation_complete", ""))
-                elif isinstance(event, ConversationCancelled):
-                    self._sink.publish(PresenceOutput("conversation_interrupted", ""))
-                else:
-                    assert isinstance(event, ConversationFailed)
-                    self._sink.publish(PresenceOutput("conversation_failed", ""))
-            outcome = run.wait(0)
-            if outcome.status == "completed":
-                self._run_appraisal(run)
-            return outcome.status
+            result = self._conversation_execution.execute_core_turn_sync(
+                self._core,
+                text,
+                self._present_conversation_event,
+                on_run=self._set_active_conversation,
+            )
+            if result.outcome.status == "completed":
+                self._run_appraisal(result.run)
+            return result.outcome.status
         finally:
-            if self._active_conversation is run:
+            if result is None or self._active_conversation is result.run:
                 self._active_conversation = None
+
+    def _set_active_conversation(self, run: ConversationRun) -> None:
+        self._active_conversation = run
 
     def _run_appraisal(self, run: ConversationRun) -> None:
         self._record("appraisal_admitted", run_id=run.run_id)
@@ -766,52 +861,100 @@ class PersistentPresenceRuntime:
                 )
 
     async def _idle_opportunity(self) -> None:
-        self._idle_latched = True
-        self._opportunity_sequence += 1
-        opportunity = IdleOpportunity(
-            str(uuid4()), self._opportunity_sequence, max(0.0, self._now() - self._last_activity)
-        )
-        self._record("idle_opportunity", opportunity_id=opportunity.opportunity_id)
-        decision = await self._wake_policy.decide(opportunity)
-        self._record(
-            "wake_decision",
-            opportunity_id=opportunity.opportunity_id,
-            result="wake" if decision.wake else "no_wake",
-        )
-        if not decision.wake or self._consecutive_autonomous >= self._max_consecutive:
-            return
-        intention = self._mind_state.active_intention()
-        if intention is None:
-            return
-        self._consecutive_autonomous += 1
-        self._record(
-            "cognition_admitted",
-            opportunity_id=opportunity.opportunity_id,
-            intention_id=intention.intention_id,
-        )
-        self._runner.admit()
-        outcome = await _await_daemon(lambda: self._runner.run(intention))
-        if (
-            outcome.action is PresenceAction.SAY
-            and outcome.action_succeeded
-            and outcome.action_text is not None
-        ):
-            action = self._mind_state.mark_expressed(intention.intention_id, outcome.action_text)
-            if action is not None:
-                self._record(
-                    "self_action_recorded",
-                    opportunity_id=opportunity.opportunity_id,
-                    run_id=outcome.run_id,
-                    intention_id=intention.intention_id,
+        self._legacy_active = True
+        self._legacy_settled.clear()
+        try:
+            self._idle_latched = True
+            self._opportunity_sequence += 1
+            opportunity = IdleOpportunity(
+                str(uuid4()),
+                self._opportunity_sequence,
+                max(0.0, self._now() - self._last_activity),
+            )
+            self._record("idle_opportunity", opportunity_id=opportunity.opportunity_id)
+            decision = await self._wake_policy.decide(opportunity)
+            self._record(
+                "wake_decision",
+                opportunity_id=opportunity.opportunity_id,
+                result="wake" if decision.wake else "no_wake",
+            )
+            if (
+                self._actor_user_blocks > 0
+                or not decision.wake
+                or self._consecutive_autonomous >= self._max_consecutive
+            ):
+                return
+            intention = self._mind_state.active_intention()
+            if intention is None:
+                return
+            self._consecutive_autonomous += 1
+            self._record(
+                "cognition_admitted",
+                opportunity_id=opportunity.opportunity_id,
+                intention_id=intention.intention_id,
+            )
+            self._runner.admit()
+            outcome = await _await_daemon(lambda: self._runner.run(intention))
+            if (
+                outcome.action is PresenceAction.SAY
+                and outcome.action_succeeded
+                and outcome.action_text is not None
+            ):
+                action = self._mind_state.mark_expressed(
+                    intention.intention_id, outcome.action_text
                 )
-        self._record(
-            "cognition_settled",
-            opportunity_id=opportunity.opportunity_id,
-            run_id=outcome.run_id,
-            result=outcome.status.value,
-            intention_id=intention.intention_id,
+                if action is not None:
+                    self._record(
+                        "self_action_recorded",
+                        opportunity_id=opportunity.opportunity_id,
+                        run_id=outcome.run_id,
+                        intention_id=intention.intention_id,
+                    )
+            self._record(
+                "cognition_settled",
+                opportunity_id=opportunity.opportunity_id,
+                run_id=outcome.run_id,
+                result=outcome.status.value,
+                intention_id=intention.intention_id,
+            )
+            self._last_activity = self._now()
+        finally:
+            self._legacy_active = False
+            self._legacy_settled.set()
+
+    async def _run_actor_appraisal(
+        self, run: ConversationRun, cancellation: SemanticCancellationToken
+    ) -> None:
+        appraisal_task = asyncio.create_task(
+            _await_daemon(lambda: self._run_appraisal(run)),
+            name=f"lilavel-cli-appraisal-{run.run_id}",
         )
-        self._last_activity = self._now()
+        cancellation_task = asyncio.create_task(
+            cancellation.wait(), name=f"lilavel-cli-appraisal-cancel-{run.run_id}"
+        )
+        try:
+            done, _ = await asyncio.wait(
+                (appraisal_task, cancellation_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if appraisal_task in done:
+                appraisal_task.result()
+                return
+            await _await_daemon(self._appraiser.cancel)
+            await appraisal_task
+        finally:
+            cancellation_task.cancel()
+            await asyncio.gather(cancellation_task, return_exceptions=True)
+
+    def _present_conversation_event(self, event: ConversationEvent) -> None:
+        if isinstance(event, ConversationTextDelta):
+            self._sink.publish(PresenceOutput("conversation_delta", event.delta))
+        elif isinstance(event, ConversationCompleted):
+            self._sink.publish(PresenceOutput("conversation_complete", ""))
+        elif isinstance(event, ConversationCancelled):
+            self._sink.publish(PresenceOutput("conversation_interrupted", ""))
+        else:
+            assert isinstance(event, ConversationFailed)
+            self._sink.publish(PresenceOutput("conversation_failed", ""))
 
     def _remaining_idle(self) -> float:
         return max(0.0, self._idle_timeout_s - (self._now() - self._last_activity))

@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol, cast
 from uuid import uuid4
 
 from .cognition_episode import CognitionEpisodeRunner
@@ -35,6 +36,7 @@ from .semantic_actor import (
     SemanticActor,
     SemanticActorState,
     SemanticAdmission,
+    SemanticAdmissionStatus,
     SemanticCancellationToken,
     SemanticEpisode,
     SemanticPriority,
@@ -93,6 +95,32 @@ class DuplicateTool(LilavelRuntimeError):
     pass
 
 
+class _ActorConversationPresence(Protocol):
+    async def begin_actor_user(self) -> None: ...
+
+    async def end_actor_user(self) -> None: ...
+
+    async def execute_actor_user(
+        self,
+        text: str,
+        conversation_executor: ConversationExecutionAdapter,
+        cancellation: SemanticCancellationToken,
+    ) -> object: ...
+
+
+def _actor_conversation_presence(
+    presence: RuntimePresence | None,
+) -> _ActorConversationPresence | None:
+    if presence is None:
+        return None
+    if not all(
+        callable(getattr(presence, name, None))
+        for name in ("begin_actor_user", "end_actor_user", "execute_actor_user")
+    ):
+        return None
+    return cast(_ActorConversationPresence, presence)
+
+
 @dataclass(frozen=True, slots=True)
 class LilavelRuntimeHealth:
     state: RuntimeState
@@ -149,9 +177,7 @@ class LilavelRuntime:
         self._queue: asyncio.Queue[Observation] = asyncio.Queue(maxsize=event_queue_size)
         self._observation_window = ObservationWindow(observation_window_size)
         self._event_router = event_router
-        self._conversation_executor = (
-            ConversationExecutionAdapter(event_router) if event_router is not None else None
-        )
+        self._conversation_executor = ConversationExecutionAdapter(event_router)
         self._cognition_gate = (
             DirectMessageCognitionGate() if cognition_gate is None else cognition_gate
         )
@@ -209,6 +235,7 @@ class LilavelRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._ingress_task: asyncio.Task[None] | None = None
         self._adapter_tasks: tuple[asyncio.Task[None], ...] = ()
+        self._user_exclusion_tasks: set[asyncio.Task[None]] = set()
         self._route_failure: BaseException | None = None
         self._failure: BaseException | None = None
         self._pending_submissions = 0
@@ -219,6 +246,9 @@ class LilavelRuntime:
         self._cognition_triggers = 0
         self._reactive_steps = 0
         self._next_observation_sequence = 0
+        bind_actor_user_submitter = getattr(self._presence, "bind_actor_user_submitter", None)
+        if callable(bind_actor_user_submitter):
+            bind_actor_user_submitter(self.submit_user)
 
     @property
     def state(self) -> RuntimeState:
@@ -416,7 +446,7 @@ class LilavelRuntime:
             ):
                 raise RuntimeFailed("cognition gate returned an invalid single-observation trigger")
             conversation_executor = self._conversation_executor
-            if conversation_executor is None:
+            if self._event_router is None:
                 raise ReactiveStepUnavailable("runtime has no explicit reactive response route")
             adapter = self._environments.get(observation.event.source.environment)
             if adapter is None:
@@ -436,13 +466,36 @@ class LilavelRuntime:
                     self._route_failure = error
                     raise
 
-            request = self._semantic_actor.create_request(
-                decision.trigger_id,
-                source_kind=SemanticSourceKind.USER,
-                priority=SemanticPriority.USER,
-                executor=execute,
-            )
-            await self._semantic_actor.submit(request)
+            actor_presence = _actor_conversation_presence(self._presence)
+            if actor_presence is not None:
+                await actor_presence.begin_actor_user()
+
+            async def execute_actor_user(
+                episode: SemanticEpisode, cancellation: SemanticCancellationToken
+            ) -> object:
+                return await execute(episode, cancellation)
+
+            try:
+                request = self._semantic_actor.create_request(
+                    decision.trigger_id,
+                    source_kind=SemanticSourceKind.USER,
+                    priority=SemanticPriority.USER,
+                    executor=execute_actor_user,
+                )
+                admission = await self._semantic_actor.submit(request)
+            except BaseException:
+                if actor_presence is not None:
+                    await actor_presence.end_actor_user()
+                raise
+            if (
+                admission.status is not SemanticAdmissionStatus.ACCEPTED
+                and actor_presence is not None
+            ):
+                await actor_presence.end_actor_user()
+            elif (
+                admission.status is SemanticAdmissionStatus.ACCEPTED and actor_presence is not None
+            ):
+                self._track_user_exclusion(admission, actor_presence)
             self._cognition_triggers += 1
             self._reactive_steps += 1
         await asyncio.sleep(0)
@@ -467,8 +520,13 @@ class LilavelRuntime:
             )
         return observation
 
-    async def submit_user(self, text: str) -> str:
-        """Route local user priority through the one runtime-owned presence lane."""
+    async def submit_user(self, text: str, *, submission_id: str | None = None) -> str:
+        """Admit one normal CLI user turn through the character-wide actor.
+
+        ``submission_id`` is an opaque runtime-owned identity hook for replay
+        fencing. If omitted, every call is a new submission, including when
+        its text is identical to a previous call.
+        """
 
         async with self._lifecycle_lock:
             if self._state is not RuntimeState.RUNNING:
@@ -476,7 +534,68 @@ class LilavelRuntime:
             presence = self._presence
         if presence is None:
             raise RuntimeNotRunning("runtime has no local presence component")
-        return await presence.submit_user(text)
+        actor_presence = _actor_conversation_presence(presence)
+        if actor_presence is None:
+            # Compatibility for external RuntimePresence implementations that
+            # do not expose a Core session. The canonical PersistentPresence
+            # composition below always takes the actor-owned branch.
+            return await presence.submit_user(text)
+        if not text.strip():
+            raise ValueError("user input must be non-empty")
+        if submission_id is None:
+            submission_id = str(uuid4())
+        if not submission_id.strip():
+            raise ValueError("submission_id must be non-empty")
+        request_id = f"cli:{submission_id.strip()}"
+        await actor_presence.begin_actor_user()
+
+        async def execute(
+            episode: SemanticEpisode, cancellation: SemanticCancellationToken
+        ) -> object:
+            del episode
+            return await actor_presence.execute_actor_user(
+                text.strip(), self._conversation_executor, cancellation
+            )
+
+        try:
+            request = self._semantic_actor.create_request(
+                request_id,
+                source_kind=SemanticSourceKind.USER,
+                priority=SemanticPriority.USER,
+                executor=execute,
+            )
+            admission = await self._semantic_actor.submit(request)
+        except BaseException:
+            await actor_presence.end_actor_user()
+            raise
+        if admission.status is not SemanticAdmissionStatus.ACCEPTED:
+            await actor_presence.end_actor_user()
+            settlement = await admission.wait()
+            return settlement.status.value
+        try:
+            settlement = await admission.wait()
+            return settlement.status.value
+        finally:
+            await asyncio.shield(self._release_user_exclusion(admission, actor_presence))
+
+    def _track_user_exclusion(
+        self, admission: SemanticAdmission, presence: _ActorConversationPresence
+    ) -> None:
+        task = asyncio.create_task(
+            self._release_user_exclusion(admission, presence),
+            name=f"lilavel-user-exclusion-{admission.sequence}",
+        )
+        self._user_exclusion_tasks.add(task)
+        task.add_done_callback(self._user_exclusion_tasks.discard)
+
+    @staticmethod
+    async def _release_user_exclusion(
+        admission: SemanticAdmission, presence: _ActorConversationPresence
+    ) -> None:
+        try:
+            await admission.wait()
+        finally:
+            await presence.end_actor_user()
 
     async def stop(self) -> None:
         shutdown_task: asyncio.Task[None] | None = None
@@ -548,6 +667,9 @@ class LilavelRuntime:
                 except BaseException as error:
                     if router_error is None:
                         router_error = error
+                if self._user_exclusion_tasks:
+                    await asyncio.gather(*self._user_exclusion_tasks, return_exceptions=True)
+                    self._user_exclusion_tasks.clear()
                 if self._event_router is not None:
                     try:
                         await self._event_router.close()

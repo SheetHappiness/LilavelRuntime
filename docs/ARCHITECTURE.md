@@ -10,15 +10,16 @@ adds the separate trusted application boundary; MIND-1E adds one-shot temporal
 intention admission and time-to-cognition dispatch; MIND-1F-B adds one
 runtime-owned, character-wide semantic admission actor; MIND-1F-C composes that
 actor with the new generic/temporal MIND path; MIND-1F-D1 moves production
-Discord reactive conversation admission under that actor. Broader autonomous
-capabilities are not implied by these slices.
+Discord reactive conversation admission under that actor; MIND-1F-D2 moves
+normal local CLI conversation admission under the same actor. Broader
+autonomous capabilities are not implied by these slices.
 
 ## Top-level product boundary
 
 The `LilavelRuntime` kernel owns the top-level process lifecycle, one
 character-wide `SemanticActor`, bounded world event admission, a recent
 in-memory observation window, a deterministic observation-to-cognition gate,
-registered environment tasks, actor-owned reactive conversation admission, the
+registered environment tasks, actor-owned CLI and reactive conversation admission, the
 optional local presence component, Core/ModelRuntime session lifecycle,
 selection of the source environment for typed presentation actions, and the
 MIND-1D proposal application coordinator. MIND-1F-C adds an optional
@@ -28,7 +29,9 @@ runner, and completed outcomes settle through the trusted application
 coordinator. MIND-1F-D1 adds the runtime-owned conversation episode adapter:
 positive Discord DM gates submit `USER` work to the same actor, while
 `CoreConversationRouter` and `ConversationCore` retain session and canonical
-conversation semantics. P5-B1 adds one
+conversation semantics. MIND-1F-D2 submits normal local CLI input as `USER`
+work to that same actor and uses the shared conversation execution seam for the
+CLI's `local-cli` Core session. P5-B1 adds one
 monotonic idle opportunity and
 transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
 and recent self-actions to the local CLI only; it adds no general scheduler,
@@ -107,9 +110,11 @@ separate inside their specialized conversation executors; the actor is not
 keyed by environment or subject. Its bounded mailbox has only two priority
 classes: `USER` and `NON_USER`, with FIFO order within each class. One
 actor-owned worker admits at most one semantic episode at a time. MIND-1F-D1
-uses the actor for production Discord reactive conversation; temporal and
-generic MIND clients use the same lane, while CLI, presence, and autonomous
-clients remain outside this phase.
+uses the actor for production Discord reactive conversation; MIND-1F-D2 uses
+the same lane for normal local CLI conversation; temporal and generic MIND
+clients also use it. Legacy Presence appraisal and autonomous clients remain
+temporary compatibility lanes and are excluded while actor-owned user work is
+active.
 
 When user-priority work arrives during active non-user work, the actor requests
 cooperative cancellation through an actor-owned token and waits for the active
@@ -131,8 +136,8 @@ stored.
 
 The actor is composed and lifecycle-owned by `LilavelRuntime` but inert by
 default. MIND-1F-C activates it for explicit generic/temporal MIND composition,
-and MIND-1F-D1 also uses it for production Discord reactive conversations. The
-MIND path is:
+MIND-1F-D1 uses it for production Discord reactive conversations, and
+MIND-1F-D2 uses it for normal local CLI conversations. The MIND path is:
 
 ```text
 generic CognitionTrigger ─┐
@@ -228,6 +233,43 @@ then closes router/Core sessions. If active non-user work cannot be contained,
 the actor poisons and rejects the Discord successor rather than starting a
 conversation under uncertainty.
 
+## MIND-1F-D2 CLI conversation convergence
+
+The normal local CLI path now enters the same character-wide actor as Discord:
+
+```text
+CLI input
+  → LilavelRuntime.submit_user()
+  → SemanticActor (USER)
+  → ConversationExecutionAdapter
+  → ConversationCore(scope_id="local-cli")
+  → ModelRuntime
+  → PromptToolkitOutputSink
+```
+
+`submit_user()` assigns an opaque runtime-owned `cli:<submission-id>` request
+identity. A new identity is generated for every ordinary call, so repeated
+text remains distinct; an explicitly replayed identity is fenced by the actor
+within its current session. CLI and Discord user requests have the same
+priority and deterministic actor FIFO ordering. The actor never receives user
+text and does not append canonical messages.
+
+The provider-neutral `ConversationExecutionAdapter` owns the Core bridge,
+transient event streaming, cancellation-before-run-bind, and joined Core/model
+settlement. The CLI's `local-cli` Core scope and each Discord
+`(environment, subject)` scope remain isolated. CLI completion is not reported
+until Core presentation and the transitional appraisal have settled, so the
+actor lane cannot be released into a parallel user decision early.
+
+P5-B1 Presence remains lifecycle-owned for idle opportunities,
+`MindAppraiser`, `AutonomousCognitionRunner`, `presence.say`, and
+`presence.stay_silent`. In a D2 runtime composition, Presence binds direct
+user submission back to `LilavelRuntime` and its temporary exclusion gate
+cancels and joins legacy appraisal/autonomous work before an actor USER
+episode, holding the exclusion until that episode settles. Standalone direct
+Presence construction retains its compatibility user lane for existing P5-B1
+callers; the normal CLI does not use that lane.
+
 ## MIND-1E temporal intention boundary
 
 The temporal path is intentionally one-shot and inert until a trusted
@@ -277,7 +319,7 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, actor-owned reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -288,10 +330,11 @@ store.
 
 The root `uv run lilavel` launcher composes one `LilavelRuntime`, one local
 presence component, one `ConversationCore`, and one `ModelRuntimeV3`. Normal
-typed input enters `ConversationCore.start_turn()` and retains canonical
-conversation semantics. Background rendering is isolated behind a bounded
-`prompt_toolkit` output bridge, so terminal mechanics do not become runtime
-semantics.
+typed input enters `LilavelRuntime.submit_user()` as an actor-owned `USER`
+episode and then reaches the `local-cli` `ConversationCore` through the shared
+`ConversationExecutionAdapter`. Background rendering is isolated behind a
+bounded `prompt_toolkit` output bridge, so terminal mechanics do not become
+runtime semantics.
 
 The presence component waits for either real local input or a runtime-monotonic
 idle deadline. Real activity resets the deadline and one-shot idle latch. One
@@ -331,7 +374,12 @@ and emits nothing. Provider continuation remains mandatory after the result
 batch, but its semantic text is discarded. User input records priority
 cancellation before successor admission, including the pre-handle race, and
 waits for the existing provider/tool joined settlement before the user turn
-uses the shared model runtime.
+uses the shared model runtime. In the D2 composition, Presence binds direct
+user submission back to `LilavelRuntime`; it retains no active user authority
+outside that actor path. Its legacy appraisal/autonomous lane is temporarily
+cancelled and joined before actor-owned user work and remains excluded until
+that work settles. Standalone Presence construction retains a compatibility
+path for existing P5-B1 callers.
 
 ## Conversational foundation
 
@@ -511,11 +559,12 @@ provider continuation remain outside this component.
   and Core fourth. A `NO_COGNITION` result is a valid completed path; it
   creates no actor request, Core turn, model call, or presentation action.
 - `SemanticActor` is the character-wide semantic admission authority for
-  Discord reactive conversation and generic/temporal MIND work: one active
-  episode, user priority over non-user work, cooperative preemption with
-  settlement-before-successor, replay fencing, and fail-closed containment.
-  Discord work is `USER`; all MIND-1F-C work is `NON_USER`. CLI, presence,
-  appraisal, and autonomous production paths remain outside it until D2/E.
+  Discord reactive conversation, normal CLI conversation, and generic/temporal
+  MIND work: one active episode, user priority over non-user work, cooperative
+  preemption with settlement-before-successor, replay fencing, and fail-closed
+  containment. Discord and CLI work are `USER`; all MIND-1F-C work is
+  `NON_USER`. Legacy Presence appraisal and autonomous production remain
+  outside the actor behind the temporary actor-user exclusion gate pending E.
 - Actor cancellation/preemption never creates a synthetic Core history entry;
   only `ConversationCore` can append canonical user or successful assistant
   messages. Cancelled, failed, stale, or partial assistant candidates remain
