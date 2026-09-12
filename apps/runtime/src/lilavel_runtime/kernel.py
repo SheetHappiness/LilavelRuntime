@@ -24,6 +24,7 @@ from .contracts import (
     ToolSpec,
     WorldEvent,
 )
+from .semantic_actor import SemanticActor, SemanticActorState
 
 
 class RuntimeState(StrEnum):
@@ -87,6 +88,7 @@ class LilavelRuntimeHealth:
     reactive_steps: int
     observation_window_size: int
     failure_code: str | None
+    semantic_actor_state: SemanticActorState
 
 
 class LilavelRuntime:
@@ -106,6 +108,7 @@ class LilavelRuntime:
         event_router: EventRouter | None = None,
         cognition_gate: CognitionGate | None = None,
         presence: RuntimePresence | None = None,
+        semantic_actor: SemanticActor | None = None,
         shutdown_timeout: float = 5.0,
     ) -> None:
         if event_queue_size <= 0:
@@ -124,6 +127,7 @@ class LilavelRuntime:
             DirectMessageCognitionGate() if cognition_gate is None else cognition_gate
         )
         self._presence = presence
+        self._semantic_actor = semantic_actor or SemanticActor(scope_id="runtime")
         self._shutdown_timeout = shutdown_timeout
         self._environments: dict[str, EnvironmentAdapter] = {}
         self._tools: dict[str, ToolSpec] = {}
@@ -164,6 +168,12 @@ class LilavelRuntime:
     @property
     def failure(self) -> BaseException | None:
         return self._failure or self._route_failure
+
+    @property
+    def semantic_actor(self) -> SemanticActor:
+        """Return the one character-wide actor owned by this runtime."""
+
+        return self._semantic_actor
 
     def register_environment(self, adapter: EnvironmentAdapter) -> None:
         self._ensure_registration_open()
@@ -333,23 +343,27 @@ class LilavelRuntime:
         return await presence.submit_user(text)
 
     async def stop(self) -> None:
+        shutdown_task: asyncio.Task[None] | None = None
         while True:
             wait_for_start = False
             async with self._lifecycle_lock:
                 if self._state is RuntimeState.NEW:
                     self._state = RuntimeState.STOPPED
                     self._admission_closed.set()
+                    stop_actor = True
+                    shutdown_task = None
+                else:
+                    stop_actor = False
+                if not stop_actor and self._state is RuntimeState.STOPPED:
                     return
-                if self._state is RuntimeState.STOPPED:
-                    return
-                if self._state is RuntimeState.FAILED:
+                if not stop_actor and self._state is RuntimeState.FAILED:
                     raise RuntimeFailed("runtime is failed") from self._failure
-                if self._state is RuntimeState.STARTING:
+                if not stop_actor and self._state is RuntimeState.STARTING:
                     wait_for_start = True
                     shutdown_task = None
-                elif self._state is RuntimeState.STOPPING:
+                elif not stop_actor and self._state is RuntimeState.STOPPING:
                     shutdown_task = self._shutdown_task
-                else:
+                elif not stop_actor:
                     self._state = RuntimeState.STOPPING
                     self._admission_closed.set()
                     supervisor = self._supervisor
@@ -360,6 +374,9 @@ class LilavelRuntime:
                         self._settle_shutdown(supervisor), name="lilavel-runtime-shutdown"
                     )
                     self._shutdown_task = shutdown_task
+            if stop_actor:
+                await self._semantic_actor.stop()
+                return
             if wait_for_start:
                 await self._started.wait()
                 continue
@@ -399,6 +416,11 @@ class LilavelRuntime:
                     except BaseException as error:
                         if router_error is None:
                             router_error = error
+                try:
+                    await self._semantic_actor.stop()
+                except BaseException as error:
+                    if router_error is None:
+                        router_error = error
                 self._stop_requested.set()
                 await supervisor
         except TimeoutError as error:
@@ -423,7 +445,10 @@ class LilavelRuntime:
     def health(self) -> LilavelRuntimeHealth:
         return LilavelRuntimeHealth(
             state=self._state,
-            healthy=self._state is RuntimeState.RUNNING,
+            healthy=(
+                self._state is RuntimeState.RUNNING
+                and self._semantic_actor.state is SemanticActorState.RUNNING
+            ),
             environments=len(self._environments),
             tools=len(self._tools),
             queue_size=self._queue.qsize(),
@@ -436,6 +461,7 @@ class LilavelRuntime:
             reactive_steps=self._reactive_steps,
             observation_window_size=len(self._observation_window),
             failure_code=type(self.failure).__name__ if self.failure is not None else None,
+            semantic_actor_state=self._semantic_actor.state,
         )
 
     async def __aenter__(self) -> LilavelRuntime:
@@ -457,6 +483,7 @@ class LilavelRuntime:
 
     async def _supervise(self) -> None:
         try:
+            await self._semantic_actor.start()
             if self._presence is not None:
                 await self._presence.start()
             async with asyncio.TaskGroup() as group:
@@ -506,6 +533,9 @@ class LilavelRuntime:
             if self._state is RuntimeState.FAILED and self._presence is not None:
                 with suppress(BaseException):
                     await self._presence.stop()
+            if self._state is RuntimeState.FAILED:
+                with suppress(BaseException):
+                    await self._semantic_actor.stop()
 
     async def _run_adapter(self, adapter: EnvironmentAdapter) -> None:
         await adapter.run(self.submit)

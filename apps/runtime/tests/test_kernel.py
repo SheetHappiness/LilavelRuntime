@@ -24,6 +24,7 @@ from lilavel_runtime import (
     RuntimeNotRunning,
     RuntimeRegistrationClosed,
     RuntimeState,
+    SemanticActorState,
     ToolCall,
     ToolResult,
     ToolResultStatus,
@@ -72,6 +73,21 @@ async def test_context_manager_owns_clean_lifecycle() -> None:
     async with runtime:
         assert runtime.state is RuntimeState.RUNNING
     assert runtime.state is RuntimeState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_runtime_owns_inert_character_wide_semantic_actor_lifecycle() -> None:
+    runtime = LilavelRuntime()
+
+    assert runtime.semantic_actor.state is SemanticActorState.NEW
+    await runtime.start()
+    assert runtime.semantic_actor.state is SemanticActorState.RUNNING
+    assert runtime.health().semantic_actor_state is SemanticActorState.RUNNING
+
+    await runtime.stop()
+
+    assert runtime.semantic_actor.state is SemanticActorState.STOPPED
+    assert runtime.health().semantic_actor_state is SemanticActorState.STOPPED
 
 
 @dataclass(slots=True)

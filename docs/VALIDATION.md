@@ -79,7 +79,9 @@ uv run --locked pyright
 uv run --locked pytest
 ```
 
-These checks cover the zero-environment lifecycle, bounded observation
+These checks cover the zero-environment lifecycle, runtime-owned inert
+`SemanticActor` composition, bounded semantic mailbox/priority/preemption/
+settlement/fencing evidence, bounded observation
 admission/window behavior, deterministic task settlement, environment/tool
 registration, provider-neutral immutable contracts, observation-only admission,
 the deterministic `NO_COGNITION`/bounded `CognitionTrigger` gate, the
