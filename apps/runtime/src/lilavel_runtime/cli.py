@@ -12,17 +12,21 @@ from lilavel_core.production_cognition import build_turn_guidance
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from .cognition_model import LocalCognitionEngine
+from .contracts import ActionProposalKind
 from .kernel import LilavelRuntime
 from .mind import MindState
 from .presence import (
     DEFAULT_IDLE_TIMEOUT_S,
-    AutonomousCognitionRunner,
+    PRESENCE_SAY,
+    PRESENCE_STAY_SILENT,
     FixedPresenceWakePolicy,
     PersistentPresenceRuntime,
     PresenceOutput,
     PresenceToolSessionFactory,
     WakeAfterIdleOpportunitiesPolicy,
 )
+from .proposal_application import ProposalApplicationCoordinator
 
 
 @dataclass(slots=True)
@@ -85,14 +89,16 @@ async def run_cli(
     loop = asyncio.get_running_loop()
     sink = PromptToolkitOutputSink(loop)
     tools = PresenceToolSessionFactory(sink)
-    model = ModelRuntimeV3(tool_session_factory=tools)
+    # ConversationCore and the actor-owned cognition engine share the physical
+    # model lifecycle. Presence tools are application-only and are never
+    # exposed to this model host.
+    model = ModelRuntimeV3()
     mind_state = MindState()
     core = ConversationCore(
         model,
         trusted_guidance=lambda: build_turn_guidance(mind_state.projection().guidance_blocks()),
         scope_id="local-cli",
     )
-    runner = AutonomousCognitionRunner(model, tools)
     wake_policy = (
         WakeAfterIdleOpportunitiesPolicy(wake_after_opportunities)
         if wake_after_opportunities is not None
@@ -101,13 +107,29 @@ async def run_cli(
     presence = PersistentPresenceRuntime(
         model,
         core,
-        runner,
         sink,
         mind_state=mind_state,
         wake_policy=wake_policy,
         idle_timeout_s=idle_seconds,
     )
-    runtime = LilavelRuntime(presence=presence)
+    engine = LocalCognitionEngine(model, presence.history_for_cognition)
+    application = ProposalApplicationCoordinator(
+        mind_state,
+        scope_id="runtime",
+        state_provenance=presence.state_provenance_for,
+        tool_registry=tools.registry,
+        tool_session_factory=tools,
+        action_tool_names={
+            ActionProposalKind.SPEAK: PRESENCE_SAY,
+            ActionProposalKind.STAY_SILENT: PRESENCE_STAY_SILENT,
+        },
+    )
+    runtime = LilavelRuntime(
+        presence=presence,
+        cognition_engine=engine,
+        mind_state=mind_state,
+        proposal_application_coordinator=application,
+    )
     renderer = asyncio.create_task(sink.render(), name="lilavel-cli-output")
     pending: set[asyncio.Task[str]] = set()
     session: PromptSession[str] = PromptSession()

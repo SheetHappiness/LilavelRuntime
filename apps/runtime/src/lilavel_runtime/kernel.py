@@ -249,6 +249,11 @@ class LilavelRuntime:
         bind_actor_user_submitter = getattr(self._presence, "bind_actor_user_submitter", None)
         if callable(bind_actor_user_submitter):
             bind_actor_user_submitter(self.submit_user)
+        bind_actor_internal_submitter = getattr(
+            self._presence, "bind_actor_internal_submitter", None
+        )
+        if callable(bind_actor_internal_submitter):
+            bind_actor_internal_submitter(self.submit_internal_cognition)
 
     @property
     def state(self) -> RuntimeState:
@@ -293,7 +298,7 @@ class LilavelRuntime:
         return self._temporal_coordinator
 
     async def submit_cognition(self, trigger: CognitionTrigger) -> SemanticAdmission:
-        """Admit generic or temporal cognition through the semantic actor."""
+        """Admit non-user cognition through the one semantic actor."""
 
         if type(trigger) is not CognitionTrigger:
             raise TypeError("trigger must be a CognitionTrigger")
@@ -303,10 +308,15 @@ class LilavelRuntime:
             executor = self._mind_executor
             if executor is None:
                 raise MindCompositionUnavailable("runtime has no configured Mind executor")
-            source_kind = (
-                SemanticSourceKind.EXTERNAL
-                if trigger.source is CognitionTriggerSource.EXTERNAL
-                else SemanticSourceKind.TEMPORAL
+            source_kind = {
+                CognitionTriggerSource.EXTERNAL: SemanticSourceKind.EXTERNAL,
+                CognitionTriggerSource.TEMPORAL: SemanticSourceKind.TEMPORAL,
+                CognitionTriggerSource.INTERNAL: SemanticSourceKind.INTERNAL,
+            }[trigger.source]
+            request_id = (
+                trigger.trigger_id
+                if trigger.source is not CognitionTriggerSource.INTERNAL
+                else f"internal:{trigger.trigger_id}"
             )
 
             async def execute(
@@ -316,7 +326,7 @@ class LilavelRuntime:
                 return await executor.execute(trigger, cancellation)
 
             request = self._semantic_actor.create_request(
-                trigger.trigger_id,
+                request_id,
                 source_kind=source_kind,  # type: ignore[arg-type]
                 priority=SemanticPriority.NON_USER,
                 executor=execute,
@@ -325,6 +335,13 @@ class LilavelRuntime:
 
     submit_mind_trigger = submit_cognition
     submit_trigger = submit_cognition
+
+    async def submit_internal_cognition(self, trigger: CognitionTrigger) -> SemanticAdmission:
+        """Runtime-owned callback for local/internal cognition producers."""
+
+        if trigger.source is not CognitionTriggerSource.INTERNAL:
+            raise ValueError("internal cognition submission requires an INTERNAL trigger")
+        return await self.submit_cognition(trigger)
 
     def register_environment(self, adapter: EnvironmentAdapter) -> None:
         self._ensure_registration_open()

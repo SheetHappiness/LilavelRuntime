@@ -183,6 +183,7 @@ class CognitionTriggerSource(StrEnum):
 
     EXTERNAL = "external"
     TEMPORAL = "temporal"
+    INTERNAL = "internal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,12 +229,19 @@ class CognitionTrigger:
                 raise ValueError("external cognition triggers cannot reference a wake intent")
             if self.source_refs:
                 raise ValueError("external cognition triggers cannot carry temporal source refs")
-        else:
+        elif self.source is CognitionTriggerSource.TEMPORAL:
             if self.observation_ids:
                 raise ValueError("temporal cognition triggers cannot reference observations")
             _require_bounded_text(self.wake_intent_id or "", "wake_intent_id", 128)
             if not self.source_refs:
                 raise ValueError("temporal cognition triggers require source refs")
+        else:
+            if self.observation_ids:
+                raise ValueError("internal cognition triggers cannot reference observations")
+            if self.wake_intent_id is not None:
+                raise ValueError("internal cognition triggers cannot reference a wake intent")
+            if not self.source_refs:
+                raise ValueError("internal cognition triggers require source refs")
 
     @property
     def trigger_id(self) -> str:
@@ -241,7 +249,7 @@ class CognitionTrigger:
 
         if self.source is CognitionTriggerSource.EXTERNAL:
             material = "\x1f".join((*self.observation_ids, self.reason)).encode("utf-8")
-        else:
+        elif self.source is CognitionTriggerSource.TEMPORAL:
             material = "\x1f".join(
                 (
                     self.source.value,
@@ -251,6 +259,10 @@ class CognitionTrigger:
                     *self.source_refs,
                 )
             ).encode("utf-8")
+        else:
+            material = "\x1f".join((self.source.value, self.reason, *self.source_refs)).encode(
+                "utf-8"
+            )
         return f"trigger:{sha256(material).hexdigest()[:32]}"
 
 

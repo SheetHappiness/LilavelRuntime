@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from .cognition_episode import CognitionEpisodeRunner
 from .contracts import (
+    ActionProposalKind,
     CognitionEpisodeStatus,
     CognitionOutcome,
     CognitionTrigger,
@@ -45,6 +46,8 @@ class MindExecutionResult:
     application_status: ProposalApplicationStatus | None = None
     cognition_status: CognitionEpisodeStatus | None = None
     reason_code: str | None = None
+    applied_action_kind: ActionProposalKind | None = None
+    applied_action_text: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.status) is not MindExecutionStatus:
@@ -59,6 +62,17 @@ class MindExecutionResult:
             and type(self.cognition_status) is not CognitionEpisodeStatus
         ):
             raise TypeError("cognition_status must be a CognitionEpisodeStatus")
+        if (
+            self.applied_action_kind is not None
+            and type(self.applied_action_kind) is not ActionProposalKind
+        ):
+            raise TypeError("applied_action_kind must be an ActionProposalKind")
+        if self.applied_action_text is not None and (
+            type(self.applied_action_text) is not str
+            or not self.applied_action_text.strip()
+            or len(self.applied_action_text.encode("utf-8")) > 4_096
+        ):
+            raise ValueError("applied_action_text must be bounded non-empty text")
         if self.reason_code is not None and (
             type(self.reason_code) is not str
             or not self.reason_code.strip()
@@ -230,15 +244,20 @@ class MindExecutionAdapter:
     def _application_result(
         result: ProposalApplicationResult, outcome: CognitionOutcome
     ) -> MindExecutionResult:
+        action_kind, action_text = MindExecutionAdapter._applied_action(result, outcome)
         if result.status is ProposalApplicationStatus.NO_PROPOSALS or outcome.is_quiet:
             return MindExecutionResult(
                 MindExecutionStatus.COMPLETED_QUIET,
                 application_status=result.status,
+                applied_action_kind=action_kind,
+                applied_action_text=action_text,
             )
         if result.status is ProposalApplicationStatus.APPLIED:
             return MindExecutionResult(
                 MindExecutionStatus.COMPLETED_WITH_APPLICATION,
                 application_status=result.status,
+                applied_action_kind=action_kind,
+                applied_action_text=action_text,
             )
         if result.status in {
             ProposalApplicationStatus.REJECTED,
@@ -255,7 +274,23 @@ class MindExecutionAdapter:
             MindExecutionStatus.APPLICATION_FAILED,
             application_status=result.status,
             reason_code=result.reason_code or "application_failed",
+            applied_action_kind=action_kind,
+            applied_action_text=action_text,
         )
+
+    @staticmethod
+    def _applied_action(
+        result: ProposalApplicationResult, outcome: CognitionOutcome
+    ) -> tuple[ActionProposalKind | None, str | None]:
+        for index, application in enumerate(result.actions.proposals):
+            if (
+                application.status is not None
+                and application.status.value == "ok"
+                and index < len(outcome.action_proposals)
+            ):
+                proposal = outcome.action_proposals[index]
+                return proposal.kind, proposal.content
+        return None, None
 
 
 async def _cancel_and_join(task: asyncio.Task[object]) -> None:

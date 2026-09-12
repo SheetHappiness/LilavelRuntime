@@ -9,7 +9,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final, Protocol, cast
+from typing import Final, Protocol, cast, overload
 from uuid import uuid4
 
 from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus, ToolSpec
@@ -35,9 +35,18 @@ from lilavel_core import (
 )
 from lilavel_core.production_cognition import build_character_guidance
 
+from .cognition_model import APPRAISAL_REASON, IDLE_REASON
+from .contracts import (
+    ActionProposalKind,
+    CognitionOutcome,
+    CognitionTrigger,
+    CognitionTriggerSource,
+)
 from .conversation_adapter import ConversationExecutionAdapter, ConversationExecutionResult
 from .mind import MAX_INTENTION_TEXT_BYTES, MindIntention, MindProjection, MindState
-from .semantic_actor import SemanticCancellationToken
+from .mind_convergence import MindExecutionResult
+from .proposal_application import MindStateProvenance
+from .semantic_actor import SemanticAdmission, SemanticCancellationToken
 from .tool_registry import ApplicationToolRegistry, ToolAuthorization, ToolBinding
 from .tool_session import DeterministicToolSession, DeterministicToolSessionFactory
 
@@ -182,7 +191,13 @@ class _ActionState:
 
 
 class PresenceToolSessionFactory:
-    """Expose only terminal presence tools, and only to autonomous run identities."""
+    """Application-owned P4 bindings for the local presence actions.
+
+    The ``autonomous:`` compatibility capability is retained only for the old
+    standalone P5-B1 fixtures.  The production MIND-1F-E composition never
+    gives this factory to ``ModelRuntime``; it is supplied only to
+    ``ProposalApplicationCoordinator`` for trusted proposal application.
+    """
 
     def __init__(self, sink: PresenceOutputSink) -> None:
         self._sink = sink
@@ -203,6 +218,13 @@ class PresenceToolSessionFactory:
             registry, exposed_tool_names=(PRESENCE_SAY, PRESENCE_STAY_SILENT)
         )
         self._empty = DeterministicToolSessionFactory((), {})
+        self._registry = registry
+
+    @property
+    def registry(self) -> ApplicationToolRegistry:
+        """Return the registry used by the trusted proposal application seam."""
+
+        return self._registry
 
     def permit_run(self, logical_run_id: str) -> None:
         """Grant one application-owned autonomous tool-exposure capability."""
@@ -218,9 +240,12 @@ class PresenceToolSessionFactory:
 
     def create(self, context: ToolGenerationContext) -> DeterministicToolSession:
         with self._lock:
-            if context.logical_run_id not in self._permitted_runs:
+            legacy = context.logical_run_id in self._permitted_runs
+            application = context.logical_run_id.startswith("application:")
+            if not legacy and not application:
                 return self._empty.create(context)
-            self._permitted_runs.remove(context.logical_run_id)
+            if legacy:
+                self._permitted_runs.remove(context.logical_run_id)
             if len(self._states) >= PRESENCE_ACTION_STATE_CAPACITY:
                 del self._states[next(iter(self._states))]
             self._states[context.generation_id] = _ActionState()
@@ -349,7 +374,7 @@ class MindAppraisalOutcome:
 
 
 def parse_mind_appraisal(raw: str) -> MindAppraisal:
-    """Parse the one bounded JSON result accepted by MIND-0."""
+    """Deprecated parser retained for standalone P5-B1 compatibility tests."""
 
     if len(raw.encode("utf-8")) > MAX_APPRAISAL_RESULT_BYTES:
         return MindAppraisal(MindAppraisalAction.NO_CHANGE)
@@ -384,7 +409,12 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
 
 
 class MindAppraiser:
-    """One cancellable, tool-free transient appraisal generation."""
+    """Deprecated standalone P5-B1 appraisal fixture.
+
+    The canonical composition routes appraisal through ``INTERNAL``
+    ``SemanticActor`` cognition and never constructs this class. It remains
+    temporarily available for existing standalone compatibility callers/tests.
+    """
 
     def __init__(self, runtime: RunAwareConversationRuntime) -> None:
         self._runtime = runtime
@@ -468,7 +498,13 @@ class MindAppraiser:
 
 
 class AutonomousCognitionRunner:
-    """Thin transient-run coordinator; ModelRuntime remains the lifecycle owner."""
+    """Deprecated standalone P5-B1 autonomous fixture.
+
+    The canonical composition routes idle cognition through the actor-owned
+    ``CognitionEpisodeRunner`` and P4 application seam. This class remains
+    temporarily available only for existing standalone compatibility
+    callers/tests.
+    """
 
     def __init__(
         self,
@@ -574,14 +610,54 @@ class _UserSubmission:
 
 
 class PersistentPresenceRuntime:
-    """One local cognition lane with monotonic idle admission and user priority."""
+    """Local CLI plumbing and deterministic idle-opportunity production.
+
+    In the canonical composition this class does not admit semantic work or
+    invoke a model.  It emits runtime-owned ``INTERNAL`` opportunities through
+    the callback bound by ``LilavelRuntime``.  The old runner arguments remain
+    only as a deprecated standalone P5-B1 compatibility path for existing
+    callers; they are not used by the canonical composition.
+    """
+
+    @overload
+    def __init__(
+        self,
+        model_runtime: RunAwareConversationRuntime,
+        core: ConversationCore,
+        autonomous_runner_or_sink: PresenceOutputSink,
+        *,
+        mind_state: MindState | None = None,
+        appraiser: None = None,
+        wake_policy: PresenceWakePolicy | None = None,
+        idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
+        input_queue_size: int = 16,
+        max_consecutive_autonomous: int = 1,
+        clock: Callable[[], float] | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        model_runtime: RunAwareConversationRuntime,
+        core: ConversationCore,
+        autonomous_runner_or_sink: AutonomousCognitionRunner,
+        sink: PresenceOutputSink,
+        *,
+        mind_state: MindState | None = None,
+        appraiser: MindAppraiser | None = None,
+        wake_policy: PresenceWakePolicy | None = None,
+        idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
+        input_queue_size: int = 16,
+        max_consecutive_autonomous: int = 1,
+        clock: Callable[[], float] | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         model_runtime: RunAwareConversationRuntime,
         core: ConversationCore,
-        autonomous_runner: AutonomousCognitionRunner,
-        sink: PresenceOutputSink,
+        autonomous_runner_or_sink: object,
+        sink: PresenceOutputSink | None = None,
         *,
         mind_state: MindState | None = None,
         appraiser: MindAppraiser | None = None,
@@ -593,12 +669,25 @@ class PersistentPresenceRuntime:
     ) -> None:
         if idle_timeout_s <= 0 or input_queue_size <= 0 or max_consecutive_autonomous <= 0:
             raise ValueError("presence bounds must be positive")
+        if sink is None:
+            autonomous_runner: AutonomousCognitionRunner | None = None
+            actual_sink = cast(PresenceOutputSink, autonomous_runner_or_sink)
+        else:
+            autonomous_runner = cast(AutonomousCognitionRunner, autonomous_runner_or_sink)
+            actual_sink = sink
+        if not callable(getattr(actual_sink, "publish", None)):
+            raise TypeError("sink must implement publish")
         self._model = model_runtime
         self._core = core
         self._runner = autonomous_runner
-        self._sink = sink
+        self._sink = actual_sink
         self._mind_state = mind_state or MindState()
-        self._appraiser = appraiser or MindAppraiser(model_runtime)
+        self._appraiser = appraiser or (
+            MindAppraiser(model_runtime) if autonomous_runner is not None else None
+        )
+        if autonomous_runner is None and appraiser is not None:
+            raise ValueError("appraiser requires the deprecated autonomous runner path")
+        self._legacy_mode = autonomous_runner is not None or appraiser is not None
         self._wake_policy = wake_policy or FixedPresenceWakePolicy()
         self._conversation_execution = ConversationExecutionAdapter()
         self._idle_timeout_s = idle_timeout_s
@@ -615,10 +704,16 @@ class PersistentPresenceRuntime:
         self._evidence_sequence = 1
         self._closing = False
         self._actor_user_submitter: Callable[[str], Awaitable[str]] | None = None
+        self._actor_internal_submitter: (
+            Callable[[CognitionTrigger], Awaitable[SemanticAdmission]] | None
+        ) = None
         self._actor_user_blocks = 0
         self._legacy_active = False
         self._legacy_settled = asyncio.Event()
         self._legacy_settled.set()
+        self._internal_history: dict[str, tuple[ContextMessage, ...]] = {}
+        self._internal_provenance: dict[str, MindStateProvenance] = {}
+        self._internal_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def history(self) -> tuple[ContextMessage, ...]:
@@ -666,6 +761,30 @@ class PersistentPresenceRuntime:
             raise RuntimeError("presence actor submitter is already bound")
         self._actor_user_submitter = submitter
 
+    def bind_actor_internal_submitter(
+        self, submitter: Callable[[CognitionTrigger], Awaitable[SemanticAdmission]]
+    ) -> None:
+        """Bind the runtime-owned admission callback for internal opportunities."""
+
+        if not callable(submitter):
+            raise TypeError("submitter must be callable")
+        if (
+            self._actor_internal_submitter is not None
+            and self._actor_internal_submitter is not submitter
+        ):
+            raise RuntimeError("presence internal submitter is already bound")
+        self._actor_internal_submitter = submitter
+
+    def history_for_cognition(self, trigger_id: str) -> tuple[ContextMessage, ...] | None:
+        """Return one bounded runtime-owned appraisal snapshot by trigger ID."""
+
+        return self._internal_history.get(trigger_id)
+
+    def state_provenance_for(self, outcome: CognitionOutcome) -> MindStateProvenance | None:
+        """Resolve state provenance only for runtime-created appraisal triggers."""
+
+        return self._internal_provenance.get(outcome.trigger_id)
+
     async def begin_actor_user(self) -> None:
         """Exclude legacy appraisal/autonomy before an actor USER episode."""
 
@@ -674,13 +793,17 @@ class PersistentPresenceRuntime:
         self._actor_user_blocks += 1
         try:
             self._idle_latched = True
+            self._consecutive_autonomous = 0
             self._last_activity = self._now()
             conversation = self._active_conversation
             if conversation is not None and not conversation.settled:
                 await _await_daemon(conversation.cancel)
-            await _await_daemon(self._runner.cancel)
-            await _await_daemon(self._appraiser.cancel)
-            await self._legacy_settled.wait()
+            if self._runner is not None:
+                await _await_daemon(self._runner.cancel)
+            if self._appraiser is not None:
+                await _await_daemon(self._appraiser.cancel)
+            if self._runner is not None or self._appraiser is not None:
+                await self._legacy_settled.wait()
         except BaseException:
             self._actor_user_blocks -= 1
             raise
@@ -690,6 +813,8 @@ class PersistentPresenceRuntime:
 
         if self._actor_user_blocks > 0:
             self._actor_user_blocks -= 1
+        if self._actor_user_blocks == 0 and not self._closing:
+            self._idle_latched = False
         self._last_activity = self._now()
 
     async def execute_actor_user(
@@ -698,12 +823,12 @@ class PersistentPresenceRuntime:
         conversation_executor: ConversationExecutionAdapter,
         cancellation: SemanticCancellationToken,
     ) -> ConversationExecutionResult:
-        """Execute one actor-admitted CLI turn and then its legacy appraisal.
+        """Execute one actor-admitted CLI turn and queue internal appraisal.
 
         This method is an execution callback, not an admission queue. The
         character-wide actor owns ordering, cancellation, replay fencing, and
         settlement; Presence supplies only its Core session and presentation
-        sink, then keeps the transitional appraisal inside the actor episode.
+        sink, then emits a bounded internal opportunity after success.
         """
 
         result = await conversation_executor.execute_core_turn(
@@ -713,7 +838,12 @@ class PersistentPresenceRuntime:
             cancellation,
         )
         if result.outcome.status == "completed":
-            await self._run_actor_appraisal(result.run, cancellation)
+            if self._actor_internal_submitter is not None and not self._legacy_mode:
+                await self._queue_internal_appraisal(result.run)
+            elif self._appraiser is not None:
+                # Deprecated standalone/D2 compatibility only.  The canonical
+                # CLI composition has no appraiser and never enters this path.
+                await self._run_actor_appraisal(result.run, cancellation)
         return result
 
     async def start(self) -> None:
@@ -746,8 +876,10 @@ class PersistentPresenceRuntime:
         conversation = self._active_conversation
         if conversation is not None and not conversation.settled:
             await _await_daemon(conversation.cancel)
-        await _await_daemon(self._runner.cancel)
-        await _await_daemon(self._appraiser.cancel)
+        if self._runner is not None:
+            await _await_daemon(self._runner.cancel)
+        if self._appraiser is not None:
+            await _await_daemon(self._appraiser.cancel)
         future = asyncio.get_running_loop().create_future()
         await self._queue.put(_UserSubmission(text.strip(), future))
         return await future
@@ -759,14 +891,19 @@ class PersistentPresenceRuntime:
         conversation = self._active_conversation
         if conversation is not None and not conversation.settled:
             await _await_daemon(conversation.cancel)
-        await _await_daemon(self._runner.cancel)
-        await _await_daemon(self._appraiser.cancel)
+        if self._runner is not None:
+            await _await_daemon(self._runner.cancel)
+        if self._appraiser is not None:
+            await _await_daemon(self._appraiser.cancel)
         task = self._task
         if not task.done():
             await self._queue.put(None)
         try:
             await task
         finally:
+            if self._internal_tasks:
+                await asyncio.gather(*self._internal_tasks, return_exceptions=True)
+                self._internal_tasks.clear()
             shutdown = getattr(self._model, "shutdown", None)
             if callable(shutdown):
                 shutdown()
@@ -823,7 +960,7 @@ class PersistentPresenceRuntime:
                 self._present_conversation_event,
                 on_run=self._set_active_conversation,
             )
-            if result.outcome.status == "completed":
+            if result.outcome.status == "completed" and self._appraiser is not None:
                 self._run_appraisal(result.run)
             return result.outcome.status
         finally:
@@ -834,9 +971,12 @@ class PersistentPresenceRuntime:
         self._active_conversation = run
 
     def _run_appraisal(self, run: ConversationRun) -> None:
+        appraiser = self._appraiser
+        if appraiser is None:
+            return
         self._record("appraisal_admitted", run_id=run.run_id)
-        self._appraiser.admit()
-        outcome = self._appraiser.run(self._core.history)
+        appraiser.admit()
+        outcome = appraiser.run(self._core.history)
         self._record(
             "appraisal_settled",
             run_id=run.run_id,
@@ -861,6 +1001,10 @@ class PersistentPresenceRuntime:
                 )
 
     async def _idle_opportunity(self) -> None:
+        if self._actor_internal_submitter is not None and not self._legacy_mode:
+            await self._idle_internal_opportunity()
+            return
+
         self._legacy_active = True
         self._legacy_settled.clear()
         try:
@@ -885,16 +1029,17 @@ class PersistentPresenceRuntime:
             ):
                 return
             intention = self._mind_state.active_intention()
-            if intention is None:
+            if intention is None or self._runner is None:
                 return
+            runner = self._runner
             self._consecutive_autonomous += 1
             self._record(
                 "cognition_admitted",
                 opportunity_id=opportunity.opportunity_id,
                 intention_id=intention.intention_id,
             )
-            self._runner.admit()
-            outcome = await _await_daemon(lambda: self._runner.run(intention))
+            runner.admit()
+            outcome = await _await_daemon(lambda: runner.run(intention))
             if (
                 outcome.action is PresenceAction.SAY
                 and outcome.action_succeeded
@@ -922,6 +1067,166 @@ class PersistentPresenceRuntime:
             self._legacy_active = False
             self._legacy_settled.set()
 
+    async def _queue_internal_appraisal(self, run: ConversationRun) -> None:
+        submitter = self._actor_internal_submitter
+        if submitter is None:
+            return
+        trigger = CognitionTrigger(
+            (),
+            APPRAISAL_REASON,
+            source=CognitionTriggerSource.INTERNAL,
+            source_refs=(f"conversation:{run.run_id}",),
+        )
+        self._remember_internal(
+            trigger,
+            history=tuple(self._core.history),
+            provenance=MindStateProvenance(run.user_message_id, run.assistant_message_id),
+        )
+        try:
+            admission = await submitter(trigger)
+        except BaseException:
+            self._record("appraisal_rejected", run_id=run.run_id, result="admission_failed")
+            return
+        self._record("appraisal_queued", run_id=run.run_id, result=admission.status.value)
+        self._track_internal(admission, run_id=run.run_id)
+
+    async def _idle_internal_opportunity(self) -> None:
+        submitter = self._actor_internal_submitter
+        assert submitter is not None
+        self._idle_latched = True
+        self._opportunity_sequence += 1
+        opportunity = IdleOpportunity(
+            str(uuid4()),
+            self._opportunity_sequence,
+            max(0.0, self._now() - self._last_activity),
+        )
+        self._record("idle_opportunity", opportunity_id=opportunity.opportunity_id)
+        decision = await self._wake_policy.decide(opportunity)
+        self._record(
+            "wake_decision",
+            opportunity_id=opportunity.opportunity_id,
+            result="wake" if decision.wake else "no_wake",
+        )
+        if (
+            self._actor_user_blocks > 0
+            or not decision.wake
+            or self._consecutive_autonomous >= self._max_consecutive
+        ):
+            return
+        intention = self._mind_state.active_intention()
+        if intention is None:
+            return
+        self._consecutive_autonomous += 1
+        trigger = CognitionTrigger(
+            (),
+            IDLE_REASON,
+            source=CognitionTriggerSource.INTERNAL,
+            source_refs=(f"idle:{opportunity.opportunity_id}", intention.intention_id),
+        )
+        try:
+            admission = await submitter(trigger)
+        except BaseException:
+            self._record(
+                "cognition_rejected",
+                opportunity_id=opportunity.opportunity_id,
+                result="admission_failed",
+                intention_id=intention.intention_id,
+            )
+            return
+        self._record(
+            "cognition_admitted",
+            opportunity_id=opportunity.opportunity_id,
+            run_id=admission.request_id,
+            result=admission.status.value,
+            intention_id=intention.intention_id,
+        )
+        self._track_internal(
+            admission,
+            opportunity_id=opportunity.opportunity_id,
+            intention_id=intention.intention_id,
+        )
+
+    def _remember_internal(
+        self,
+        trigger: CognitionTrigger,
+        *,
+        history: tuple[ContextMessage, ...] | None = None,
+        provenance: MindStateProvenance | None = None,
+    ) -> None:
+        if len(self._internal_history) >= PRESENCE_EVIDENCE_CAPACITY:
+            oldest = next(iter(self._internal_history), None)
+            if oldest is not None:
+                self._internal_history.pop(oldest, None)
+                self._internal_provenance.pop(oldest, None)
+        if history is not None:
+            self._internal_history[trigger.trigger_id] = history
+        if provenance is not None:
+            self._internal_provenance[trigger.trigger_id] = provenance
+
+    def _track_internal(
+        self,
+        admission: SemanticAdmission,
+        *,
+        run_id: str | None = None,
+        opportunity_id: str | None = None,
+        intention_id: str | None = None,
+    ) -> None:
+        task = asyncio.create_task(
+            self._settle_internal(
+                admission,
+                run_id=run_id,
+                opportunity_id=opportunity_id,
+                intention_id=intention_id,
+            ),
+            name="lilavel-presence-internal-settlement",
+        )
+        self._internal_tasks.add(task)
+        task.add_done_callback(self._finish_internal_task)
+
+    async def _settle_internal(
+        self,
+        admission: SemanticAdmission,
+        *,
+        run_id: str | None,
+        opportunity_id: str | None,
+        intention_id: str | None,
+    ) -> None:
+        settlement = await admission.wait()
+        result = settlement.result
+        result_status = result.status.value if isinstance(result, MindExecutionResult) else None
+        self._record(
+            "cognition_settled" if opportunity_id is not None else "appraisal_settled",
+            opportunity_id=opportunity_id,
+            run_id=run_id or settlement.request_id,
+            result=result_status or settlement.status.value,
+            intention_id=intention_id,
+        )
+        if opportunity_id is None or intention_id is None:
+            if result_status == "completed_with_application":
+                self._record("intention_created", run_id=run_id)
+            return
+        if (
+            result_status == "completed_with_application"
+            and isinstance(result, MindExecutionResult)
+            and result.applied_action_kind is not None
+            and result.applied_action_kind is ActionProposalKind.SPEAK
+            and isinstance(result.applied_action_text, str)
+        ):
+            action = self._mind_state.mark_expressed(intention_id, result.applied_action_text)
+            if action is not None:
+                self._record(
+                    "self_action_recorded",
+                    opportunity_id=opportunity_id,
+                    run_id=run_id,
+                    intention_id=intention_id,
+                )
+        self._last_activity = self._now()
+
+    def _finish_internal_task(self, task: asyncio.Task[None]) -> None:
+        self._internal_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+
     async def _run_actor_appraisal(
         self, run: ConversationRun, cancellation: SemanticCancellationToken
     ) -> None:
@@ -939,7 +1244,9 @@ class PersistentPresenceRuntime:
             if appraisal_task in done:
                 appraisal_task.result()
                 return
-            await _await_daemon(self._appraiser.cancel)
+            appraiser = self._appraiser
+            if appraiser is not None:
+                await _await_daemon(appraiser.cancel)
             await appraisal_task
         finally:
             cancellation_task.cancel()

@@ -3,6 +3,7 @@
 from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus, ToolSpec
 
 from .cognition_episode import CognitionEpisodeRunner
+from .cognition_model import LocalCognitionEngine
 from .contracts import (
     MAX_ACTION_PROPOSAL_CONTENT_BYTES,
     MAX_COGNITION_PROPOSALS,
@@ -255,6 +256,7 @@ __all__ = [
     "IdleOpportunity",
     "JsonValue",
     "LilavelRuntime",
+    "LocalCognitionEngine",
     "LilavelRuntimeError",
     "LilavelRuntimeHealth",
     "MindCompositionUnavailable",

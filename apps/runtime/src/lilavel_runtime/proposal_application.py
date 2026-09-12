@@ -44,7 +44,7 @@ from .tool_registry import ApplicationToolRegistry, validate_tool_arguments
 MAX_APPLICATION_FENCES = 256
 _ASYNC_APPLY_POLL_INTERVAL_S = 0.001
 
-type StateProvenanceResolver = Callable[[CognitionOutcome], "MindStateProvenance"]
+type StateProvenanceResolver = Callable[[CognitionOutcome], "MindStateProvenance | None"]
 
 
 class ProposalApplicationStatus(StrEnum):

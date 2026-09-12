@@ -58,6 +58,9 @@ class SemanticSourceKind(StrEnum):
     REACTIVE = "reactive"
     EXTERNAL = "external"
     TEMPORAL = "temporal"
+    INTERNAL = "internal"
+    # Retained for old actor-kernel fixtures; production composition uses
+    # INTERNAL for all runtime-owned non-user cognition.
     AUTONOMOUS = "autonomous"
 
 

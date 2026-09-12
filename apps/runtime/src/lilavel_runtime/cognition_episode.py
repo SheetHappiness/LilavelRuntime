@@ -103,7 +103,13 @@ class CognitionEpisodeRunner:
             except asyncio.CancelledError:
                 self._last_status = CognitionEpisodeStatus.CANCELLED
                 raise
-            except Exception:
+            except Exception as error:
+                # A provider/model bridge may know that cancellation did not
+                # contain the physical generation. Preserve that proof for the
+                # SemanticActor so it poisons instead of admitting a successor
+                # under uncertain semantic ownership.
+                if getattr(error, "semantic_uncontained", False) is True:
+                    raise
                 self._last_status = CognitionEpisodeStatus.FAILED
                 return None
             else:
