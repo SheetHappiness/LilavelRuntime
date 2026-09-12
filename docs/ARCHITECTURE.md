@@ -3,14 +3,15 @@
 This document records the current ownership boundaries of the canonical
 `LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
 the proven conversational foundation, a replaceable Discord environment
-adapter, and the bounded P5-B1/MIND-0 local presence slice. Broader autonomous
-capabilities are not implied by this slice.
+adapter, the bounded P5-B1/MIND-0 local presence slice, and the MIND-1A
+observation-admission boundary. Broader autonomous capabilities are not
+implied by these slices.
 
 ## Top-level product boundary
 
 The `LilavelRuntime` kernel owns the top-level process lifecycle, bounded world
-event ingress, registered environment tasks, wake classification,
-conversation routing, the optional local presence component,
+event admission, a recent in-memory observation window, registered environment
+tasks, explicit reactive conversation routing, the optional local presence component,
 Core/ModelRuntime session lifecycle, and selection of the source environment
 for typed presentation actions. P5-B1 adds one monotonic idle opportunity and
 transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
@@ -26,9 +27,12 @@ world observations
         ▼
 Discord adapter ──► WorldEvent ──► LilavelRuntime
                                       │
-                                      ├── deterministic DM wake
-                                      ├── conversation route/session
-                                      ▼
+                                      ├── admission ──► ObservationWindow
+                                      │                  (Observation)
+                                      │
+                                      └── explicit reactive step
+                                                   │
+                                                   ▼
                                ConversationCore
                          │
                          ▼
@@ -48,7 +52,7 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded event ingress, environment task ownership, explicit-DM wake/routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, and the explicit application-owned tool registration/exposure/authorization/executor seam | Canon, canonical history semantics, Discord transport identity, wake/attention policy in MIND-1A, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -209,20 +213,24 @@ model sidecar package, or a provider. Its normal lifecycle is
 cannot be restarted. It owns registered adapter coroutines through an
 `asyncio.TaskGroup`. An unexpected owned-task failure fails the kernel closed.
 
-Observation ingress uses a bounded `asyncio.Queue`. `submit()` applies
-backpressure while the queue is full; it never silently drops or accumulates
-unbounded events. Shutdown closes admission, cancels environment tasks, drains
-accepted observations through the wake-policy seam, and settles the task group
-within a configured deadline. The zero-environment path starts the same event
-consumer, remains healthy without conversations or model activity, and follows
-the same clean shutdown path.
+Observation admission uses a bounded `asyncio.Queue` plus a bounded in-memory
+`ObservationWindow`. `admit_observation()` (and the adapter-facing `submit()`
+alias) applies backpressure while pending ingress is full, adopts an immutable
+`Observation`, and returns an `ObservationReceipt`. It never invokes a wake
+policy, router, Core, model, tool, or scheduler. The window retains only recent
+admissions and evicts its oldest transient entry at capacity. Shutdown closes
+admission, cancels environment tasks, drains accepted observations, and settles
+the task group within a configured deadline. The zero-environment path starts
+the same event consumer, remains healthy without conversations or model
+activity, and follows the same clean shutdown path.
 
 `WorldEvent` payloads are deep-frozen JSON-compatible values and are untrusted
-by default. Observation does not promote an event into memory or canonical
-conversation history. The deterministic direct-message policy routes only the
-typed `direct_message` kind. The Core router converts semantic run events into
-trusted runtime-generated presentation `ToolCall`s and checks `ToolResult`s;
-this grants no authority to model-selected tools.
+by default. `Observation` preserves that trust and provenance; admission does
+not promote an event into memory or canonical conversation history. The
+explicit `reactive_step()` resolves an admitted receipt and is the only MIND-1A
+path that invokes the Core router. The Core router converts semantic run events
+into trusted runtime-generated presentation `ToolCall`s and checks
+`ToolResult`s; this grants no authority to model-selected tools.
 
 ## Environment adapter boundary
 
@@ -234,10 +242,12 @@ package, while the directory name expresses its environment-adapter role.
 The adapter admits only human-authored one-to-one DM `MESSAGE_CREATE` events.
 It deduplicates the Discord message, retains channel/message objects locally,
 maps the channel to an opaque process-local subject, and submits a `WorldEvent`
-containing only that opaque subject and user text. Runtime routing owns the
-Core conversation and returns typed open/bind/delta/terminal presentation
-actions. Discord channel/message/author IDs never enter Core history or a
-model request.
+containing only that opaque subject and user text. After the runtime returns an
+`ObservationReceipt`, the adapter explicitly requests the compatibility
+reactive step; admission alone never starts ConversationCore. Runtime routing
+owns the Core conversation and returns typed open/bind/delta/terminal
+presentation actions. Discord channel/message/author IDs never enter Core
+history or a model request.
 
 The adapter's bounded message deduplication and session map are edge-local
 delivery concerns, not durable agent identity or memory. Adapter restarts do
@@ -249,6 +259,12 @@ provider continuation remain outside this component.
 
 ## Interaction invariants
 
+- Admitting a `WorldEvent` creates a bounded noncanonical `Observation`; it
+  does not imply a response, cognition, or action. `Observation` and
+  `ConversationMessage` remain distinct types and lifecycles.
+- The legacy DM response path is explicit and ordered: admission receipt first,
+  reactive step second, Core conversation third. MIND-1B will add the separate
+  observation-to-cognition decision boundary; it is not present here.
 - User acceptance is immediate and canonical; assistant commit occurs only
   after successful completion and persistence.
 - Streaming consumers receive bounded transient output and exactly one

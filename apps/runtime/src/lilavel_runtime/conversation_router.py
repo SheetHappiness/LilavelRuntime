@@ -23,7 +23,7 @@ from lilavel_core import (
 )
 from lilavel_core.production_cognition import create_conversation
 
-from .contracts import ActionExecutor, ToolCall, ToolResult, WorldEvent
+from .contracts import ActionExecutor, Observation, ToolCall, ToolResult
 
 PRESENTATION_OPEN = "conversation.presentation.open"
 PRESENTATION_BIND = "conversation.presentation.bind"
@@ -155,9 +155,10 @@ class CoreConversationRouter:
         session = self._sessions.get((environment, subject))
         return None if session is None else session.core.history
 
-    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None:
+    async def route(self, observation: Observation, execute: ActionExecutor) -> None:
         if self._closing:
             return
+        event = observation.event
         subject = event.source.subject
         text = event.payload.get("text")
         if subject is None or not isinstance(text, str) or not text:

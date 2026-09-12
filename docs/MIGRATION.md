@@ -85,8 +85,9 @@ LilavelRuntime/
 ```
 
 The post-migration Phase 2 kernel and Phase 3 Discord environment route now
-live in `apps/runtime`. Explicit DMs cross `WorldEvent`, deterministic wake,
-Core routing, and typed presentation-action boundaries. No speculative
+live in `apps/runtime`. Explicit DMs cross `WorldEvent`, runtime observation
+admission, an explicit reactive response step, Core routing, and typed
+presentation-action boundaries. Wake/attention policy remains deferred. No speculative
 scheduler, ambient wake system, attention loop, model tool runtime, world
 model, or cross-environment state package has been introduced.
 

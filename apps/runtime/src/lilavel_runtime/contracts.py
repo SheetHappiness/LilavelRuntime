@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -21,6 +22,10 @@ __all__ = [
     "EventTrust",
     "JsonValue",
     "NeverWakePolicy",
+    "Observation",
+    "ObservationReceipt",
+    "ObservationReceiptStatus",
+    "ObservationWindow",
     "RuntimePresence",
     "ToolCall",
     "ToolResult",
@@ -40,7 +45,7 @@ class EventTrust(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class EventSource:
-    """Provider-neutral origin of an observation."""
+    """Provider-neutral origin of an external world event."""
 
     environment: str
     subject: str | None = None
@@ -53,7 +58,7 @@ class EventSource:
 
 @dataclass(frozen=True, slots=True, init=False)
 class WorldEvent:
-    """An immutable observation envelope; ingestion does not imply memory."""
+    """An immutable external event envelope; admission does not imply memory."""
 
     event_id: str
     source: EventSource
@@ -78,7 +83,88 @@ class WorldEvent:
         object.__setattr__(self, "trust", trust)
 
 
-type EventSubmitter = Callable[[WorldEvent], Awaitable[None]]
+class ObservationReceiptStatus(StrEnum):
+    """The bounded runtime admission outcome."""
+
+    ADMITTED = "admitted"
+
+
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """A runtime-admitted, bounded view of one provider-neutral world event."""
+
+    observation_id: str
+    sequence: int
+    event: WorldEvent
+
+    def __post_init__(self) -> None:
+        _require_text(self.observation_id, "observation_id")
+        if isinstance(self.sequence, bool) or self.sequence <= 0:
+            raise ValueError("sequence must be a positive integer")
+        if type(self.event) is not WorldEvent:
+            raise TypeError("event must be a WorldEvent")
+
+    @property
+    def world_event(self) -> WorldEvent:
+        """Name the wrapped external event explicitly at the semantic boundary."""
+
+        return self.event
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationReceipt:
+    """Proof that the runtime accepted one event into its observation window."""
+
+    observation_id: str
+    event_id: str
+    sequence: int
+    status: ObservationReceiptStatus = ObservationReceiptStatus.ADMITTED
+
+    def __post_init__(self) -> None:
+        _require_text(self.observation_id, "observation_id")
+        _require_text(self.event_id, "event_id")
+        if isinstance(self.sequence, bool) or self.sequence <= 0:
+            raise ValueError("sequence must be a positive integer")
+
+
+class ObservationWindow:
+    """A finite, in-memory window of recently admitted observations.
+
+    The oldest observation is evicted when capacity is exceeded. This is a
+    transient runtime working set, not canonical history, memory, or durable
+    persistence.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        if isinstance(capacity, bool) or capacity <= 0:
+            raise ValueError("observation window capacity must be positive")
+        self._capacity = capacity
+        self._observations: OrderedDict[str, Observation] = OrderedDict()
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def admit(self, observation: Observation) -> None:
+        if type(observation) is not Observation:
+            raise TypeError("observation must be an Observation")
+        if observation.observation_id in self._observations:
+            raise ValueError(f"duplicate observation_id: {observation.observation_id}")
+        self._observations[observation.observation_id] = observation
+        if len(self._observations) > self._capacity:
+            self._observations.popitem(last=False)
+
+    def get(self, observation_id: str) -> Observation | None:
+        return self._observations.get(observation_id)
+
+    def snapshot(self) -> tuple[Observation, ...]:
+        return tuple(self._observations.values())
+
+    def __len__(self) -> int:
+        return len(self._observations)
+
+
+type EventSubmitter = Callable[[WorldEvent], Awaitable[ObservationReceipt]]
 type ActionExecutor = Callable[[ToolCall], Awaitable[ToolResult]]
 
 
@@ -99,7 +185,7 @@ class EnvironmentAdapter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class WakeDecision:
-    """A wake-policy outcome. Phase 2 records it but performs no model work."""
+    """A deferred wake-policy outcome; MIND-1A does not produce one."""
 
     wake: bool
     reason: str | None = None
@@ -110,13 +196,15 @@ class WakeDecision:
 
 
 class WakePolicy(Protocol):
-    async def decide(self, event: WorldEvent) -> WakeDecision: ...
+    """Deferred observation-to-cognition policy, not used during admission."""
+
+    async def decide(self, observation: Observation) -> WakeDecision: ...
 
 
 class EventRouter(Protocol):
-    """Route a positively classified event without owning its destination adapter."""
+    """Run an explicit response step for an admitted observation."""
 
-    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None: ...
+    async def route(self, observation: Observation, execute: ActionExecutor) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -136,16 +224,16 @@ class RuntimePresence(Protocol):
 class NeverWakePolicy:
     """Safe default for a kernel with no autonomous behavior."""
 
-    async def decide(self, event: WorldEvent) -> WakeDecision:
-        del event
+    async def decide(self, observation: Observation) -> WakeDecision:
+        del observation
         return WakeDecision(wake=False)
 
 
 class DirectMessageWakePolicy:
-    """Deterministically wake only for an explicit one-to-one message."""
+    """Legacy classifier retained as a future-policy seam, not runtime wiring."""
 
-    async def decide(self, event: WorldEvent) -> WakeDecision:
-        if event.kind == "direct_message":
+    async def decide(self, observation: Observation) -> WakeDecision:
+        if observation.event.kind == "direct_message":
             return WakeDecision(wake=True, reason="explicit_direct_message")
         return WakeDecision(wake=False, reason="not_direct_message")
 

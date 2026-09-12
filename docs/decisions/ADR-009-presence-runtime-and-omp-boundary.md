@@ -23,7 +23,8 @@ does not keep a provider inference alive. A `WakePolicy` may return `NO_WAKE` or
 `WAKE`; `WAKE` is only permission to admit one bounded `CognitionRun` after
 runtime, user-priority, cooldown, and lifecycle checks.
 
-`WorldEvent` remains an immutable untrusted observation and is not automatically
+`WorldEvent` remains an immutable untrusted external event. An admitted
+`Observation` is bounded runtime working state and is not automatically
 canonical conversation history or long-term memory. Runtime-owned dispositions
 are:
 

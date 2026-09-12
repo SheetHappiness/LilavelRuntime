@@ -4,37 +4,37 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
 from lilavel_runtime import (
     ActionExecutor,
-    DirectMessageWakePolicy,
+    CoreConversationRouter,
     DuplicateEnvironment,
     DuplicateTool,
     EventSource,
     EventSubmitter,
     LilavelRuntime,
     LilavelRuntimeError,
+    Observation,
     RuntimeFailed,
     RuntimeNotRunning,
     RuntimeRegistrationClosed,
-    RuntimeShutdownTimeout,
     RuntimeState,
     ToolCall,
     ToolResult,
     ToolResultStatus,
     ToolSpec,
-    WakeDecision,
     WorldEvent,
 )
 
 
-def _world_events() -> list[WorldEvent]:
+def _tool_calls() -> list[ToolCall]:
     return []
 
 
-def _tool_calls() -> list[ToolCall]:
+def _observations() -> list[Observation]:
     return []
 
 
@@ -130,98 +130,52 @@ async def test_unstarted_stop_is_clean_and_runtime_cannot_be_reused() -> None:
         await runtime.start()
 
 
-@dataclass(slots=True)
-class _BlockingPolicy:
-    entered: asyncio.Event = field(default_factory=asyncio.Event)
-    release: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def decide(self, event: WorldEvent) -> WakeDecision:
-        del event
-        self.entered.set()
-        await self.release.wait()
-        return WakeDecision(wake=False)
-
-
 @pytest.mark.asyncio
-async def test_bounded_ingress_applies_async_backpressure() -> None:
-    policy = _BlockingPolicy()
-    runtime = LilavelRuntime(event_queue_size=1, wake_policy=policy)
+async def test_observation_window_is_bounded_and_keeps_recent_admissions() -> None:
+    runtime = LilavelRuntime(event_queue_size=1, observation_window_size=2)
     await runtime.start()
 
-    await runtime.submit(_event(1))
-    await policy.entered.wait()
-    await runtime.submit(_event(2))
-    blocked = asyncio.create_task(runtime.submit(_event(3)))
-    await asyncio.sleep(0)
-
-    assert runtime.health().queue_size == 1
-    assert blocked.done() is False
-
-    policy.release.set()
-    await asyncio.wait_for(blocked, timeout=1)
+    receipts = [await runtime.admit_observation(_event(number)) for number in range(1, 4)]
     await runtime.stop()
 
+    assert [item.event.event_id for item in runtime.recent_observations()] == [
+        "event-2",
+        "event-3",
+    ]
+    assert [receipt.status.value for receipt in receipts] == ["admitted", "admitted", "admitted"]
     assert runtime.health().accepted_events == 3
     assert runtime.health().processed_events == 3
+    assert runtime.health().observation_window_size == 2
 
 
 @pytest.mark.asyncio
-async def test_shutdown_rejects_a_submit_blocked_by_backpressure() -> None:
-    policy = _BlockingPolicy()
-    runtime = LilavelRuntime(event_queue_size=1, wake_policy=policy)
+async def test_admission_does_not_invoke_reactive_step_or_wake_side_effects() -> None:
+    model_calls = 0
+
+    def runtime_factory() -> Any:
+        nonlocal model_calls
+        model_calls += 1
+        raise AssertionError("observation admission must not create a model runtime")
+
+    router = CoreConversationRouter(runtime_factory=runtime_factory)
+    adapter = _RecordingEnvironment()
+    runtime = LilavelRuntime(event_router=router)
+    runtime.register_environment(adapter)
+
     await runtime.start()
-    await runtime.submit(_event(1))
-    await policy.entered.wait()
-    await runtime.submit(_event(2))
-    blocked = asyncio.create_task(runtime.submit(_event(3)))
+    receipt = await runtime.admit_observation(_event(1))
     await asyncio.sleep(0)
 
-    stopping = asyncio.create_task(runtime.stop())
-    with pytest.raises(RuntimeNotRunning, match="admission closed"):
-        await blocked
-    policy.release.set()
-    await stopping
-
-    assert runtime.state is RuntimeState.STOPPED
-    assert runtime.health().accepted_events == 2
-    assert runtime.health().processed_events == 2
-
-
-@pytest.mark.asyncio
-async def test_unsettled_ingress_fails_shutdown_closed_at_deadline() -> None:
-    policy = _BlockingPolicy()
-    runtime = LilavelRuntime(wake_policy=policy, shutdown_timeout=0.01)
-    await runtime.start()
-    await runtime.submit(_event(1))
-    await policy.entered.wait()
-
-    with pytest.raises(RuntimeShutdownTimeout):
-        await runtime.stop()
-    await asyncio.sleep(0)
-
-    assert runtime.state is RuntimeState.FAILED
-    assert runtime.health().healthy is False
-    with pytest.raises(LilavelRuntimeError):
-        await runtime.start()
-
-
-@dataclass(slots=True)
-class _WakeAllPolicy:
-    async def decide(self, event: WorldEvent) -> WakeDecision:
-        del event
-        return WakeDecision(wake=True, reason="fixture")
-
-
-@pytest.mark.asyncio
-async def test_wake_policy_is_observed_without_starting_other_subsystems() -> None:
-    runtime = LilavelRuntime(wake_policy=_WakeAllPolicy())
-    await runtime.start()
-    await runtime.submit(_event(1))
+    assert runtime.recent_observations()[0].event.event_id == "event-1"
+    assert receipt.event_id == "event-1"
+    assert router.session_count == 0
+    assert router.history("fixture", "unused") is None
+    assert model_calls == 0
+    assert adapter.actions == []
+    assert runtime.active_route_count == 0
+    assert runtime.health().reactive_steps == 0
+    assert runtime.health().wake_decisions == 0
     await runtime.stop()
-
-    health = runtime.health()
-    assert health.processed_events == 1
-    assert health.wake_decisions == 1
 
 
 @dataclass(slots=True)
@@ -322,16 +276,16 @@ async def test_ingress_rejects_events_outside_running_state() -> None:
 
 @dataclass(slots=True)
 class _RecordingRouter:
-    events: list[WorldEvent] = field(default_factory=_world_events)
+    events: list[Observation] = field(default_factory=_observations)
     closed: bool = False
 
-    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None:
-        self.events.append(event)
+    async def route(self, observation: Observation, execute: ActionExecutor) -> None:
+        self.events.append(observation)
         result = await execute(
             ToolCall(
                 "action-1",
                 "conversation.presentation.complete",
-                {"event_id": event.event_id, "text": "reply"},
+                {"event_id": observation.event.event_id, "text": "reply"},
             )
         )
         assert result.status is ToolResultStatus.OK
@@ -369,21 +323,31 @@ class _RecordingEnvironment:
 
 
 @pytest.mark.asyncio
-async def test_positive_wake_routes_once_to_source_environment_action_boundary() -> None:
+async def test_reactive_step_routes_only_after_explicit_admission_receipt() -> None:
     router = _RecordingRouter()
     adapter = _RecordingEnvironment()
-    runtime = LilavelRuntime(
-        wake_policy=DirectMessageWakePolicy(),
-        event_router=router,
-    )
+    runtime = LilavelRuntime(event_router=router)
     runtime.register_environment(adapter)
 
     await runtime.start()
-    while not adapter.actions:
+    receipt = await runtime.admit_observation(
+        WorldEvent(
+            "event-1",
+            EventSource(adapter.environment_id, "opaque-subject"),
+            "direct_message",
+            {"text": "hello"},
+        )
+    )
+    await asyncio.sleep(0)
+    assert router.events == []
+    assert adapter.actions == []
+
+    await runtime.reactive_step(receipt)
+    while runtime.active_route_count:
         await asyncio.sleep(0)
     await runtime.stop()
 
-    assert [event.event_id for event in router.events] == ["event-1"]
+    assert [observation.event.event_id for observation in router.events] == ["event-1"]
     assert [call.tool_name for call in adapter.actions] == ["conversation.presentation.complete"]
     assert adapter.actions[0].model_trust == "untrusted"
     assert adapter.stopped.is_set()
@@ -392,8 +356,8 @@ async def test_positive_wake_routes_once_to_source_environment_action_boundary()
 
 @dataclass(slots=True)
 class _CloseFailingRouter:
-    async def route(self, event: WorldEvent, execute: ActionExecutor) -> None:
-        del event, execute
+    async def route(self, observation: Observation, execute: ActionExecutor) -> None:
+        del observation, execute
 
     async def close(self) -> None:
         raise ValueError("fixture router close failure")

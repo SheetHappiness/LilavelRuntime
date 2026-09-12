@@ -44,11 +44,12 @@ resume event actually occurred, but does not manufacture a disconnect.
 ## Stage B: Runtime-backed DM environment
 
 Normal DM sessions follow
-`Discord → WorldEvent → LilavelRuntime → ConversationCore → ModelRuntime →
-typed presentation action → Discord`. Runtime composition uses Core-owned
-`production_cognition.create_conversation`; injected custom `core_factory`
-values remain responsible for their own guidance. This is explicit interaction
-routing, not autonomous behavior.
+`Discord → WorldEvent → Observation admission → explicit reactive step →
+ConversationCore → ModelRuntime → typed presentation action → Discord`.
+Runtime composition uses Core-owned `production_cognition.create_conversation`;
+injected custom `core_factory` values remain responsible for their own
+guidance. Admission is observation-only; the reactive step preserves the
+legacy explicit interaction route and is not autonomous behavior.
 
 ```powershell
 uv run --locked python scripts/run_edge.py
@@ -57,9 +58,10 @@ uv run --locked python scripts/run_edge.py
 Each direct-message channel remains adapter metadata and maps to a private,
 opaque runtime subject. Only the opaque subject and message text enter the
 `WorldEvent`; Discord channel, message, and author IDs stay adapter-local and
-never enter Core history or a `ModelRequest`. Runtime maps that subject to its
-own `ConversationCore`/`ModelRuntime` session. No provider continuation or new
-provider state is added.
+never enter Core history or a `ModelRequest`. Runtime returns a bounded
+admission receipt before the adapter requests the reactive response step, then
+maps that subject to its own `ConversationCore`/`ModelRuntime` session. No
+provider continuation or new provider state is added.
 
 Only `MESSAGE_CREATE` is handled. Bot/self-authored messages, guild messages,
 group DMs, edits, deletes, and imported Discord history are ignored. A bounded

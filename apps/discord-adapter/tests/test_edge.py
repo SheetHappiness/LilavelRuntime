@@ -365,6 +365,7 @@ def test_duplicate_message_id_creates_exactly_one_core_turn() -> None:
 
         await client.handlers["on_message"](message)
         await client.handlers["on_message"](message)
+        assert edge.observation_count == 1
         await wait_until(lambda: len(runtime.generations) == 1)
         finish(runtime.generations[0], "reply")
         await edge.wait_idle()

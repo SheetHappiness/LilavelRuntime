@@ -35,10 +35,12 @@ generation and provider/process transport boundaries.
 ## Current implementation state
 
 `apps/runtime` implements the top-level process owner and now realizes the
-explicit Discord DM route: bounded `WorldEvent` ingress, deterministic wake,
+explicit Discord DM route: bounded `WorldEvent` admission into a recent
+in-memory `ObservationWindow`, an explicit reactive response step,
 Core/ModelRuntime conversation sessions, and trusted runtime-generated
-presentation actions back to the source adapter. It remains healthy with zero
-environments and does not implement a scheduler, autonomous model wake loop,
+presentation actions back to the source adapter. Admission alone has no
+response or cognition side effect. It remains healthy with zero environments
+and does not implement a scheduler, autonomous model wake loop,
 attention/decision system, model-selected tools, world model, memory, or
 durable cross-environment agent state.
 

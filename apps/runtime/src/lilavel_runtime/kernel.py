@@ -6,14 +6,17 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
+from uuid import uuid4
 
 from .contracts import (
     EnvironmentAdapter,
     EventRouter,
-    NeverWakePolicy,
+    Observation,
+    ObservationReceipt,
+    ObservationReceiptStatus,
+    ObservationWindow,
     RuntimePresence,
     ToolSpec,
-    WakePolicy,
     WorldEvent,
 )
 
@@ -47,6 +50,14 @@ class RuntimeShutdownTimeout(RuntimeFailed):
     pass
 
 
+class ObservationUnavailable(LilavelRuntimeError):
+    """An explicit response step referred to an evicted or mismatched receipt."""
+
+
+class ReactiveStepUnavailable(LilavelRuntimeError):
+    """No explicit response route is configured for the runtime."""
+
+
 class DuplicateEnvironment(LilavelRuntimeError):
     pass
 
@@ -66,21 +77,25 @@ class LilavelRuntimeHealth:
     accepted_events: int
     processed_events: int
     wake_decisions: int
+    reactive_steps: int
+    observation_window_size: int
     failure_code: str | None
 
 
 class LilavelRuntime:
     """Top-level owner of Lilavel's process lifecycle.
 
-    The kernel classifies observations and, when configured, owns their routing
-    to a conversational subsystem and back to the source environment.
+    The kernel admits immutable world events into a bounded observation window.
+    An explicit caller-owned compatibility step may later route one admitted
+    observation to a conversational subsystem and back to its source
+    environment. Admission itself never starts that step.
     """
 
     def __init__(
         self,
         *,
         event_queue_size: int = 128,
-        wake_policy: WakePolicy | None = None,
+        observation_window_size: int | None = None,
         event_router: EventRouter | None = None,
         presence: RuntimePresence | None = None,
         shutdown_timeout: float = 5.0,
@@ -89,9 +104,13 @@ class LilavelRuntime:
             raise ValueError("event_queue_size must be positive")
         if shutdown_timeout <= 0:
             raise ValueError("shutdown_timeout must be positive")
+        if observation_window_size is None:
+            observation_window_size = event_queue_size
+        if isinstance(observation_window_size, bool) or observation_window_size <= 0:
+            raise ValueError("observation_window_size must be positive")
         self._state = RuntimeState.NEW
-        self._queue: asyncio.Queue[WorldEvent] = asyncio.Queue(maxsize=event_queue_size)
-        self._wake_policy = wake_policy or NeverWakePolicy()
+        self._queue: asyncio.Queue[Observation] = asyncio.Queue(maxsize=event_queue_size)
+        self._observation_window = ObservationWindow(observation_window_size)
         self._event_router = event_router
         self._presence = presence
         self._shutdown_timeout = shutdown_timeout
@@ -114,6 +133,8 @@ class LilavelRuntime:
         self._accepted_events = 0
         self._processed_events = 0
         self._wake_decisions = 0
+        self._reactive_steps = 0
+        self._next_observation_sequence = 0
 
     @property
     def state(self) -> RuntimeState:
@@ -122,6 +143,10 @@ class LilavelRuntime:
     @property
     def active_route_count(self) -> int:
         return len(self._route_tasks)
+
+    @property
+    def observation_window(self) -> ObservationWindow:
+        return self._observation_window
 
     @property
     def failure(self) -> BaseException | None:
@@ -162,18 +187,32 @@ class LilavelRuntime:
         if self.health().state is RuntimeState.FAILED:
             raise RuntimeFailed("runtime failed during startup") from self._failure
 
-    async def submit(self, event: WorldEvent) -> None:
-        """Admit one observation, waiting when the bounded queue is full."""
+    async def admit_observation(self, event: WorldEvent) -> ObservationReceipt:
+        """Admit one world event without starting cognition or a response.
+
+        Admission waits for bounded ingress capacity, adopts the immutable
+        event into the recent observation window, and returns a receipt. No
+        wake policy, router, model, Core turn, tool, or scheduler is invoked.
+        """
+
+        if type(event) is not WorldEvent:
+            raise TypeError("event must be a WorldEvent")
 
         async with self._lifecycle_lock:
             if self._state is not RuntimeState.RUNNING:
                 raise RuntimeNotRunning(f"runtime is {self._state.value}")
+            self._next_observation_sequence += 1
+            observation = Observation(
+                observation_id=str(uuid4()),
+                sequence=self._next_observation_sequence,
+                event=event,
+            )
             self._pending_submissions += 1
             self._submissions_settled.clear()
 
         try:
             async with asyncio.TaskGroup() as group:
-                put_task = group.create_task(self._queue.put(event))
+                put_task = group.create_task(self._queue.put(observation))
                 close_task = group.create_task(self._admission_closed.wait())
                 done, pending = await asyncio.wait(
                     (put_task, close_task), return_when=asyncio.FIRST_COMPLETED
@@ -183,11 +222,68 @@ class LilavelRuntime:
                     task.cancel()
             if not admitted:
                 raise RuntimeNotRunning("runtime admission closed while event was waiting")
+            self._observation_window.admit(observation)
             self._accepted_events += 1
+            return ObservationReceipt(
+                observation_id=observation.observation_id,
+                event_id=event.event_id,
+                sequence=observation.sequence,
+                status=ObservationReceiptStatus.ADMITTED,
+            )
         finally:
             self._pending_submissions -= 1
             if self._pending_submissions == 0:
                 self._submissions_settled.set()
+
+    async def submit(self, event: WorldEvent) -> ObservationReceipt:
+        """Compatibility alias for environment adapters' admission callback."""
+
+        return await self.admit_observation(event)
+
+    def recent_observations(self) -> tuple[Observation, ...]:
+        """Return the bounded, noncanonical window of recent admissions."""
+
+        return self._observation_window.snapshot()
+
+    async def reactive_step(self, receipt: ObservationReceipt) -> None:
+        """Explicitly route one admitted observation through ConversationCore.
+
+        This compatibility path is intentionally separate from admission. It
+        is the only runtime operation in this phase that can invoke the
+        configured conversation router.
+        """
+
+        if type(receipt) is not ObservationReceipt:
+            raise TypeError("receipt must be an ObservationReceipt")
+        async with self._lifecycle_lock:
+            if self._state is not RuntimeState.RUNNING:
+                raise RuntimeNotRunning(f"runtime is {self._state.value}")
+            observation = self._observation_window.get(receipt.observation_id)
+            if (
+                observation is None
+                or observation.event.event_id != receipt.event_id
+                or observation.sequence != receipt.sequence
+                or receipt.status is not ObservationReceiptStatus.ADMITTED
+            ):
+                raise ObservationUnavailable(
+                    f"observation receipt is unavailable: {receipt.observation_id}"
+                )
+            router = self._event_router
+            if router is None:
+                raise ReactiveStepUnavailable("runtime has no explicit reactive response route")
+            adapter = self._environments.get(observation.event.source.environment)
+            if adapter is None:
+                raise RuntimeFailed(
+                    f"no registered environment for {observation.event.source.environment!r}"
+                )
+            task = asyncio.create_task(
+                router.route(observation, adapter.execute),
+                name=f"lilavel-reactive-{observation.event.event_id}",
+            )
+            self._route_tasks.add(task)
+            task.add_done_callback(self._route_done)
+            self._reactive_steps += 1
+        await asyncio.sleep(0)
 
     async def submit_user(self, text: str) -> str:
         """Route local user priority through the one runtime-owned presence lane."""
@@ -299,6 +395,8 @@ class LilavelRuntime:
             accepted_events=self._accepted_events,
             processed_events=self._processed_events,
             wake_decisions=self._wake_decisions,
+            reactive_steps=self._reactive_steps,
+            observation_window_size=len(self._observation_window),
             failure_code=type(self.failure).__name__ if self.failure is not None else None,
         )
 
@@ -325,7 +423,7 @@ class LilavelRuntime:
                 await self._presence.start()
             async with asyncio.TaskGroup() as group:
                 self._ingress_task = group.create_task(
-                    self._consume_events(group), name="lilavel-runtime-ingress"
+                    self._consume_events(), name="lilavel-runtime-ingress"
                 )
                 if self._presence is not None:
                     group.create_task(
@@ -381,27 +479,11 @@ class LilavelRuntime:
         if self._state is RuntimeState.RUNNING:
             raise RuntimeFailed("local presence stopped unexpectedly")
 
-    async def _consume_events(self, group: asyncio.TaskGroup) -> None:
+    async def _consume_events(self) -> None:
         while True:
-            item = await self._queue.get()
+            await self._queue.get()
             try:
-                decision = await self._wake_policy.decide(item)
                 self._processed_events += 1
-                if decision.wake:
-                    self._wake_decisions += 1
-                    if self._event_router is None:
-                        continue
-                    adapter = self._environments.get(item.source.environment)
-                    if adapter is None:
-                        raise RuntimeFailed(
-                            f"no registered environment for {item.source.environment!r}"
-                        )
-                    task = group.create_task(
-                        self._event_router.route(item, adapter.execute),
-                        name=f"lilavel-route-{item.event_id}",
-                    )
-                    self._route_tasks.add(task)
-                    task.add_done_callback(self._route_done)
             finally:
                 self._queue.task_done()
 

@@ -9,10 +9,11 @@ behavior is implemented.
 ## Product model
 
 Lilavel's top-level runtime owns persistent process lifecycle, bounded
-world-event ingress, registered environment tasks, deterministic explicit-DM
-wake/routing, Core conversation-session lifecycle, and typed environment
-presentation actions. Autonomous scheduling, production model-selected tools,
-attention/decision, durable memory, and cross-environment state remain deferred.
+world-event admission, a recent in-memory observation window, registered
+environment tasks, explicit reactive DM routing, Core conversation-session
+lifecycle, and typed environment presentation actions. Wake/attention policy,
+autonomous scheduling, production model-selected tools, durable memory, and
+cross-environment state remain deferred.
 
 Environment adapters are replaceable sensor+action boundaries. Discord is one
 such adapter, not the place where Lilavel lives:
@@ -39,7 +40,8 @@ The implemented Discord path is:
 Discord one-to-one DM
   → apps/discord-adapter
   → WorldEvent
-  → LilavelRuntime wake/route
+  → LilavelRuntime observation admission
+  → explicit reactive response step
   → ConversationCore
   → ModelRuntime
   → apps/model-sidecar
@@ -49,10 +51,11 @@ Discord one-to-one DM
 
 ## Current foundation
 
-- `apps/runtime` contains the persistent kernel, provider-neutral observation
-  and action contracts, deterministic explicit-DM policy, the Core-backed
-  conversation router, and the local-CLI-only bounded MIND-0 state loop. It
-  still starts cleanly with zero environments.
+- `apps/runtime` contains the persistent kernel, provider-neutral event and
+  admitted-observation contracts, the bounded recent observation window,
+  explicit reactive DM routing, the Core-backed conversation router, and the
+  local-CLI-only bounded MIND-0 state loop. It still starts cleanly with zero
+  environments.
 - `apps/core` contains provider-neutral conversational semantics, canonical
   conversation history, conversation-level cancellation/supersession,
   generation lifecycle integration, SQLite message/evidence persistence,

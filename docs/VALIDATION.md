@@ -80,9 +80,9 @@ uv run --locked pytest
 ```
 
 These checks cover the zero-environment lifecycle, bounded observation
-backpressure, deterministic task settlement, environment/tool registration,
-provider-neutral immutable contracts, deterministic direct-message wake,
-single-route dispatch to the source action boundary, the application-owned
+admission/window behavior, deterministic task settlement, environment/tool
+registration, provider-neutral immutable contracts, observation-only admission,
+the explicit reactive single-route dispatch to the source action boundary, the application-owned
 tool registry/exposure/authorization seam, and deterministic tool-session
 execution/containment. P5-B1 coverage adds runtime-owned local presence,
 monotonic idle reset/latching, deterministic wake/no-wake, noncanonical
@@ -143,7 +143,8 @@ uv run --locked pytest
 ```
 
 These checks cover the replaceable DM adapter, the complete
-`WorldEvent → runtime → Core → action` path, deterministic presenter,
+`WorldEvent → Observation admission → explicit reactive step → Core → action`
+path, deterministic presenter,
 transport, diagnostics, scenario runner, supersession, semantic streaming, and
 the explicit P4-D registry/authorization/one-shot Discord executor proof with
 fake transport. They do not imply live provider selection or live Discord

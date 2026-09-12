@@ -33,10 +33,10 @@ from lilavel_runtime import (
     PRESENTATION_OPEN,
     PRESENTATION_WATCH,
     CoreConversationRouter,
-    DirectMessageWakePolicy,
     EventSource,
     EventSubmitter,
     LilavelRuntime,
+    ObservationReceipt,
     RuntimeState,
     ToolCall,
     ToolResult,
@@ -179,6 +179,7 @@ class _DiscordEnvironment:
         self._routes: dict[str, Any] = {}
         self._presentations: dict[str, _PendingPresentation] = {}
         self._submit: EventSubmitter | None = None
+        self._reactive_step: Callable[[ObservationReceipt], Awaitable[None]] | None = None
         self._explicit_token: str | None = None
         self._ready = asyncio.Event()
         self._run_stopped = asyncio.Event()
@@ -224,9 +225,15 @@ class _DiscordEnvironment:
     def set_token(self, token: str | None) -> None:
         self._explicit_token = token
 
+    def set_reactive_step(
+        self, reactive_step: Callable[[ObservationReceipt], Awaitable[None]]
+    ) -> None:
+        self._reactive_step = reactive_step
+
     async def handle_message(self, message: Any) -> None:
         submit = self._submit
-        if submit is None or not self._message_filter(message):
+        reactive_step = self._reactive_step
+        if submit is None or reactive_step is None or not self._message_filter(message):
             return
         author = getattr(message, "author", None)
         if getattr(author, "bot", False):
@@ -244,7 +251,7 @@ class _DiscordEnvironment:
         event_id = str(uuid4())
         self._routes[event_id] = channel
         try:
-            await submit(
+            receipt = await submit(
                 WorldEvent(
                     event_id,
                     EventSource(self.environment_id, subject.value),
@@ -252,6 +259,7 @@ class _DiscordEnvironment:
                     {"text": str(message.content)},
                 )
             )
+            await reactive_step(receipt)
         except BaseException:
             self._routes.pop(event_id, None)
             raise
@@ -502,11 +510,11 @@ class DiscordTextEdge:
             close_timeout_s=close_timeout_s,
         )
         self._runtime = LilavelRuntime(
-            wake_policy=DirectMessageWakePolicy(),
             event_router=self._router,
             shutdown_timeout=close_timeout_s,
         )
         self._runtime.register_environment(self._environment)
+        self._environment.set_reactive_step(self._runtime.reactive_step)
         self._start_lock = asyncio.Lock()
         self._closed = False
         self._failure_observed = False

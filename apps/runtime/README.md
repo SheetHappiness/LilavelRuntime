@@ -2,31 +2,41 @@
 
 `apps/runtime` is the top-level process owner for Lilavel. It can start and
 remain healthy with no environments, conversations, model runtime, sidecar, or
-provider. It owns a bounded observation queue, registered environment tasks,
-positive-wake routing, Core conversation sessions, and the destination choice
-for typed environment presentation actions.
+provider. It owns bounded observation admission, a recent observation window,
+registered environment tasks, explicit reactive routing, Core conversation
+sessions, and the destination choice for typed environment presentation
+actions.
 
-The default `NeverWakePolicy` remains inert. The Phase 3
-`DirectMessageWakePolicy` deterministically wakes only for the typed
-`direct_message` event kind; it performs no LLM wake decision. A
-`CoreConversationRouter` then owns session/runtime creation and relays semantic
-Core events as runtime-generated, trusted `ToolCall` presentation actions to
-the source environment. These are application actions, not model-selected
-tools.
+MIND-1A deliberately keeps observation separate from response. Admission is a
+complete operation; it does not invoke a wake policy, Core, a model, tools, or
+a scheduler. The legacy DM path calls `reactive_step()` explicitly after it
+receives an admission receipt. `CoreConversationRouter` then owns
+session/runtime creation and relays semantic Core events as runtime-generated,
+trusted `ToolCall` presentation actions to the source environment. These are
+application actions, not model-selected tools.
 
 ## Contracts
 
-- `WorldEvent` is an immutable provider-neutral observation envelope. Its
-  payload is deep-frozen and its default trust is `untrusted`. Ingestion does
-  not make an event memory or canonical conversation history.
+- `WorldEvent` is an immutable provider-neutral external-event envelope. Its
+  payload is deep-frozen and its default trust is `untrusted`.
+- `Observation` is the runtime-admitted form of a `WorldEvent`; its
+  `ObservationReceipt` proves admission into the bounded recent window. The
+  event remains untrusted observation data and is not promoted to memory or
+  canonical conversation history.
+- `ObservationWindow` is finite in-memory working state. It evicts the oldest
+  entries at capacity and is not memory, canonical history, or durable storage.
 - `EnvironmentAdapter.run()` is a long-lived observation source owned by the
   kernel task group; `execute()` is its typed action boundary. Registration
   closes when startup begins.
 - `ToolSpec`, `ToolCall`, and `ToolResult` remain provider-neutral envelopes.
   Phase 3 uses trusted runtime-generated calls for presentation only;
   registration grants no model tool authority.
-- `WakePolicy` maps an observation to a `WakeDecision`; an optional
-  `EventRouter` owns the positive-wake conversational route.
+- `admit_observation()` and its `submit()` compatibility alias only validate,
+  adopt, and return a receipt for an event. `reactive_step()` is the explicit compatibility
+  response path and accepts only an admitted receipt.
+- Wake/attention policy is not part of MIND-1A. The existing wake contract is
+  not wired into observation admission; MIND-1B will establish the separate
+  observation-to-cognition boundary.
 
 ## P4-C application tool authorization seam
 
@@ -78,9 +88,12 @@ the application-selected snapshot supplied by the adapter, while the existing
 P4-B joined provider/executor settlement, cancellation barrier, and stale-result
 fencing remain authoritative.
 
-`submit()` waits when the bounded queue is full. It does not drop, overwrite,
-or silently accumulate observations. Events are rejected before startup and
-after shutdown begins.
+`admit_observation()`/`submit()` waits when bounded ingress is full. It does not
+drop, overwrite, or silently accumulate pending events. The recent observation
+window is separately bounded and evicts its oldest transient entry when full.
+Events are rejected before startup and after shutdown begins. Admission does
+not route; only an explicit `reactive_step()` can start the legacy response
+path.
 
 ## P5-B1 local presence
 
