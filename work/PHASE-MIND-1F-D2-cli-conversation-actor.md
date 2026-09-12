@@ -59,5 +59,4 @@ gated pending MIND-1F-E.
 
 ## Implementation
 
-- Implementation SHA: `0fe9c1e08d3594c2b3b8e2dfb4a130fca48fba03`
-- Closeout SHA: `TBD`
+- Implementation SHA: `0fe9c1e4a4eb590b47f4583446e01fbe7fd47873`
