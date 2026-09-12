@@ -190,8 +190,23 @@ argument validation, executor, settlement, and effect-certainty rules remain
 authoritative. The local state and external-action subpaths have separate
 statuses and evidence. External effects are never claimed to be rolled back.
 
+RUNTIME-H1 adds a coordinator-owned application permit to the completed
+outcome. The permit carries a process-local authenticity capability plus a
+versioned SHA-256 digest of the canonical scope, episode, trigger, state,
+action, and temporal proposal encoding. The capability is not model-controlled,
+not serialized as authority, and is excluded from evidence. The coordinator
+retains only a bounded settled replay window for the current application epoch;
+once that window rotates, every prior-epoch permit—including one that was
+issued but never applied—is permanently retired. Rotation occurs only while
+holding the same settlement lock used by application, so no unsettled
+application can be forgotten. New permits continue in the new epoch, and a
+retired permit fails closed before state, temporal, or tool effects. This is
+at-most-once protection for valid runtime-issued permits during one coordinator
+or runtime lifetime; replay/idempotency across process restart is UNVERIFIED.
+
 ```text
 CognitionOutcome (completed, scoped, versioned)
+  → coordinator-owned ApplicationPermit
   → ProposalApplicationCoordinator
   → validate the complete proposal set
       ├── StateProposal → trusted MindStateDelta → atomic MindState apply

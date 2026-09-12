@@ -133,6 +133,23 @@ outside that completed path is ineligible. The coordinator checks the trusted
 runtime scope and front-loads structural validation of the whole proposal set
 before state mutation or tool-session creation.
 
+The completed outcome is also bound through a narrow coordinator-owned
+`ApplicationPermitIssuer`. Each permit contains a private process-local
+authenticity capability and a canonical, versioned SHA-256 digest of all
+effect-relevant outcome fields. Visible epoch/sequence fields are replay
+metadata, not authority; forged or tampered permits fail closed before any
+state, temporal, or tool effect. The runner only validates cognition and
+receives this bind-only stamp; it does not own application or settlement.
+
+Replay metadata is bounded by a 256-entry settled window per application epoch.
+When the window is full, the coordinator rotates to a new runtime-owned epoch
+only at a settlement-safe lock boundary. Old permits are then permanently
+retired, including issued-but-never-applied permits, so forgetting the old
+window cannot enable a later effect. New permits remain live beyond 256
+applications. This guarantee is limited to valid runtime-issued permits during
+one coordinator/runtime lifetime; replay or idempotency across process restart
+is `UNVERIFIED` and is not claimed as durable protection.
+
 State proposals remain the narrow `create_intention` vocabulary. The
 coordinator requires application-supplied Core provenance, converts each
 accepted proposal into a runtime-owned `MindStateDelta`, checks the captured

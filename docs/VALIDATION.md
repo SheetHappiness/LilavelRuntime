@@ -126,6 +126,21 @@ The focused D2 proofs can be rerun from `apps/runtime` with:
 uv run --locked pytest tests/test_conversation_actor_d2.py
 ```
 
+The RUNTIME-H1 bounded replay/liveness proofs can be rerun from `apps/runtime`
+with:
+
+```powershell
+uv run --locked pytest tests/test_proposal_application_h1.py
+```
+
+This focused suite proves 1,001 sequential applications, bounded replay
+retention, recent and retired duplicate rejection, concurrent duplicate
+serialization, confirmed/unknown effect non-retry, state/temporal/mixed
+replay safety, cancellation settlement, canonical permit tamper rejection,
+forged-permit rejection, unused-permit retirement, and rotation only after
+application settlement. It remains a process-lifetime proof; restart replay
+and durable idempotency are `UNVERIFIED`.
+
 ### Core
 
 ```powershell
