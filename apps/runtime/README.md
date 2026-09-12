@@ -6,7 +6,8 @@ provider. It owns bounded observation admission, a recent observation window,
 a deterministic observation-to-cognition gate, registered environment tasks,
 explicit reactive routing, Core conversation sessions, and the destination
 choice for typed environment presentation actions. MIND-1D adds the separate
-runtime-owned boundary for applying completed cognition proposals.
+runtime-owned boundary for applying completed cognition proposals. MIND-1E adds
+bounded, in-memory one-shot temporal wake admission and due-trigger dispatch.
 
 MIND-1C adds a separate `CognitionEpisodeRunner`. A positive
 `CognitionTrigger` can be given a bounded immutable observation/MindState
@@ -15,8 +16,8 @@ snapshot and an effect-free cognition engine, producing one validated
 does not apply state, execute actions, schedule work, write memory, or append
 conversation messages. The existing explicit DM/Core route remains unchanged;
 MIND-1D owns the separate proposal validation, application, and authorization
-boundary. MIND-1E will later own temporal wake proposals and scheduler
-admission.
+boundary. MIND-1E owns bounded temporal wake proposals and scheduler admission;
+it does not create a general scheduler or recurring autonomy.
 
 MIND-1B establishes both `observation != cognition` and the compatibility path
 for the existing DM experience. Admission is a complete operation; it does not
@@ -52,6 +53,8 @@ application actions, not model-selected tools.
   after strict candidate validation. `StateProposal` is currently limited to
   creating a typed intention; `ActionProposal` is limited to speak/silence
   intent and has no destination, permission, scope, or executor authority.
+  `TemporalProposal` is similarly inert: it carries only a bounded reason,
+  optional intention reference, and timezone-aware requested `not_before`.
   Failure, cancellation, and timeout return no valid outcome.
 - `EnvironmentAdapter.run()` is a long-lived observation source owned by the
   kernel task group; `execute()` is its typed action boundary. Registration
@@ -65,7 +68,7 @@ application actions, not model-selected tools.
   remains its response-compatible alias.
 - The cognition gate is not wired into observation admission. The default
   direct-message policy is deterministic and provider-neutral; wake/attention
-  policy remains a separate deferred concern.
+  policy remains separate from temporal self-wake admission.
 
 ## MIND-1B cognition gate
 
@@ -108,9 +111,8 @@ The runner snapshots the trigger's admitted observations and current bounded
 `MindState` before inference. Later admissions cannot change that episode's
 context. It has no Core, Discord, tool executor, scheduler, memory, or
 conversation-history capability, so successful state/action proposals remain
-inert. MIND-1D is the future owner of proposal validation/application and
-effect authorization. MIND-1D owns that boundary now, while MIND-1E remains
-reserved for temporal wake proposals and scheduler admission. No Character snapshot is added here because the runtime
+inert. MIND-1D owns proposal validation/application and effect authorization.
+MIND-1E adds the separate temporal admission path. No Character snapshot is added here because the runtime
 repository has no supported Character composition seam at this boundary.
 
 ## MIND-1D proposal application boundary
@@ -139,6 +141,39 @@ atomic. Each path has its own status and per-proposal result. Confirmed or
 unknown external effects are never rolled back; a later failure is reported as
 partial application and fences the outcome. No application result writes
 ConversationCore history, and the current reactive DM route remains unchanged.
+
+## MIND-1E temporal intentions / self-wake
+
+MIND-1E adds the narrow temporal path:
+
+```text
+CognitionOutcome
+  → TemporalProposal (inert)
+  → ProposalApplicationCoordinator
+  → TemporalCoordinator
+  → runtime-owned WakeIntent
+  → due CognitionTrigger(source=temporal)
+  → existing serialized CognitionEpisodeRunner
+```
+
+`TemporalCoordinator` owns the exact normalized UTC deadline, the one-second
+minimum delay, seven-day maximum horizon, eight-pending bound, scope ownership,
+deduplication, cancellation/supersession, deterministic due ordering, and
+one-shot dispatch fence. Equivalent pending proposals deduplicate by scope,
+reason, and intention reference; the first deadline wins. Past requests clamp
+to the minimum delay and requests beyond the horizon clamp to the maximum
+horizon. Malformed or unsupported values are rejected.
+
+A due wake creates only a provider-neutral temporal `CognitionTrigger`. It does
+not write assistant messages, call Core or Discord, execute tools, or mutate
+canonical history. The existing `CognitionEpisodeRunner` remains the one
+serialized cognition lane, so a due trigger waits behind an active episode.
+Dispatch is one-shot: a failed or cancelled resulting episode does not
+resurrect the original wake.
+
+The coordinator is deterministic in-memory state only. Accepted wakes do not
+survive process restart in this phase; durable accepted wakes and restart
+recovery are explicitly `UNVERIFIED`/deferred to a later persistence slice.
 
 ## P4-C application tool authorization seam
 

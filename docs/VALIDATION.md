@@ -100,8 +100,13 @@ remains exercised through the Discord adapter suite. MIND-0 coverage adds
 strict appraisal parsing, bounded runtime intentions/self-actions, canonical
 provenance binding, appraisal preemption, intention-specific idle admission,
 noncanonical expression, and next-turn self-action projection. These checks do
-not prove live providers, live Discord, Neuro, general scheduling, arbitrary
-model-selected tools, durable memory, or restart persistence.
+not prove live providers, live Discord, Neuro, general or recurring scheduling,
+arbitrary model-selected tools, durable memory, or restart persistence. MIND-1E
+deterministic coverage additionally proves inert temporal proposals, deadline
+clamping, bounded wake admission, deduplication, cancellation/supersession,
+deterministic due ordering, one-shot dispatch fencing, serialized temporal
+cognition, failure non-resurrection, and provenance isolation. It does not
+prove durable accepted wakes or restart recovery.
 
 ### Core
 

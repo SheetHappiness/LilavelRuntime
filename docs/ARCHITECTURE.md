@@ -6,7 +6,8 @@ the proven conversational foundation, a replaceable Discord environment
 adapter, the bounded P5-B1/MIND-0 local presence slice, and the MIND-1A/MIND-1B
 observation-admission and observation-to-cognition boundaries. MIND-1C adds a
 bounded, effect-free cognition episode that ends at inert proposals; MIND-1D
-adds the separate trusted application boundary. Broader autonomous
+adds the separate trusted application boundary; MIND-1E adds one-shot temporal
+intention admission and time-to-cognition dispatch. Broader autonomous
 capabilities are not implied by these slices.
 
 ## Top-level product boundary
@@ -23,7 +24,9 @@ and recent self-actions to the local CLI only; it adds no general scheduler,
 attention loop, world model, durable memory, or arbitrary model-selected tool
 authority. MIND-1C adds an effect-free, runtime-owned bounded cognition
 episode seam whose successful result is an inert proposal set; MIND-1D owns
-proposal application and authorization.
+proposal application and authorization. MIND-1E adds only a bounded in-memory
+temporal coordinator; it does not add recurring schedules, general attention,
+or durable agent state.
 
 The intended direction is:
 
@@ -91,16 +94,51 @@ CognitionOutcome (completed, scoped, versioned)
   → validate the complete proposal set
       ├── StateProposal → trusted MindStateDelta → atomic MindState apply
       └── ActionProposal → trusted ToolCall → existing P4 runtime → ToolResult
+      └── TemporalProposal → TemporalCoordinator → runtime-owned WakeIntent
 ```
 
-MIND-1E is reserved for temporal wake proposals and scheduler admission; it is
-not part of this application boundary.
+## MIND-1E temporal intention boundary
+
+The temporal path is intentionally one-shot and inert until a trusted
+application accepts a bounded proposal:
+
+```text
+CognitionOutcome
+  → TemporalProposal (reason, intention_ref?, requested not_before)
+  → validate and normalize against runtime UTC clock
+  → WakeIntent (pending)
+  → deadline
+  → CognitionTrigger(source=temporal, wake_intent_id, source_refs)
+  → existing serialized CognitionEpisodeRunner
+```
+
+The `TemporalCoordinator` owns the normalized deadline, one-second minimum
+delay, seven-day maximum horizon, eight-pending bound, scope/actor ownership,
+deduplication, cancellation/supersession, due ordering, and one-shot dispatch
+fence. Equivalent pending proposals use scope + reason + intention reference as
+their key; the first pending deadline wins. Past requests clamp to the minimum
+delay, future requests beyond the horizon clamp to the horizon, and malformed
+or unsupported proposals are rejected.
+
+Temporal dispatch emits no `ActionProposal` or tool call and has no Core,
+Discord, assistant-message, or canonical-history capability. A temporal
+trigger has no observation payload; it carries a bounded reason as data plus
+runtime-owned wake and source IDs. The reason is not trusted instruction or
+authority. The existing episode runner serializes temporal and external
+triggers in one cognition lane, so an active episode cannot run in parallel
+with a due wake. A dispatched wake remains fenced even if its later episode
+fails or is cancelled.
+
+Accepted wakes are in-memory only in MIND-1E. Restart recovery, durable wake
+records, and overdue-at-restart policy are `UNVERIFIED`/deferred because the
+current runtime/MindState persistence seam is not a small durable agent-state
+store.
 
 ## Ownership map
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, and the MIND-1D proposal application boundary | Canon, canonical history semantics, Discord transport identity, model-based attention, general scheduling, durable memory, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, explicit reactive response routing, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canon, canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
@@ -335,6 +373,13 @@ provider continuation remain outside this component.
   executes external actions in deterministic order through P4. Local state and
   external effects are not globally atomic; confirmed or unknown external
   effects are never rolled back or automatically retried.
+- A `TemporalProposal` is inert until trusted application. A due
+  `WakeIntent` emits only a temporal `CognitionTrigger`; time never directly
+  selects an action, calls a tool, sends Discord, writes assistant history, or
+  runs a second cognition actor.
+- One-shot wake dispatch is fenced before trigger emission. Cancellation and
+  supersession apply only to pending wakes; a dispatched wake is not silently
+  retried after cognition failure or cancellation.
 - User acceptance is immediate and canonical; assistant commit occurs only
   after successful completion and persistence.
 - Streaming consumers receive bounded transient output and exactly one
@@ -355,9 +400,9 @@ cannot import Core persistence or perform Core lifecycle operations.
 
 ## Deferred boundaries
 
-The following are intentionally `DEFERRED` rather than implied: temporal wake
-proposals and scheduler admission (MIND-1E), a durable agent-state model,
-general scheduler, probabilistic or LLM attention policy,
+The following are intentionally `DEFERRED` rather than implied: durable
+agent-state and wake persistence/restart recovery, a general or recurring
+scheduler, probabilistic or LLM attention policy,
 arbitrary autonomous tool activation, retrieval or memory semantics, and
 additional production environment adapters. Each needs an explicit decision
 and proportionate validation before code is added.
