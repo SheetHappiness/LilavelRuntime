@@ -7,6 +7,14 @@ a deterministic observation-to-cognition gate, registered environment tasks,
 explicit reactive routing, Core conversation sessions, and the destination
 choice for typed environment presentation actions.
 
+MIND-1C adds a separate `CognitionEpisodeRunner`. A positive
+`CognitionTrigger` can be given a bounded immutable observation/MindState
+snapshot and an effect-free cognition engine, producing one validated
+`CognitionOutcome`. The outcome contains only typed inert proposals; MIND-1C
+does not apply state, execute actions, schedule work, write memory, or append
+conversation messages. The existing explicit DM/Core route remains unchanged;
+MIND-1D will own proposal validation, application, and authorization.
+
 MIND-1B establishes both `observation != cognition` and the compatibility path
 for the existing DM experience. Admission is a complete operation; it does not
 invoke the cognition gate, Core, a model, tools, or a scheduler. The legacy DM
@@ -32,6 +40,16 @@ application actions, not model-selected tools.
   or more observation IDs. `DirectMessageCognitionGate` recognizes only the
   existing `direct_message` event kind and can coalesce an explicit ordered
   batch without timers or model work.
+- `CognitionContext` and `CognitionEpisode` are immutable bounded snapshots.
+  They contain the trigger evidence, selected admitted observations, runtime
+  scope, and a versioned `MindStateSnapshot`; external payload trust is
+  preserved as observation data.
+- `CognitionEpisodeRunner` serializes one episode per runtime scope, invokes
+  only an effect-free `CognitionEngine`, and returns a `CognitionOutcome` only
+  after strict candidate validation. `StateProposal` is currently limited to
+  creating a typed intention; `ActionProposal` is limited to speak/silence
+  intent and has no destination, permission, scope, or executor authority.
+  Failure, cancellation, and timeout return no valid outcome.
 - `EnvironmentAdapter.run()` is a long-lived observation source owned by the
   kernel task group; `execute()` is its typed action boundary. Registration
   closes when startup begins.
@@ -66,6 +84,30 @@ policy emits at most the configured number of unique observation IDs in one
 trigger. The runtime compatibility step intentionally evaluates one receipt at
 a time, so no timer, debounce, scheduler, salience model, or autonomous loop
 is introduced here.
+
+## MIND-1C bounded cognition episode
+
+MIND-1B and MIND-1C have deliberately different negative meanings:
+`NO_COGNITION` means that no cognition engine was invoked, while a quiet
+`CognitionOutcome` means cognition completed and returned zero proposals. The
+MIND-1C path is:
+
+```text
+CognitionTrigger
+  → freeze bounded CognitionContext
+  → one serialized CognitionEpisode
+  → validate CognitionCandidate
+  → inert CognitionOutcome
+  → STOP
+```
+
+The runner snapshots the trigger's admitted observations and current bounded
+`MindState` before inference. Later admissions cannot change that episode's
+context. It has no Core, Discord, tool executor, scheduler, memory, or
+conversation-history capability, so successful state/action proposals remain
+inert. MIND-1D is the future owner of proposal validation/application and
+effect authorization. No Character snapshot is added here because the runtime
+repository has no supported Character composition seam at this boundary.
 
 ## P4-C application tool authorization seam
 

@@ -82,7 +82,10 @@ uv run --locked pytest
 These checks cover the zero-environment lifecycle, bounded observation
 admission/window behavior, deterministic task settlement, environment/tool
 registration, provider-neutral immutable contracts, observation-only admission,
-the deterministic `NO_COGNITION`/bounded `CognitionTrigger` gate, the explicit
+the deterministic `NO_COGNITION`/bounded `CognitionTrigger` gate, the
+serialized MIND-1C bounded cognition episode, immutable context snapshots,
+typed inert state/action proposals, fail-closed episode lifecycle, and
+proposal/conversation/action isolation, the explicit
 reactive single-route dispatch to the source action boundary, the application-
 owned tool registry/exposure/authorization seam, and deterministic tool-session
 execution/containment. P5-B1 coverage adds runtime-owned local presence,

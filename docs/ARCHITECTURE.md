@@ -4,7 +4,8 @@ This document records the current ownership boundaries of the canonical
 `LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
 the proven conversational foundation, a replaceable Discord environment
 adapter, the bounded P5-B1/MIND-0 local presence slice, and the MIND-1A/MIND-1B
-observation-admission and observation-to-cognition boundaries. Broader
+observation-admission and observation-to-cognition boundaries. MIND-1C adds a
+bounded, effect-free cognition episode that ends at inert proposals. Broader
 autonomous capabilities are not implied by these slices.
 
 ## Top-level product boundary
@@ -18,7 +19,9 @@ presentation actions. P5-B1 adds one monotonic idle opportunity and
 transient autonomous cognition lane. MIND-0 adds bounded in-memory intentions
 and recent self-actions to the local CLI only; it adds no general scheduler,
 attention loop, world model, durable memory, or arbitrary model-selected tool
-authority.
+authority. MIND-1C adds an effect-free, runtime-owned bounded cognition
+episode seam whose successful result is an inert proposal set; MIND-1D owns
+proposal application and authorization.
 
 The intended direction is:
 
@@ -55,6 +58,20 @@ Discord adapter ──► WorldEvent ──► LilavelRuntime
                          ▼
                  Discord adapter
 ```
+
+The existing positive trigger also has a separate MIND-1C seam:
+
+```text
+CognitionTrigger
+  → frozen CognitionContext
+  → serialized CognitionEpisode
+  → validated inert CognitionOutcome
+  → STOP
+```
+
+This episode path is not yet the production DM route. It is intentionally
+effect-free and does not apply proposals; the existing explicit reactive/Core
+route remains the compatibility path until a later convergence phase.
 
 ## Ownership map
 
@@ -239,9 +256,16 @@ does not invoke the cognition gate. An explicit `cognition_step()` resolves an
 admitted receipt and returns exactly `NO_COGNITION` or a bounded
 `CognitionTrigger`; only the positive path schedules the existing reactive/Core
 router. `reactive_step()` is the compatibility alias used by the current DM
-adapter. The Core router converts semantic run events into trusted
-runtime-generated presentation `ToolCall`s and checks `ToolResult`s; this
-grants no authority to model-selected tools.
+adapter. Separately, `CognitionEpisodeRunner` freezes one bounded context,
+serializes one episode for its runtime scope, invokes an effect-free engine
+seam, and returns a validated inert `CognitionOutcome` or no outcome on
+failure/cancellation/timeout. A quiet outcome is cognition that completed with
+zero proposals; it is not `NO_COGNITION`. The runner never mutates `MindState`,
+executes tools, sends Discord output, schedules wakes, writes memory, or
+commits an assistant message. The Core router's existing compatibility path
+continues to convert semantic run events into trusted runtime-generated
+presentation `ToolCall`s and checks `ToolResult`s; this grants no authority to
+model-selected tools.
 
 ## Environment adapter boundary
 

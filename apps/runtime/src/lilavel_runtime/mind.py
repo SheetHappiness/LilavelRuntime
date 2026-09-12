@@ -82,6 +82,31 @@ class MindProjection:
         return (rendered,)
 
 
+@dataclass(frozen=True, slots=True)
+class MindStateSnapshot:
+    """Immutable, bounded read-only state captured for one cognition episode."""
+
+    version: int
+    intentions: tuple[MindIntention, ...] = ()
+    recent_self_actions: tuple[SelfAction, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or self.version < 0:
+            raise ValueError("mind-state version must be a non-negative integer")
+        if type(self.intentions) is not tuple:
+            raise TypeError("intentions must be a tuple")
+        if type(self.recent_self_actions) is not tuple:
+            raise TypeError("recent_self_actions must be a tuple")
+        if not all(type(item) is MindIntention for item in self.intentions):
+            raise TypeError("intentions must contain only MindIntention values")
+        if not all(type(item) is SelfAction for item in self.recent_self_actions):
+            raise TypeError("recent_self_actions must contain only SelfAction values")
+
+    @property
+    def active_intentions(self) -> tuple[MindIntention, ...]:
+        return tuple(item for item in self.intentions if item.status is IntentionStatus.ACTIVE)
+
+
 class MindState:
     """Runtime-owned bounded state; no persistence or Core history is involved."""
 
@@ -97,7 +122,13 @@ class MindState:
         self._self_actions_capacity = self_actions_capacity
         self._intentions: deque[MindIntention] = deque()
         self._self_actions: deque[SelfAction] = deque(maxlen=self_actions_capacity)
+        self._version = 0
         self._lock = Lock()
+
+    @property
+    def version(self) -> int:
+        with self._lock:
+            return self._version
 
     def intentions(self) -> tuple[MindIntention, ...]:
         with self._lock:
@@ -120,6 +151,16 @@ class MindState:
                 item for item in self._intentions if item.status is IntentionStatus.ACTIVE
             )
             return MindProjection(active, tuple(self._self_actions))
+
+    def snapshot(self) -> MindStateSnapshot:
+        """Capture the complete bounded state without exposing mutable storage."""
+
+        with self._lock:
+            return MindStateSnapshot(
+                version=self._version,
+                intentions=tuple(self._intentions),
+                recent_self_actions=tuple(self._self_actions),
+            )
 
     def create_intention(
         self,
@@ -153,6 +194,7 @@ class MindState:
                 assistant_message_id=assistant_message_id,
             )
             self._intentions.append(intention)
+            self._version += 1
             return intention
 
     def mark_expressed(self, intention_id: str, text: str) -> SelfAction | None:
@@ -167,6 +209,7 @@ class MindState:
                 self._intentions[index] = replace(intention, status=IntentionStatus.EXPRESSED)
                 action = SelfAction(str(uuid4()), intention_id, text)
                 self._self_actions.append(action)
+                self._version += 1
                 return action
         return None
 
@@ -195,6 +238,7 @@ __all__ = [
     "IntentionStatus",
     "MindIntention",
     "MindProjection",
+    "MindStateSnapshot",
     "MindState",
     "SelfAction",
 ]
