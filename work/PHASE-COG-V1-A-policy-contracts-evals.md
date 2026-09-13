@@ -90,16 +90,11 @@ unchanged.
   `PASS` — 7 passed.
 - Discord adapter sync/lock, Ruff, format check, strict Pyright, and full
   pytest: `PASS` — 95 passed, 10 existing deprecation warnings.
-- Runtime sync/lock, Ruff check, strict Pyright, and source-only format check:
-  `PASS`. Runtime tests excluding the unchanged D1 conversation file:
-  `PASS` — 199 passed.
+- Runtime sync/lock, Ruff check, and strict Pyright: `PASS`. The complete
+  package-local runtime pytest suite: `PASS` — 204 passed in 10.50 seconds.
 - Full runtime format check: `FAIL` on two pre-existing formatting issues in
   unchanged `apps/runtime/tests/test_runtime_h2.py`; no runtime file belongs
   to this phase.
-- Full runtime pytest: `UNVERIFIED` — the unchanged
-  `test_temporal_non_user_work_waits_behind_active_user_conversation` did not
-  settle. The same hang reproduced against a temporary baseline Core checkout
-  at the expected starting state, so it is not attributed to this change.
 - Root sync/lock, launcher help, docs integrity, architecture guard, and
   `git diff --check`: `PASS`.
 
