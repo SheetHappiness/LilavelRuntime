@@ -148,6 +148,41 @@ messages retain the existing USER/Core route. Ambient `THINK` uses the
 existing NON_USER/MIND route, and no new semantic/model or effect lane is
 introduced. `NOTE` is transient awareness, not memory or deferred work.
 
+## COG-V1-C model-backed disposition planning
+
+The standalone `DispositionPlanner` is an opt-in model-backed evaluation seam,
+not a production USER-route integration. It answers only how an already direct
+user turn should be approached. The direct-user invariants remain runtime
+owned and fixed: `attention=THINK` and `intervention=RESPOND`.
+
+```text
+bounded recent canonical context
+        + deterministic Character v0 planner projection
+                              │
+                              ▼
+                    DispositionPlanner
+                              │
+                              ▼
+                  strict DispositionCandidate
+                              │
+                              ▼
+             runtime-owned focus compiler + Core values
+                              │
+                              ▼
+       CognitionPolicyDecision(THINK, RESPOND, disposition)
+```
+
+The candidate reuses Core's `ResponseDisposition`, `WorkingState`, and bounded
+`CognitionReasonCode` vocabulary. Its parser rejects malformed, duplicate,
+unknown, nested, oversized, or otherwise out-of-schema JSON and stores no raw
+model reasoning. `WorkingState.focus` is never model-authored: runtime-owned
+fixed mappings compile it from the validated aim and reason codes before any
+trusted guidance projection. The planner receives at most the last four
+canonical role/text messages, and its character projection is mechanically
+derived from `IdentityCanon` while excluding voice and representative dialogue
+examples. The existing `ConversationCore`, CLI, Discord, and SemanticActor
+production USER paths do not call this planner in COG-V1-C.
+
 ## MIND-1F-B semantic admission actor
 
 Each `LilavelRuntime` instance composes exactly one provider-neutral
@@ -414,8 +449,8 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, and the bounded MIND-1E temporal coordinator | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
-| `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
+| `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity and disposition value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
 | `apps/discord-adapter` | Discord observations/actions, DM admission, edge-local mapping, typing, sends, edits, continuations, and presentation diagnostics | Lilavel identity, canonical history, memory, provider state, scheduling, or agent lifecycle |

@@ -3,7 +3,13 @@
 from collections.abc import Sequence
 
 from .character import LILAVEL_CHARACTER_V0
-from .cognition import IdentityCanon, ResponseDisposition, WorkingState, compile_guidance
+from .cognition import (
+    IdentityCanon,
+    ResponseDisposition,
+    WorkingState,
+    compile_guidance,
+    compile_planner_guidance,
+)
 from .conversation import ConversationCore, ConversationRuntime
 
 # Retained only as the B-arm fixture for the offline cognition comparison;
@@ -26,6 +32,12 @@ def build_character_guidance() -> tuple[str, ...]:
     """Return only the immutable Character v0 guidance blocks."""
 
     return compile_guidance(LILAVEL_CHARACTER_V0)
+
+
+def build_disposition_planner_guidance() -> tuple[str, ...]:
+    """Return the deterministic behavior-planning projection of Character v0."""
+
+    return compile_planner_guidance(LILAVEL_CHARACTER_V0)
 
 
 def build_turn_guidance(mind_guidance: Sequence[str] = ()) -> tuple[str, ...]:

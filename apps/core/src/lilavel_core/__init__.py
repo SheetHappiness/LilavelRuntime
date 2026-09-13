@@ -8,6 +8,7 @@ from .cognition import (
     CognitionPolicyDecision,
     CognitionReasonCode,
     DialogueExample,
+    DispositionCandidate,
     IdentityCanon,
     InterventionDecision,
     ResponseDisposition,
@@ -15,6 +16,7 @@ from .cognition import (
     TemperamentTrait,
     WorkingState,
     compile_guidance,
+    compile_planner_guidance,
 )
 from .conversation import (
     RUNTIME_EVIDENCE_CAPACITY,
@@ -126,6 +128,7 @@ __all__ = [
     "CanonicalMessage",
     "CognitionPolicyDecision",
     "CognitionReasonCode",
+    "DispositionCandidate",
     "ConversationStore",
     "EvidenceRecord",
     "GenerationAccepted",
@@ -202,5 +205,6 @@ __all__ = [
     "WorkingState",
     "ResponseDisposition",
     "compile_guidance",
+    "compile_planner_guidance",
     "LILAVEL_CHARACTER_V0",
 ]

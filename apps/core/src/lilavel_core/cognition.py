@@ -157,6 +157,63 @@ class ResponseDisposition:
 
 
 @dataclass(frozen=True, slots=True)
+class DispositionCandidate:
+    """A bounded model result containing only response-behavior selections.
+
+    This is deliberately narrower than ``CognitionPolicyDecision``.  A model
+    can choose how a direct user turn should be approached, but it cannot
+    choose attention, intervention, guidance text, or any runtime action.
+    """
+
+    aim: Aim
+    stance: Stance
+    engagement: Level
+    directness: Level
+    desired_length: Level
+    humor_allowed: bool
+    question_policy: QuestionPolicy
+    initiative: Level
+    reason_codes: tuple[CognitionReasonCode, ...]
+
+    def __post_init__(self) -> None:
+        allowed_values = {
+            "aim": {
+                "answer",
+                "acknowledge",
+                "clarify",
+                "challenge",
+                "tease",
+                "comfort",
+                "disagree",
+                "explore",
+                "close",
+            },
+            "stance": {"neutral", "curious", "skeptical", "playful", "supportive"},
+            "engagement": {"low", "normal", "high"},
+            "directness": {"low", "normal", "high"},
+            "desired_length": {"low", "normal", "high"},
+            "question_policy": {"avoid", "required", "invite"},
+            "initiative": {"low", "normal", "high"},
+        }
+        for field_name, values in allowed_values.items():
+            value = getattr(self, field_name)
+            if type(value) is not str or value not in values:
+                raise ValueError(f"disposition candidate {field_name} is invalid")
+        if type(self.humor_allowed) is not bool:
+            raise TypeError("disposition candidate humor_allowed must be a bool")
+        if type(self.reason_codes) is not tuple:
+            raise TypeError("disposition candidate reason_codes must be a tuple")
+        if not self.reason_codes:
+            raise ValueError("disposition candidates require a reason code")
+        if len(self.reason_codes) > MAX_COGNITION_REASON_CODES:
+            raise ValueError("disposition candidate reason-code bound exceeded")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("disposition candidate reason codes must be unique")
+        if not all(type(code) is CognitionReasonCode for code in self.reason_codes):
+            raise TypeError("disposition candidate reason_codes must contain CognitionReasonCode")
+
+
+@dataclass(frozen=True, slots=True)
 class CognitionPolicyDecision:
     """A fail-closed, provider-neutral cognition policy result.
 
@@ -216,6 +273,7 @@ __all__ = [
     "CognitionPolicyDecision",
     "CognitionReasonCode",
     "DialogueExample",
+    "DispositionCandidate",
     "IdentityCanon",
     "InterventionDecision",
     "Level",
@@ -227,6 +285,7 @@ __all__ = [
     "TemperamentTrait",
     "WorkingState",
     "compile_guidance",
+    "compile_planner_guidance",
 ]
 
 
@@ -256,6 +315,28 @@ def compile_guidance(
                 )
             )
         )
+    result = tuple(blocks)
+    if len(result) > MAX_GUIDANCE_BLOCKS or any(not block.strip() for block in result):
+        raise ProtocolError("invalid_field")
+    if len(set(result)) != len(result):
+        raise ProtocolError("invalid_field")
+    if sum(len(block.encode("utf-8")) for block in result) > MAX_GUIDANCE_BYTES:
+        raise ProtocolError("invalid_field")
+    return result
+
+
+def compile_planner_guidance(identity: IdentityCanon) -> tuple[str, ...]:
+    """Compile the decision-relevant projection of one immutable identity.
+
+    The planner receives the same canonical identity as normal conversation
+    guidance, but not generation-oriented voice examples. Keeping this field
+    selection here prevents a second hand-maintained persona definition from
+    appearing in runtime code.
+    """
+
+    if type(identity) is not IdentityCanon:
+        raise TypeError("identity must be an IdentityCanon")
+    blocks = _compile_planner_identity_blocks(identity)
     result = tuple(blocks)
     if len(result) > MAX_GUIDANCE_BLOCKS or any(not block.strip() for block in result):
         raise ProtocolError("invalid_field")
@@ -317,6 +398,41 @@ def _compile_identity_blocks(identity: IdentityCanon) -> list[str]:
         )
         blocks.append("[Representative dialogue examples]\n" + _format_pairs(examples))
 
+    return blocks
+
+
+def _compile_planner_identity_blocks(identity: IdentityCanon) -> list[str]:
+    """Serialize only canonical fields that can affect disposition."""
+
+    if not _has_structured_identity(identity):
+        return [
+            "[Planner values]\n" + _format_items((*identity.traits, *identity.principles)),
+            "[Planner boundaries]\n"
+            + _format_items((*identity.boundaries, *identity.anti_patterns)),
+        ]
+
+    blocks: list[str] = []
+    core_values = (*identity.core_values, *identity.principles)
+    if core_values:
+        blocks.append("[Core values]\n" + _format_items(core_values))
+
+    temperament = tuple((trait.name, trait.description) for trait in identity.temperament) + tuple(
+        (trait, "") for trait in identity.traits
+    )
+    if temperament:
+        blocks.append("[Temperament]\n" + _format_pairs(temperament))
+
+    if identity.interests:
+        blocks.append("[Interests]\n" + _format_items(identity.interests))
+
+    anchors = tuple(
+        (anchor.context, anchor.guidance) for anchor in identity.behavioral_anchors
+    ) + tuple(("legacy boundary", boundary) for boundary in identity.boundaries)
+    if anchors:
+        blocks.append("[Behavioral anchors]\n" + _format_pairs(anchors))
+
+    if identity.anti_patterns:
+        blocks.append("[Anti-patterns]\n" + _format_items(identity.anti_patterns))
     return blocks
 
 

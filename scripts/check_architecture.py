@@ -37,6 +37,11 @@ LEGACY_SEMANTIC_COMPATIBILITY_CLASSES = {
     "MindAppraiser",
     "AutonomousCognitionRunner",
 }
+SCOPED_COGNITION_ENGINE_CLASSES = {
+    "_ScopedModelGenerationMixin",
+    "DispositionPlanner",
+    "LocalCognitionEngine",
+}
 CANONICAL_COMPOSITION_FILES = {"cli.py", "kernel.py"}
 
 
@@ -170,9 +175,9 @@ class _SemanticEntrypointVisitor(ast.NodeVisitor):
         if function_name in SEMANTIC_GENERATION_CALLS:
             if class_name == "PersistentPresenceRuntime":
                 self._violate(node, "PersistentPresenceRuntime owns direct semantic generation")
-            elif class_name == "LocalCognitionEngine":
+            elif class_name in SCOPED_COGNITION_ENGINE_CLASSES:
                 if function_name != "generate_for_run":
-                    self._violate(node, "LocalCognitionEngine must use generate_for_run")
+                    self._violate(node, f"{class_name} must use generate_for_run")
             elif class_name in LEGACY_SEMANTIC_COMPATIBILITY_CLASSES:
                 class_docstring = (
                     ast.get_docstring(class_node, clean=False) if class_node is not None else None
@@ -272,7 +277,8 @@ def main() -> int:
     print(
         "Core has no Discord/runtime dependency; runtime has no Discord/Neuro dependency; "
         "Discord adapter has no Core persistence/lifecycle ownership, and semantic model "
-        "generation remains on the actor-owned ConversationCore/LocalCognitionEngine routes."
+        "generation remains on scoped ConversationCore/LocalCognitionEngine/DispositionPlanner "
+        "engine seams."
     )
     return 0
 

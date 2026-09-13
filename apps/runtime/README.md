@@ -127,6 +127,23 @@ inert. MIND-1D owns proposal validation/application and effect authorization.
 MIND-1E adds the separate temporal admission path. No Character snapshot is added here because the runtime
 repository has no supported Character composition seam at this boundary.
 
+## COG-V1-C disposition planner
+
+`DispositionPlanner` is an opt-in model-backed seam for evaluating how a direct
+USER turn should be approached. It is not connected to the production USER
+conversation path. It sends at most the last four canonical role/text messages
+alongside Core's deterministic Character v0 planner projection, then strictly
+parses a bounded `DispositionCandidate`.
+
+The candidate can select only the existing Core disposition vocabulary and
+bounded reason codes. Runtime-owned mappings compile trusted `WorkingState.focus`
+from those validated values; model text never becomes guidance. The planner
+binds valid candidates to `CognitionPolicyDecision(attention=THINK,
+intervention=RESPOND)` only through an explicit caller request. It cannot choose
+attention, intervention, final prose, tools, actions, memory, temporal work,
+confidence, or reasoning text. `disposition_eval.py` adapts candidates to the
+existing COG-V1-A policy corpus without making a provider call.
+
 ## MIND-1D proposal application boundary
 
 `ProposalApplicationCoordinator` accepts only a `CognitionOutcome` carrying the

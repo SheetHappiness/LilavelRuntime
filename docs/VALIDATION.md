@@ -166,6 +166,20 @@ normal cancellation, three-way state/temporal/action status aggregation,
 temporal-success/action-failure partial reporting, unchanged duplicate fencing,
 and rejection of a synthetic direct-generation lane in `PersistentPresenceRuntime`.
 
+The focused COG-V1-C disposition-planner and evaluation proofs can be rerun
+from `apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_disposition_planner.py
+```
+
+This suite proves the strict structured planner parser, bounded recent
+canonical context, deterministic Character v0 projection, runtime-owned focus
+compilation, fixed direct-user `THINK`/`RESPOND` binding, and reuse of the
+direct-user subset of the COG-V1-A policy corpus. It uses a deterministic fake
+generation and does not establish live provider behavior or production
+USER-route integration.
+
 ### Core
 
 ```powershell

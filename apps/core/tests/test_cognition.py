@@ -7,13 +7,16 @@ import pytest
 
 from lilavel_core import (
     BehavioralAnchor,
+    CognitionReasonCode,
     DialogueExample,
+    DispositionCandidate,
     IdentityCanon,
     ResponseDisposition,
     SelfConcept,
     TemperamentTrait,
     WorkingState,
     compile_guidance,
+    compile_planner_guidance,
 )
 from lilavel_core.sidecar_protocol import MAX_GUIDANCE_BYTES, ProtocolError
 
@@ -203,3 +206,57 @@ def test_character_guidance_is_separate_from_normal_turn_behavior() -> None:
     assert all("respond to the current user turn" not in block for block in character)
     assert any("respond to the current user turn" in block for block in normal)
     assert any("Recent self-actions" in block for block in normal)
+
+
+def test_disposition_candidate_reuses_bounded_core_vocabulary() -> None:
+    candidate = DispositionCandidate(
+        aim="challenge",
+        stance="skeptical",
+        engagement="high",
+        directness="high",
+        desired_length="normal",
+        humor_allowed=False,
+        question_policy="avoid",
+        initiative="normal",
+        reason_codes=(CognitionReasonCode.CONTRADICTION,),
+    )
+
+    assert candidate.aim == "challenge"
+    with pytest.raises(ValueError):
+        DispositionCandidate(
+            "answer",
+            "neutral",
+            "normal",
+            "normal",
+            "normal",
+            False,
+            "avoid",
+            "normal",
+            (CognitionReasonCode.DIRECT_ADDRESS, CognitionReasonCode.DIRECT_ADDRESS),
+        )
+
+
+def test_planner_projection_is_derived_without_generation_style_sections() -> None:
+    projection = compile_planner_guidance(CANON)
+
+    assert projection == (
+        "[Planner values]\n- calm\n- precise\n- Use evidence.",
+        "[Planner boundaries]\n- Keep the identity stable.\n- Do not become generic.",
+    )
+    assert all("Voice" not in block for block in projection)
+    assert all("Representative dialogue" not in block for block in projection)
+
+
+def test_character_v0_planner_projection_contains_decision_fields_only() -> None:
+    from lilavel_core import LILAVEL_CHARACTER_V0
+
+    projection = compile_planner_guidance(LILAVEL_CHARACTER_V0)
+    rendered = "\n".join(projection)
+
+    assert "[Core values]" in rendered
+    assert "[Temperament]" in rendered
+    assert "[Interests]" in rendered
+    assert "[Behavioral anchors]" in rendered
+    assert "[Anti-patterns]" in rendered
+    assert "[Voice]" not in rendered
+    assert "Representative dialogue" not in rendered

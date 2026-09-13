@@ -191,6 +191,13 @@ An application-owned read-only projection may be appended through
 accepts either static blocks or a zero-argument builder; the builder receives no
 user text or transport metadata.
 
+COG-V1-C also exposes `build_disposition_planner_guidance()`, a deterministic
+projection of the same `IdentityCanon` containing only decision-relevant values,
+temperament, interests, behavioral anchors, and anti-patterns. It intentionally
+excludes voice and representative dialogue examples. This projection is a
+standalone runtime evaluation input and is not connected to normal
+`ConversationCore` production turns.
+
 ## Offline Character v0 evaluation
 
 `scripts/character_eval.py` builds a reproducible Character v0 evaluation packet

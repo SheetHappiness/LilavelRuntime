@@ -16,7 +16,16 @@ from .attention import (
     DeterministicAttentionPolicy,
 )
 from .cognition_episode import CognitionEpisodeRunner
-from .cognition_model import LocalCognitionEngine
+from .cognition_model import (
+    MAX_DISPOSITION_CONTEXT_MESSAGES,
+    MAX_DISPOSITION_PLANNER_RESULT_BYTES,
+    DispositionPlanner,
+    LocalCognitionEngine,
+    ModelBackedDispositionPlanner,
+    candidate_to_policy_decision,
+    compile_disposition_focus,
+    parse_disposition_candidate,
+)
 from .contracts import (
     MAX_ACTION_PROPOSAL_CONTENT_BYTES,
     MAX_COGNITION_PROPOSALS,
@@ -73,6 +82,13 @@ from .conversation_router import (
     PRESENTATION_OPEN,
     PRESENTATION_WATCH,
     CoreConversationRouter,
+)
+from .disposition_eval import (
+    COG_V1_C_SCENARIOS,
+    DispositionPlannerEvalResult,
+    evaluate_disposition_candidate,
+    evaluate_disposition_corpus,
+    run_disposition_planner_eval,
 )
 from .kernel import (
     DuplicateEnvironment,
@@ -259,6 +275,11 @@ __all__ = [
     "CognitionOutcome",
     "CognitionTrigger",
     "CognitionTriggerSource",
+    "DispositionPlanner",
+    "DispositionPlannerEvalResult",
+    "COG_V1_C_SCENARIOS",
+    "MAX_DISPOSITION_CONTEXT_MESSAGES",
+    "MAX_DISPOSITION_PLANNER_RESULT_BYTES",
     "CoreConversationRouter",
     "ConversationExecutionAdapter",
     "ConversationExecutionResult",
@@ -284,6 +305,7 @@ __all__ = [
     "JsonValue",
     "LilavelRuntime",
     "LocalCognitionEngine",
+    "ModelBackedDispositionPlanner",
     "LilavelRuntimeError",
     "LilavelRuntimeHealth",
     "MindCompositionUnavailable",
@@ -352,6 +374,12 @@ __all__ = [
     "PresenceWakeDecision",
     "PresenceWakePolicy",
     "parse_mind_appraisal",
+    "candidate_to_policy_decision",
+    "compile_disposition_focus",
+    "parse_disposition_candidate",
+    "evaluate_disposition_candidate",
+    "evaluate_disposition_corpus",
+    "run_disposition_planner_eval",
     "MAX_APPLICATION_FENCES",
     "MAX_APPLICATION_REPLAY_WINDOW",
     "ActionApplication",
