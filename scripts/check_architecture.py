@@ -88,6 +88,40 @@ E2_COGNITION_FORBIDDEN_CALLS = {
     "dispatch",
     "execute_batch",
 }
+CONTEXT_BUILDER_FORBIDDEN_MODULES = {
+    "lilavel_core.conversation",
+    "lilavel_core.sidecar_protocol",
+    "lilavel_core.runtime",
+    "lilavel_runtime.cognition_model",
+    "lilavel_runtime.conversation_adapter",
+    "lilavel_runtime.conversation_router",
+    "lilavel_runtime.tool_session",
+}
+CONTEXT_BUILDER_FORBIDDEN_NAMES = {
+    "ModelRequest",
+    "RuntimeGeneration",
+    "GenerationHandle",
+    "ConversationCore",
+    "ObservationWindow",
+}
+CONTEXT_BUILDER_FORBIDDEN_CALLS = {
+    "generate",
+    "generate_for_run",
+    "execute",
+    "execute_batch",
+    "apply_deltas",
+    "create_intention",
+    "mark_expressed",
+    "admit",
+    "commit",
+    "cancel",
+    "dispatch",
+}
+PRODUCTION_REQUEST_FILES = {
+    "conversation.py",
+    "cognition_model.py",
+    "presence.py",
+}
 
 
 def _module_name(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
@@ -428,6 +462,64 @@ def _e2_ambient_violations() -> list[str]:
     return violations
 
 
+def _context_builder_violations() -> list[str]:
+    """Keep CTX-V1-B assembly typed, read-only, and outside model requests."""
+
+    path = RUNTIME_SOURCE / "lilavel_runtime" / "context_builder.py"
+    if not path.exists():
+        return ["apps/runtime: ContextFrameBuilder module is missing"]
+    violations: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for module in _module_name(node):
+                if _matches(module, tuple(CONTEXT_BUILDER_FORBIDDEN_MODULES)):
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: context builder imports {module}"
+                    )
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name in CONTEXT_BUILDER_FORBIDDEN_NAMES:
+                        violations.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: context builder imports "
+                            f"{alias.name}"
+                        )
+        elif isinstance(node, ast.Name) and node.id in CONTEXT_BUILDER_FORBIDDEN_NAMES:
+            violations.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}: context builder references {node.id}"
+            )
+        elif isinstance(node, ast.Call):
+            called_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if called_name in CONTEXT_BUILDER_FORBIDDEN_CALLS:
+                violations.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: context builder calls "
+                    f"owner/effect method {called_name}"
+                )
+
+    for production_file in PRODUCTION_REQUEST_FILES:
+        production_path = RUNTIME_SOURCE / "lilavel_runtime" / production_file
+        if not production_path.exists():
+            continue
+        production_tree = ast.parse(
+            production_path.read_text(encoding="utf-8"), filename=str(production_path)
+        )
+        for node in ast.walk(production_tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            if any(module.endswith("context_builder") for module in _module_name(node)):
+                violations.append(
+                    f"{production_path.relative_to(ROOT)}:{node.lineno}: production request "
+                    "assembly imports ContextFrameBuilder"
+                )
+    return violations
+
+
 def main() -> int:
     violations = [
         *_core_violations(),
@@ -435,6 +527,7 @@ def main() -> int:
         *_semantic_entrypoint_violations(),
         *_e1_intervention_violations(),
         *_e2_ambient_violations(),
+        *_context_builder_violations(),
         *_adapter_violations(),
         *_discord_environment_violations(),
     ]

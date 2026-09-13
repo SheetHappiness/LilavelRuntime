@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from .attention import DeterministicAttentionCognitionGate
 from .cognition_episode import CognitionEpisodeRunner
+from .context_builder import (
+    ContextFrameBuilder,
+    MindStateIntentionResolver,
+    TemporalCoordinatorResolver,
+)
 from .contracts import (
     NO_COGNITION,
     CognitionDecision,
@@ -170,6 +175,7 @@ class LilavelRuntime:
         shutdown_timeout: float = 5.0,
         ambient_speech_mode: AmbientSpeechRolloutMode | None = None,
         speech_context_resolver: SpeechPermissionContextResolver | None = None,
+        context_builder: ContextFrameBuilder | None = None,
     ) -> None:
         if event_queue_size <= 0:
             raise ValueError("event_queue_size must be positive")
@@ -189,6 +195,8 @@ class LilavelRuntime:
         )
         self._presence = presence
         self._semantic_actor = semantic_actor or SemanticActor(scope_id="runtime")
+        if context_builder is not None and type(context_builder) is not ContextFrameBuilder:
+            raise TypeError("context_builder must be a ContextFrameBuilder")
         if mind_executor is not None and (
             cognition_engine is not None
             or mind_state is not None
@@ -237,6 +245,17 @@ class LilavelRuntime:
             )
         self._mind_executor = mind_executor
         self._temporal_coordinator = temporal_coordinator
+        self._context_builder = context_builder or ContextFrameBuilder(
+            clock=temporal_coordinator,
+            intention_resolver=(
+                MindStateIntentionResolver(mind_state) if mind_state is not None else None
+            ),
+            temporal_resolver=(
+                TemporalCoordinatorResolver(temporal_coordinator)
+                if temporal_coordinator is not None
+                else None
+            ),
+        )
         self._temporal_host = (
             TemporalHost(temporal_coordinator, self.submit_cognition)
             if temporal_coordinator is not None
@@ -316,6 +335,12 @@ class LilavelRuntime:
         """Return the optional runtime-owned temporal coordinator."""
 
         return self._temporal_coordinator
+
+    @property
+    def context_builder(self) -> ContextFrameBuilder:
+        """Return the inert runtime-owned context assembly seam."""
+
+        return self._context_builder
 
     @property
     def ambient_speech_mode(self) -> AmbientSpeechRolloutMode:

@@ -2,9 +2,8 @@
 
 ``ContextFrame`` is a runtime-owned view for one semantic purpose. It is not
 canonical conversation history, an observation window, MindState, memory, a
-permission object, or a mutable store. CTX-V1-A defines the contracts and
-deterministic projections only; later phases may build frames from authoritative
-runtime state and decide where to inject them.
+permission object, or a mutable store. CTX-V1-B adds the runtime-owned builder
+in a separate module; production model request assembly remains unchanged.
 """
 
 from __future__ import annotations
@@ -484,6 +483,12 @@ def compile_context_projection(frame: ContextFrame) -> ContextProjection:
         )
         blocks.append(_render_intentions(frame.intentions))
     else:
+        blocks.append(
+            _render_interaction(
+                frame.interaction,
+                include_other_surface=False,
+            )
+        )
         blocks.append(_render_intentions(frame.intentions))
         blocks.append(_render_temporal(frame.temporal))
         blocks.append(_render_capabilities(frame.capabilities))

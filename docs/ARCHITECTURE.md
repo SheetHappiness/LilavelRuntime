@@ -20,7 +20,8 @@ the existing inert outcome and application boundaries, with current-state
 social revalidation immediately before every external `SPEAK` effect. Broader
 autonomous capabilities are not implied by these slices. CTX-V1-A adds a
 stable Core-owned `OperatingCanon` and inert, runtime-owned `ContextFrame`
-contracts/projections; it does not inject a context frame into any production
+contracts/projections. CTX-V1-B adds the read-only runtime builder and typed
+purpose selection; neither phase injects a context frame into a production
 `ModelRequest`.
 
 ## Top-level product boundary
@@ -468,9 +469,60 @@ effect; E2 effect-time revalidation remains authoritative.
 Frame IDs, scope IDs, capture timestamps, and provenance references are
 volatile/runtime metadata and are excluded from the stable OperatingCanon
 output. ContextFrame has no canonical messages, summaries, or memory records.
-CTX-V1-A leaves production request composition unchanged. CTX-V1-B can add a
-runtime-owned builder and purpose-specific projections from authoritative
-state; CTX-V1-C can make any deliberate production request integration.
+
+### CTX-V1-B runtime builder
+
+`ContextFrameBuilder` lives in
+`apps/runtime/src/lilavel_runtime/context_builder.py`. It receives small typed
+resolver seams and makes one immutable frame without retaining their results or
+mutating an owner. The authoritative map is deliberately narrow:
+
+| Frame domain | Authoritative seam | If not established |
+| --- | --- | --- |
+| environment/surface | runtime composition's provider-neutral environment resolver | `UNKNOWN` |
+| interaction/activity/participants | runtime or adapter interaction resolver | `UNKNOWN` |
+| intentions | `MindStateIntentionResolver` plus an explicit scope/current-intention relation | `KNOWN_EMPTY` only for an empty/matched-empty MindState; otherwise `UNKNOWN` |
+| capabilities | runtime declarations and `VALIDATED_ADAPTER` contributions | `UNKNOWN`; conflicts are `UNAVAILABLE` |
+| social | typed E1/E2 current `SocialPermissionContext` resolver | `UNKNOWN` |
+| temporal | current runtime clock and optional `TemporalCoordinatorResolver` | current time remains current; wake relation is unknown |
+| source refs | trusted runtime provenance references | omitted |
+
+The builder never reads canonical messages, arbitrary observation payloads,
+installed tool lists, model output, or Discord-specific classes. The kernel
+exposes a default builder backed by the configured `MindState` and
+`TemporalCoordinator`; environment, interaction, capability, social, and
+provenance facts remain unknown until a trusted composition supplies the
+corresponding resolver. No generic runtime-state bag was added.
+
+Selection is deterministic and minimal. `USER_RESPONSE` keeps current
+environment, direct interaction, explicitly linked intentions, and current
+capabilities; it omits other-surface activity, social state, unrelated
+observations, and ordinary temporal data. `AMBIENT_COGNITION` adds current
+other-surface activity, advisory social state, and trusted source references,
+but has no direct conversation history. `INTERNAL_APPRAISAL` keeps only current
+activity and explicitly linked intentions; it does not imply speech or tools.
+`TEMPORAL_WAKE` uses current environment/activity, linked intentions,
+capabilities, trusted wake/source provenance, and the injected current clock;
+it never reconstructs the scheduled world state. A USER temporal continuation
+may retain a trusted temporal relation in the frame, while the ordinary user
+projection still does not render precise time.
+
+The projection compiler has a stable block order: purpose, environment,
+interaction, relevant intentions, social context when selected, temporal
+context when selected, then capabilities. It renders no frame IDs, timestamps,
+opaque source refs, or internal provenance tokens by default. Current time is
+rendered only for `TEMPORAL_WAKE`. Resolver exceptions fail closed to bounded
+`UNKNOWN` views; malformed typed results and untrusted references are rejected.
+Intentions are structurally capped at 4, capabilities at 8, participants at 8,
+source refs at 8, projection blocks at 8, and rendered UTF-8 output at 8 KiB.
+Intention prose is clipped at its field bound before compilation; the final
+projection is never byte-sliced. Social context is advisory evidence only and
+cannot grant an effect; E2 revalidates social permission at application time
+because a captured frame may be stale.
+
+CTX-V1-B leaves production request composition unchanged. CTX-V1-C is the
+handoff for deliberate USER/NON_USER model-request integration, prompt-layer
+ordering, caching-aware stable prefixes, and freshness/behavior evaluation.
 
 ## MIND-1F-B semantic admission actor
 
@@ -740,7 +792,7 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, inert bounded `ContextFrame` contracts and deterministic purpose projections, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, inert bounded `ContextFrame` contracts, the deterministic runtime-owned `ContextFrameBuilder` and purpose projections, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity, disposition, and stable `OperatingCanon` value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
