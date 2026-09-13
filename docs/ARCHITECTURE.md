@@ -14,8 +14,11 @@ actor with the new generic/temporal MIND path; MIND-1F-D1 moves production
 Discord reactive conversation admission under that actor; MIND-1F-D2 moves
 normal local CLI conversation admission under the same actor; MIND-1F-E moves
 conversation-completion appraisal and deterministic idle opportunities into the
-same actor as `INTERNAL` `NON_USER` cognition. Broader autonomous capabilities
-are not implied by these slices.
+same actor as `INTERNAL` `NON_USER` cognition. COG-V1-E2 completes the
+cognition track by wiring model-backed ambient intervention candidates through
+the existing inert outcome and application boundaries, with current-state
+social revalidation immediately before every external `SPEAK` effect. Broader
+autonomous capabilities are not implied by these slices.
 
 ## Top-level product boundary
 
@@ -313,14 +316,103 @@ forgotten constraint, stuck discussion, or unique information. Interest
 affinity, a witty thought, and high relevance alone are insufficient. Freshness
 uses a reviewable per-event-class `FRESH | AGING | STALE` mapping rather than a
 universal timeout; continuity/temporal response may survive `AGING`, while
-unsolicited interjection remains `FRESH`-only. Revalidation is a future E2
-effect-time seam and currently emits no speech.
+unsolicited interjection remains `FRESH`-only. E1 intentionally stopped before
+effect-time revalidation; E2 supplies the production integration described below.
 
 There is no ambient `INTERRUPT` value. Voice/VAD/barge-in timing is a separate
 future domain. E1 adds no model call, generation, proposal application, or
 presentation wiring, and production autonomous ambient speech remains
 disabled. The human-authored E1 corpus and silence-first metrics live in
 `apps/runtime/src/lilavel_runtime/intervention_eval.py`.
+
+## COG-V1-E2 production ambient intervention integration
+
+COG-V1-E2 wires only external ambient `THINK` episodes to one model-backed
+candidate inference. The model returns a strict bounded object with top-level
+`intervention`, `reason_codes`, optional `disposition`, optional `utterance`,
+and the existing bounded state/temporal proposal lists. The top-level reason
+codes are also the evidence used for the disposition compilation; destination,
+channel, surface, tool, executor, floor, freshness, budget, handled state, and
+permission fields are not part of the model schema.
+
+```text
+ambient Observation
+        │
+        ▼
+Attention: DROP | NOTE | THINK
+        │ THINK
+        ▼
+SemanticActor: NON_USER
+        │
+        ▼
+CognitionEpisodeRunner
+        │
+        ▼
+LocalCognitionEngine: one model inference
+        │
+        ▼
+validated AmbientInterventionCandidate
+        │
+        ▼
+inert CognitionOutcome
+        │
+        ▼
+ProposalApplicationCoordinator
+        │ state/temporal commit, then current SPEAK revalidation
+        ▼
+existing P4 ActionProposal.SPEAK route or denied speech
+```
+
+`NONE` compiles to no presentation action. `RESPOND` and `INTERJECT` each
+require a validated disposition and bounded non-empty utterance and compile to
+the existing `ActionProposal(ActionProposalKind.SPEAK, content)` shape. The
+disposition remains conceptually separate HOW data even though intervention
+and disposition are produced by the same inference. `CognitionEpisodeRunner`
+and the model engine remain advisory and inert; `ProposalApplicationCoordinator`
+is still the only effect authority.
+
+Immediately before P4 batch execution, the coordinator rebuilds a
+runtime-owned `SocialPermissionContext` through the composition resolver and
+re-runs the deterministic E1 policy. A candidate that was valid during
+cognition can therefore be denied for current stale/handled state, backoff,
+floor, unavailable surface, or exhausted budget. Missing trusted context fails
+closed. Denied speech is action-level settlement: already-valid state and
+temporal proposals remain applied and are reported alongside the denied
+`SPEAK`; cognition itself is not rolled back. This guard applies to every
+effectful `SPEAK` source, including future internal or temporal producers.
+
+The model never selects a destination. The trusted action-tool mapping supplied
+by runtime composition selects the existing target, and the P4 registry/session
+performs the only external effect. A confirmed P4 effect, and only a confirmed
+effect, updates runtime-owned recent-speech and unsolicited-intervention
+accounting. Shadow decisions do not consume that accounting. The existing
+`STAY_SILENT` proposal remains only for narrow legacy idle compatibility; an
+ordinary ambient `NONE` does not create it.
+
+Ambient speech has explicit rollout modes:
+
+```text
+OFF    cognition may run; ambient SPEAK is denied
+SHADOW full candidate and current revalidation pipeline; would-speak is recorded, no effect
+LIVE   only validated and currently permitted SPEAK reaches existing P4 authority
+```
+
+The conservative production default is `OFF`. The canonical CLI explicitly
+selects `OFF`, and no Discord live startup is changed to enable ambient
+speech. `LIVE` remains a composition choice that requires a trusted current
+social-context resolver; no unsafe Discord destination shortcut is invented.
+There is no new semantic lane, no direct Discord/network send from cognition,
+and voice interrupt/VAD/barge-in remains deferred.
+
+With E2, COG-V1 is architecturally complete as:
+
+```text
+Observation → Attention → Cognition → Intervention → Disposition → Authorized Effect
+```
+
+Direct `USER` work and ambient `NON_USER` work remain distinct paths beneath
+one character-wide `SemanticActor`. Direct USER disposition defaults and D2
+selective behavior are unchanged.
 
 ## MIND-1F-B semantic admission actor
 

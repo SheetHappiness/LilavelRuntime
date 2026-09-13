@@ -239,6 +239,22 @@ human-authored counterfactual corpus, intervention-specific confusion and
 precision/recall metrics, and the explicit `ALWAYS_NONE` silence baseline. It
 does not establish production ambient speech; E1 does not wire such a path.
 
+The focused COG-V1-E2 production ambient intervention proofs can be rerun from
+`apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_cog_v1_e2.py
+```
+
+This suite proves the single-inference ambient schema, strict fail-closed
+candidate validation, NONE/RESPOND/INTERJECT compilation, direct USER and
+existing action-lane preservation, OFF/SHADOW/LIVE rollout behavior,
+effect-time stale/social revalidation, P4-only external routing, state and
+temporal preservation after denied speech, confirmed-effect accounting,
+unknown-effect handling, and shared guarding of internal/temporal SPEAK
+sources. It is deterministic and does not establish live provider, Discord,
+or production LIVE composition behavior.
+
 ### Core
 
 ```powershell
