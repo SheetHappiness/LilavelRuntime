@@ -77,9 +77,7 @@ async def _noop_executor(
 def _make_uncontainable_executor(
     release: asyncio.Event,
 ) -> Callable[[SemanticEpisode, SemanticCancellationToken], Awaitable[object]]:
-    async def execute(
-        episode: SemanticEpisode, cancellation: SemanticCancellationToken
-    ) -> object:
+    async def execute(episode: SemanticEpisode, cancellation: SemanticCancellationToken) -> object:
         del episode, cancellation
         return await _uncontainable(release)
 
@@ -143,9 +141,7 @@ async def test_poison_propagates_to_runtime_and_closes_both_semantic_lanes() -> 
         _request(actor, "new-user", SemanticPriority.USER, _noop_executor)
     )
     rejected_non_user = await actor.admit(
-        _request(
-            actor, "new-internal", SemanticPriority.NON_USER, _noop_executor
-        )
+        _request(actor, "new-internal", SemanticPriority.NON_USER, _noop_executor)
     )
     assert rejected_user.status.value == "rejected"
     assert rejected_non_user.status.value == "rejected"
