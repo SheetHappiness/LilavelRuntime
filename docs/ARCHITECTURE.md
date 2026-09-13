@@ -167,12 +167,12 @@ model call, action proposal, tool call, response disposition, or temporal wake.
 
 Each immutable `AwarenessNote` contains a runtime-local note ID, exact
 `(semantic scope, environment, source subject)` key, bounded observation/event
-references, admitted/observed timestamps, a five-minute expiry, and the exact
-bounded deterministic attention reason codes. It deliberately contains no raw
-WorldEvent payload, message text, transcript, model confidence, or mutable
-status. The source path is therefore `WorldEvent → admitted Observation →
-AttentionVerdict(NOTE) → PeripheralAwarenessBuffer`; arbitrary external text
-cannot call the typed admission seam.
+references, admitted/observed/last-seen timestamps, a five-minute expiry, the
+exact bounded deterministic attention reason codes, and bounded lifecycle
+metadata. It deliberately contains no raw WorldEvent payload, message text,
+transcript, or model confidence. The source path is therefore `WorldEvent →
+admitted Observation → AttentionVerdict(NOTE) → PeripheralAwarenessBuffer`;
+arbitrary external text cannot call the typed admission seam.
 
 The buffer retains at most 16 notes per exact scope and 64 notes across the
 runtime owner, evicting oldest-first FIFO notes deterministically at either
@@ -185,12 +185,43 @@ recovery, ConversationStore/evidence persistence, memory consolidation, or
 retrieval semantics.
 
 `PeripheralAwarenessBuffer` is distinct from `ObservationWindow`, which is the
-transient perception window used to assemble cognition episodes. AWARE-V1-A
-also does not mutate MindState, social permission, effect authority, or
-ContextFrame and does not project awareness into production model requests.
-Deterministic deduplication, supersession, handled state, and retention quality
-belong to AWARE-V1-B; model-facing `WHILE YOU WERE BUSY` projection belongs to
-AWARE-V1-C.
+transient perception window used to assemble cognition episodes. AWARE-V1-A/B
+do not mutate MindState, social permission, effect authority, or ContextFrame
+and do not project awareness into production model requests.
+
+## AWARE-V1-B lifecycle quality
+
+AWARE-V1-B keeps awareness bounded and process-local while improving the
+quality of retained NOTE state. `AwarenessKey` is the typed, immutable seam for
+validated runtime/adapter metadata: `dedup_key` identifies equivalent
+occurrences and `supersession_key` identifies a state family in which newer
+trusted state replaces older state. Plain strings are rejected at the buffer
+boundary. When no richer key is supplied, the buffer hashes only the exact
+runtime event identity, route kind, scope, surface, and deterministic reason
+codes; payload text is never used.
+
+Duplicate coalescing preserves the first note ID and admission time, replaces
+the bounded provenance pair and reason codes with the latest occurrence,
+refreshes `last_seen_at` and the five-minute TTL, and saturating-increments the
+bounded occurrence count. A distinct note with the same explicit supersession
+key replaces the older active note only within the same exact scope. Missing
+supersession metadata never causes an inferred replacement. Coalescing retains
+the newest observation/event provenance pair, so the two-reference bound is
+always respected.
+
+Handled state is a separate explicit transition. `mark_handled()` requires a
+buffer-bound process-local `AwarenessHandledAuthority`; model output and raw
+adapter values cannot supply it. Handled and superseded records are omitted
+from active snapshots and removed at the next structural compaction. Expiry is
+clock-driven and never becomes handled. Compaction runs on admission, active
+snapshot, count, and explicit lifecycle reconciliation before per-scope/global
+oldest-effective-note overflow eviction. Active snapshots are immutable tuples
+ordered oldest-to-newest by `last_seen_at`, then note ID.
+
+AWARE-V1-B adds no model call, cognition trigger, action/effect, wake,
+persistence, memory, canonical-history, or production ContextFrame behavior.
+`snapshot_active(scope, now)` is the read seam reserved for AWARE-V1-C, which
+may later choose a bounded non-obligatory peripheral-awareness projection.
 
 ## COG-V1-C model-backed disposition planning
 

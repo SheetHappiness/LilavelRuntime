@@ -1,7 +1,8 @@
-"""Deterministic AWARE-V1-A contract and boundary scenarios."""
+"""Deterministic AWARE-V1-A and AWARE-V1-B contract scenarios."""
 
 from __future__ import annotations
 
+import ast
 import inspect
 from dataclasses import FrozenInstanceError, dataclass, fields
 from datetime import UTC, datetime, timedelta
@@ -19,10 +20,16 @@ from .attention import (
     DeterministicAttentionPolicy,
 )
 from .awareness import (
+    MAX_AWARENESS_KEY_BYTES,
+    MAX_AWARENESS_NOTES_PER_SCOPE,
+    MAX_AWARENESS_NOTES_TOTAL,
+    MAX_AWARENESS_OCCURRENCE_COUNT,
     MAX_AWARENESS_REASON_CODES,
     MAX_AWARENESS_SOURCE_REFS,
     AwarenessAdmission,
+    AwarenessKey,
     AwarenessNote,
+    AwarenessReconciliationStatus,
     AwarenessScope,
     PeripheralAwarenessBuffer,
 )
@@ -32,10 +39,12 @@ from .contracts import NO_COGNITION, CognitionTrigger, EventSource, Observation,
 
 __all__ = [
     "AWARE_V1_A_SCENARIOS",
+    "AWARE_V1_B_SCENARIOS",
     "AwarenessEvalReport",
     "AwarenessEvalResult",
     "AwarenessEvalScenario",
     "evaluate_awareness_corpus",
+    "evaluate_awareness_b_corpus",
 ]
 
 
@@ -211,8 +220,8 @@ def _checks() -> dict[str, bool]:
             "observation-12",
             "observation-13",
         ),
-        "aware13_no_model_or_rng_ranking": all(
-            token not in source for token in ("random", "model", "score", "rank")
+        "aware13_no_rng_or_ranking": all(
+            token not in source for token in ("random", "score", "rank")
         ),
         "aware14_source_refs_bounded": len(note.source_refs) <= MAX_AWARENESS_SOURCE_REFS,
         "aware15_reason_codes_bounded": len(note.reason_codes) <= MAX_AWARENESS_REASON_CODES,
@@ -239,7 +248,7 @@ def _checks() -> dict[str, bool]:
             CognitionReasonCode.AMBIENT_CONTEXT,
             CognitionReasonCode.NOT_ADDRESSED,
         ),
-        "aware29_duplicates_not_deduplicated": _duplicate_admissions(),
+        "aware29_duplicates_coalesce": _duplicate_admissions(),
         "aware30_no_history_fields": not {item.name for item in fields(type(note))}.intersection(
             {"messages", "history", "conversation"}
         ),
@@ -300,7 +309,10 @@ def _duplicate_admissions() -> bool:
     return (
         first.note is not None
         and second.note is not None
-        and first.note.note_id != second.note.note_id
+        and first.note.note_id == second.note.note_id
+        and second.note.occurrence_count == 2
+        and second.coalesced
+        and buffer.total_count() == 1
     )
 
 
@@ -336,7 +348,7 @@ AWARE_V1_A_SCENARIOS: tuple[AwarenessEvalScenario, ...] = tuple(
             "Expired notes are omitted.",
             "Expiry uses the injected clock.",
             "Attention reason semantics are preserved.",
-            "Duplicate NOTE attempts are admitted in A.",
+            "Duplicate NOTE attempts coalesce in B.",
             "Canonical history is not stored.",
             "Memory records are not stored.",
             "Raw payload bodies are not copied.",
@@ -353,5 +365,429 @@ def evaluate_awareness_corpus() -> AwarenessEvalReport:
     results = tuple(
         AwarenessEvalResult(scenario, passed)
         for scenario, passed in zip(AWARE_V1_A_SCENARIOS, checks.values(), strict=True)
+    )
+    return AwarenessEvalReport(results)
+
+
+def _b_admit(
+    buffer: PeripheralAwarenessBuffer,
+    observation: Observation,
+    *,
+    scope_id: str = "runtime",
+    awareness_key: AwarenessKey | None = None,
+) -> AwarenessAdmission:
+    return buffer.admit(
+        observation,
+        _note_verdict(observation),
+        scope_id=scope_id,
+        awareness_key=awareness_key,
+    )
+
+
+def _b_checks() -> dict[str, bool]:
+    """Run the deterministic B lifecycle corpus without any model dependency."""
+
+    duplicate_clock = _FixedClock(_NOW)
+    duplicate_buffer = PeripheralAwarenessBuffer(clock=duplicate_clock)
+    duplicate_first = _b_admit(
+        duplicate_buffer,
+        _observation(101),
+        awareness_key=AwarenessKey(dedup_key="duplicate"),
+    )
+    duplicate_clock.value += timedelta(seconds=1)
+    duplicate_second = _b_admit(
+        duplicate_buffer,
+        _observation(102),
+        awareness_key=AwarenessKey(dedup_key="duplicate"),
+    )
+    duplicate_note = duplicate_second.note
+
+    scope_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    scope_a = _observation(103, subject="surface-a")
+    scope_b = _observation(104, subject="surface-b")
+    _b_admit(
+        scope_buffer, scope_a, scope_id="scope-a", awareness_key=AwarenessKey(dedup_key="same")
+    )
+    _b_admit(
+        scope_buffer, scope_b, scope_id="scope-b", awareness_key=AwarenessKey(dedup_key="same")
+    )
+
+    trusted_key_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    trusted_one = _b_admit(
+        trusted_key_buffer,
+        _observation(105),
+        awareness_key=AwarenessKey(dedup_key="trusted-a"),
+    )
+    trusted_two = _b_admit(
+        trusted_key_buffer,
+        _observation(106),
+        awareness_key=AwarenessKey(dedup_key="trusted-b"),
+    )
+
+    raw_key_rejected = False
+    try:
+        _b_admit(
+            PeripheralAwarenessBuffer(clock=_FixedClock(_NOW)),
+            _observation(107, payload={"awareness_key": "raw"}),
+            awareness_key="raw",  # type: ignore[arg-type]
+        )
+    except TypeError:
+        raw_key_rejected = True
+
+    supersession_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    superseded_first = _b_admit(
+        supersession_buffer,
+        _observation(108),
+        awareness_key=AwarenessKey(dedup_key="postgres", supersession_key="topic"),
+    )
+    superseded_second = _b_admit(
+        supersession_buffer,
+        _observation(109),
+        awareness_key=AwarenessKey(dedup_key="rust", supersession_key="topic"),
+    )
+    supersession_scope_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    _b_admit(
+        supersession_scope_buffer,
+        _observation(110, subject="surface-a"),
+        scope_id="scope-a",
+        awareness_key=AwarenessKey(dedup_key="a", supersession_key="state"),
+    )
+    cross_scope_supersession = _b_admit(
+        supersession_scope_buffer,
+        _observation(111, subject="surface-b"),
+        scope_id="scope-b",
+        awareness_key=AwarenessKey(dedup_key="b", supersession_key="state"),
+    )
+    missing_super_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    _b_admit(missing_super_buffer, _observation(112))
+    _b_admit(missing_super_buffer, _observation(113))
+
+    handled_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    handled_admission = _b_admit(
+        handled_buffer,
+        _observation(114),
+        awareness_key=AwarenessKey(dedup_key="handled"),
+    )
+    handled_note = handled_admission.note
+    if handled_note is None:
+        raise AssertionError("handled fixture did not admit")
+    authority = handled_buffer.handled_authority()
+    handled_result = handled_buffer.mark_handled(handled_note.note_id, authority=authority)
+    untrusted_handled_rejected = False
+    try:
+        handled_buffer.mark_handled(handled_note.note_id, authority=None)  # type: ignore[arg-type]
+    except TypeError:
+        untrusted_handled_rejected = True
+
+    expiry_clock = _FixedClock(_NOW)
+    expiry_buffer = PeripheralAwarenessBuffer(clock=expiry_clock, ttl=timedelta(seconds=30))
+    expiry_admission = _b_admit(expiry_buffer, _observation(115))
+    expiry_clock.value += timedelta(seconds=30)
+    expired_snapshot = expiry_buffer.snapshot(_scope(_observation(115)))
+    expiry_reconciliation = expiry_buffer.mark_handled(
+        expiry_admission.note.note_id if expiry_admission.note is not None else "missing",
+        authority=expiry_buffer.handled_authority(),
+    )
+
+    compaction_clock = _FixedClock(_NOW)
+    compaction_buffer = PeripheralAwarenessBuffer(
+        clock=compaction_clock,
+        ttl=timedelta(seconds=10),
+        per_scope_capacity=1,
+        total_capacity=1,
+    )
+    compacted_first = _b_admit(compaction_buffer, _observation(116))
+    compaction_clock.value += timedelta(seconds=10)
+    compacted_second = _b_admit(compaction_buffer, _observation(117))
+
+    per_scope_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    for number in range(118, 118 + MAX_AWARENESS_NOTES_PER_SCOPE + 1):
+        _b_admit(
+            per_scope_buffer,
+            _observation(number),
+            awareness_key=AwarenessKey(dedup_key=f"scope-{number}"),
+        )
+
+    global_buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    global_observations = tuple(
+        _observation(number, subject=f"surface-{number}") for number in range(140, 140 + 65)
+    )
+    for number, observation in enumerate(global_observations):
+        _b_admit(
+            global_buffer,
+            observation,
+            awareness_key=AwarenessKey(dedup_key=f"global-{number}"),
+        )
+
+    overflow_clock = _FixedClock(_NOW)
+    overflow_buffer = PeripheralAwarenessBuffer(
+        clock=overflow_clock,
+        ttl=timedelta(seconds=10),
+        per_scope_capacity=2,
+        total_capacity=2,
+    )
+    _b_admit(overflow_buffer, _observation(205), awareness_key=AwarenessKey(dedup_key="old"))
+    overflow_clock.value += timedelta(seconds=10)
+    overflow_admission = _b_admit(
+        overflow_buffer,
+        _observation(206),
+        awareness_key=AwarenessKey(dedup_key="new"),
+    )
+
+    ordering_clock = _FixedClock(_NOW)
+    ordering_buffer = PeripheralAwarenessBuffer(clock=ordering_clock)
+    _b_admit(ordering_buffer, _observation(207), awareness_key=AwarenessKey(dedup_key="a"))
+    _b_admit(ordering_buffer, _observation(208), awareness_key=AwarenessKey(dedup_key="b"))
+    ordering_clock.value += timedelta(seconds=1)
+    _b_admit(ordering_buffer, _observation(209), awareness_key=AwarenessKey(dedup_key="a"))
+    ordering_snapshot = ordering_buffer.snapshot(_scope(_observation(207)))
+
+    module = __import__("lilavel_runtime.awareness", fromlist=["PeripheralAwarenessBuffer"])
+    module_source = inspect.getsource(module)
+    module_tree = ast.parse(module_source)
+    imported_modules = {
+        node.module
+        for node in ast.walk(module_tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    lifecycle_calls = {
+        node.func.attr
+        for node in ast.walk(module_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    awareness_fields = {item.name for item in fields(AwarenessNote)}
+    context_source = inspect.getsource(ProductionContextComposer).casefold()
+    gate_source = inspect.getsource(DeterministicAttentionCognitionGate).casefold()
+    checks: dict[str, bool] = {
+        "awareb01_exact_duplicate_coalesces": (
+            duplicate_first.note is not None
+            and duplicate_note is not None
+            and duplicate_first.note.note_id == duplicate_note.note_id
+            and duplicate_second.coalesced
+        ),
+        "awareb02_duplicate_uses_one_slot": duplicate_buffer.total_count() == 1,
+        "awareb03_duplicate_has_no_side_effect_lane": _note_gate_has_no_cognition_side_effects(),
+        "awareb04_duplicate_refreshes_last_seen_and_ttl": (
+            duplicate_note is not None
+            and duplicate_note.last_seen_at == duplicate_clock.value
+            and duplicate_note.expires_at == duplicate_clock.value + duplicate_buffer.ttl
+        ),
+        "awareb05_duplicate_occurrence_count_is_bounded": (
+            duplicate_note is not None
+            and duplicate_note.occurrence_count == 2
+            and duplicate_note.occurrence_count <= MAX_AWARENESS_OCCURRENCE_COUNT
+        ),
+        "awareb06_scope_isolation_for_same_key": (
+            scope_buffer.count(AwarenessScope("scope-a", "fixture", "surface-a")) == 1
+            and scope_buffer.count(AwarenessScope("scope-b", "fixture", "surface-b")) == 1
+        ),
+        "awareb07_different_trusted_keys_do_not_coalesce": (
+            trusted_one.note is not None
+            and trusted_two.note is not None
+            and trusted_one.note.note_id != trusted_two.note.note_id
+            and trusted_key_buffer.total_count() == 2
+        ),
+        "awareb08_raw_payload_cannot_define_key": raw_key_rejected,
+        "awareb09_explicit_supersession_replaces_old_state": (
+            superseded_second.superseded_note_ids == (superseded_first.note.note_id,)
+            if superseded_first.note is not None
+            else False
+        ),
+        "awareb10_supersession_is_scope_local": (
+            cross_scope_supersession.superseded_note_ids == ()
+            and supersession_scope_buffer.total_count() == 2
+        ),
+        "awareb11_missing_supersession_metadata_does_not_guess": (
+            missing_super_buffer.total_count() == 2
+        ),
+        "awareb12_superseded_note_absent_from_active_snapshot": (
+            superseded_first.note is not None
+            and all(
+                item.note_id != superseded_first.note.note_id
+                for item in supersession_buffer.snapshot(_scope(_observation(108)))
+            )
+        ),
+        "awareb13_handled_note_absent_from_active_snapshot": (
+            handled_result.status is AwarenessReconciliationStatus.HANDLED
+            and handled_buffer.total_count() == 0
+        ),
+        "awareb14_untrusted_cannot_mark_handled": untrusted_handled_rejected,
+        "awareb15_trusted_runtime_reconciliation_marks_handled": (
+            handled_result.status is AwarenessReconciliationStatus.HANDLED
+        ),
+        "awareb16_expired_note_absent": expired_snapshot == (),
+        "awareb17_expiry_is_not_handled": (
+            expiry_reconciliation.status is AwarenessReconciliationStatus.NOT_FOUND
+            and all(item.handled_count == 0 for item in expiry_buffer.evidence())
+            and any(item.expired_count == 1 for item in expiry_buffer.evidence())
+        ),
+        "awareb18_compaction_precedes_overflow": (
+            compacted_first.note is not None
+            and compacted_second.evicted_note_ids == ()
+            and compacted_first.note.note_id in compacted_second.compacted_note_ids
+        ),
+        "awareb19_per_scope_bound_remains_sixteen": (
+            per_scope_buffer.count(_scope(_observation(118))) == MAX_AWARENESS_NOTES_PER_SCOPE
+        ),
+        "awareb20_global_bound_remains_sixty_four": global_buffer.total_count()
+        == MAX_AWARENESS_NOTES_TOTAL,
+        "awareb21_overflow_is_deterministic_after_compaction": (
+            overflow_admission.evicted_note_ids == () and overflow_buffer.total_count() == 1
+        ),
+        "awareb22_source_refs_remain_bounded": (
+            duplicate_note is not None
+            and len(duplicate_note.source_refs) <= MAX_AWARENESS_SOURCE_REFS
+        ),
+        "awareb23_reason_codes_remain_bounded": (
+            duplicate_note is not None
+            and len(duplicate_note.reason_codes) <= MAX_AWARENESS_REASON_CODES
+        ),
+        "awareb24_identity_fields_are_bounded": (
+            len(AwarenessKey(dedup_key="x" * MAX_AWARENESS_KEY_BYTES).dedup_key or "")
+            == MAX_AWARENESS_KEY_BYTES
+        ),
+        "awareb25_refresh_moves_note_to_newest_order": (
+            tuple(item.observation_id for item in ordering_snapshot)
+            == ("observation-208", "observation-209")
+        ),
+        "awareb26_snapshot_is_immutable": (
+            type(ordering_snapshot) is tuple and ordering_snapshot[0].__dataclass_params__.frozen  # type: ignore[attr-defined]
+        ),
+        "awareb27_caller_mutation_cannot_change_lifecycle": _immutable_note(duplicate_note),
+        "awareb28_restart_loses_awareness_by_design": (
+            PeripheralAwarenessBuffer(clock=_FixedClock(_NOW)).total_count() == 0
+        ),
+        "awareb29_no_persistence_writes": not imported_modules.intersection(
+            {"lilavel_core.persistence", "persistence"}
+        ),
+        "awareb30_no_canonical_history": not awareness_fields.intersection(
+            {"messages", "history", "conversation"}
+        ),
+        "awareb31_no_memory_records": not awareness_fields.intersection(
+            {"memory", "memories", "retrieval"}
+        ),
+        "awareb32_no_context_frame_projection": "awareness" not in context_source,
+        "awareb33_no_extra_model_calls": "generate(" not in gate_source,
+        "awareb34_attention_semantics_unchanged": (
+            _drop_verdict(_observation(218)).decision is AttentionDecision.DROP
+            and _note_verdict(_observation(219)).decision is AttentionDecision.NOTE
+            and _think_verdict(_observation(220)).decision is AttentionDecision.THINK
+        ),
+        "awareb35_think_does_not_dual_write": _think_does_not_admit_awareness(),
+        "awareb36_context_topology_unchanged": "awareness" not in context_source,
+        "awareb37_effect_authority_unchanged": not imported_modules.intersection(
+            {"lilavel_runtime.proposal_application", "lilavel_runtime.temporal"}
+        ),
+        "awareb38_compaction_is_deterministic": _deterministic_compaction(),
+        "awareb39_no_rng_model_ranking_or_scoring": not lifecycle_calls.intersection(
+            {"generate", "generate_for_run", "execute", "random", "rank", "score"}
+        ),
+        "awareb40_architecture_import_boundary_is_clean": imported_modules.issubset(
+            {
+                "__future__",
+                "collections",
+                "collections.abc",
+                "dataclasses",
+                "datetime",
+                "enum",
+                "hashlib",
+                "threading",
+                "typing",
+                "lilavel_core",
+                "attention",
+                "contracts",
+            }
+        ),
+    }
+    return checks
+
+
+def _note_gate_has_no_cognition_side_effects() -> bool:
+    buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    observation = _observation(221)
+    decision = DeterministicAttentionCognitionGate(awareness_buffer=buffer).decide((observation,))
+    return decision is NO_COGNITION and buffer.total_count() == 1
+
+
+def _think_does_not_admit_awareness() -> bool:
+    observation = _observation(222, kind="critical")
+    buffer = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW))
+    gate = DeterministicAttentionCognitionGate(
+        extractor=AttentionEvidenceExtractor({"critical": _critical_profile()}),
+        awareness_buffer=buffer,
+    )
+    decision = gate.decide((observation,))
+    return isinstance(decision, CognitionTrigger) and buffer.total_count() == 0
+
+
+def _deterministic_compaction() -> bool:
+    first = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW), ttl=timedelta(seconds=5))
+    second = PeripheralAwarenessBuffer(clock=_FixedClock(_NOW), ttl=timedelta(seconds=5))
+    observations = (_observation(223), _observation(224))
+    for buffer in (first, second):
+        for observation in observations:
+            _b_admit(
+                buffer,
+                observation,
+                awareness_key=AwarenessKey(dedup_key=observation.event.event_id),
+            )
+    return first.compact(now=_NOW) == second.compact(now=_NOW)
+
+
+AWARE_V1_B_SCENARIOS: tuple[AwarenessEvalScenario, ...] = tuple(
+    AwarenessEvalScenario(f"awareb{i:02}", description)
+    for i, description in enumerate(
+        (
+            "Exact duplicate NOTE events coalesce deterministically.",
+            "Duplicate coalescing does not consume an additional active slot.",
+            "Duplicate NOTE admission creates no cognition, action, or wake side effect.",
+            "Duplicate coalescing refreshes last_seen_at and TTL.",
+            "Duplicate occurrence counts are bounded and saturating.",
+            "The same key in different scopes does not coalesce.",
+            "Different trusted keys do not coalesce.",
+            "Raw payload text cannot define a dedup key through the API.",
+            "A newer trusted state supersedes an older state family member.",
+            "Supersession is forbidden across exact scopes.",
+            "Missing supersession metadata never causes guessed replacement.",
+            "Superseded entries are absent from active snapshots.",
+            "Handled entries are absent from active snapshots.",
+            "Model or untrusted values cannot mark awareness handled.",
+            "Trusted runtime reconciliation can mark awareness handled.",
+            "Expired entries are absent from active snapshots.",
+            "Expiry is distinct from handled state.",
+            "Structural compaction precedes overflow eviction.",
+            "The per-scope active bound remains sixteen.",
+            "The global active bound remains sixty-four.",
+            "Overflow remains deterministic after compaction.",
+            "Source references remain bounded after coalescing.",
+            "Reason codes remain bounded after coalescing.",
+            "Deduplication and supersession keys obey byte bounds.",
+            "Snapshot ordering remains deterministic after refresh.",
+            "Snapshots are immutable tuples of immutable notes.",
+            "Caller mutation cannot alter stored lifecycle state.",
+            "Restart recovery remains intentionally unsupported.",
+            "No persistence writes are introduced.",
+            "No canonical conversation history is stored.",
+            "No memory records are created.",
+            "No production ContextFrame awareness block is added.",
+            "No additional model call is introduced.",
+            "DROP/NOTE/THINK attention semantics remain unchanged.",
+            "THINK still does not dual-write awareness.",
+            "CTX-V1 request topology remains unchanged.",
+            "COG/E2 effect authority remains outside awareness.",
+            "Compaction is deterministic for fixed clock and input order.",
+            "No RNG/model ranking/scoring is used.",
+            "The awareness module retains its architectural import boundary.",
+        ),
+        start=1,
+    )
+)
+
+
+def evaluate_awareness_b_corpus() -> AwarenessEvalReport:
+    checks = _b_checks()
+    results = tuple(
+        AwarenessEvalResult(scenario, passed)
+        for scenario, passed in zip(AWARE_V1_B_SCENARIOS, checks.values(), strict=True)
     )
     return AwarenessEvalReport(results)

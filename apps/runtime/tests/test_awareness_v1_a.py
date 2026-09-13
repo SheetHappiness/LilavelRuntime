@@ -244,15 +244,19 @@ def test_global_capacity_evicts_oldest_across_scopes() -> None:
     assert any(item.evicted_count == 1 for item in buffer.evidence())
 
 
-def test_duplicate_note_attempts_are_admitted_and_snapshots_are_immutable() -> None:
-    buffer = PeripheralAwarenessBuffer(clock=_Clock(datetime(2030, 1, 1, tzinfo=UTC)))
+def test_duplicate_note_attempts_coalesce_and_snapshots_are_immutable() -> None:
+    clock = _Clock(datetime(2030, 1, 1, tzinfo=UTC))
+    buffer = PeripheralAwarenessBuffer(clock=clock)
     observation = _observation(1)
     first = _admit(buffer, observation).note
+    clock.value += timedelta(seconds=1)
     second = _admit(buffer, observation).note
 
     assert first is not None and second is not None
-    assert first.note_id != second.note_id
-    assert first.source_refs == second.source_refs
+    assert first.note_id == second.note_id
+    assert second.occurrence_count == 2
+    assert second.last_seen_at == clock.value
+    assert buffer.total_count() == 1
     snapshot = buffer.snapshot(_scope(observation))
     assert type(snapshot) is tuple
     with pytest.raises(FrozenInstanceError):

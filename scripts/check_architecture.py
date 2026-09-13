@@ -117,6 +117,43 @@ CONTEXT_BUILDER_FORBIDDEN_CALLS = {
     "cancel",
     "dispatch",
 }
+AWARENESS_FORBIDDEN_IMPORTS = {
+    "context",
+    "context_builder",
+    "cognition_model",
+    "conversation_adapter",
+    "conversation_router",
+    "kernel",
+    "persistence",
+    "proposal_application",
+    "temporal",
+    "temporal_host",
+    "lilavel_core.persistence",
+}
+AWARENESS_FORBIDDEN_NAMES = {
+    "ActionProposal",
+    "ContextFrame",
+    "ConversationCore",
+    "ConversationStore",
+    "ModelRequest",
+    "TemporalCoordinator",
+    "ToolCall",
+    "WakeIntent",
+}
+AWARENESS_FORBIDDEN_CALLS = {
+    "apply",
+    "apply_deltas",
+    "commit",
+    "create_task",
+    "dispatch",
+    "execute",
+    "execute_batch",
+    "generate",
+    "generate_for_run",
+    "schedule",
+    "send",
+    "send_message",
+}
 PRODUCTION_REQUEST_FILES = {
     "conversation.py",
     "cognition_model.py",
@@ -520,6 +557,54 @@ def _context_builder_violations() -> list[str]:
     return violations
 
 
+def _awareness_violations() -> list[str]:
+    """Keep peripheral awareness outside model, effect, persistence, and CTX lanes."""
+
+    path = RUNTIME_SOURCE / "lilavel_runtime" / "awareness.py"
+    if not path.exists():
+        return ["apps/runtime: PeripheralAwarenessBuffer module is missing"]
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _matches(alias.name, tuple(AWARENESS_FORBIDDEN_IMPORTS)):
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: awareness imports {alias.name}"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                module = module.rsplit(".", 1)[-1]
+            if module in AWARENESS_FORBIDDEN_IMPORTS:
+                violations.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: awareness imports {module}"
+                )
+            for alias in node.names:
+                if alias.name in AWARENESS_FORBIDDEN_NAMES:
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: awareness imports "
+                        f"{alias.name}"
+                    )
+        elif isinstance(node, ast.Name) and node.id in AWARENESS_FORBIDDEN_NAMES:
+            violations.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}: awareness references {node.id}"
+            )
+        elif isinstance(node, ast.Call):
+            called_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if called_name in AWARENESS_FORBIDDEN_CALLS:
+                violations.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: awareness calls {called_name}"
+                )
+    return violations
+
+
 def main() -> int:
     violations = [
         *_core_violations(),
@@ -528,6 +613,7 @@ def main() -> int:
         *_e1_intervention_violations(),
         *_e2_ambient_violations(),
         *_context_builder_violations(),
+        *_awareness_violations(),
         *_adapter_violations(),
         *_discord_environment_violations(),
     ]

@@ -2,9 +2,10 @@
 
 An :class:`AwarenessNote` is a short-lived record that an admitted observation
 was noticed without being sent to cognition.  This module deliberately stores
-only typed provenance and deterministic attention evidence.  It does not own
-conversation history, raw event payloads, MindState, ObservationWindow,
-ContextFrame, memory, model generation, effects, or temporal wake scheduling.
+only typed provenance, deterministic attention evidence, and bounded lifecycle
+metadata.  It does not own conversation history, raw event payloads,
+MindState, ObservationWindow, ContextFrame, memory, model generation, effects,
+or temporal wake scheduling.
 
 The buffer is process-local by design.  Awareness is working context rather
 than memory and is allowed to disappear when the runtime process restarts.
@@ -14,9 +15,10 @@ from __future__ import annotations
 
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from hashlib import sha256
 from threading import RLock
 from typing import Literal, Protocol
 
@@ -32,12 +34,20 @@ __all__ = [
     "AwarenessBufferEvidence",
     "AwarenessClock",
     "AwarenessClockSource",
+    "AwarenessCompaction",
+    "AwarenessHandledAuthority",
+    "AwarenessKey",
     "AwarenessNote",
+    "AwarenessNoteStatus",
+    "AwarenessReconciliation",
+    "AwarenessReconciliationStatus",
     "AwarenessScope",
     "MAX_AWARENESS_ENVIRONMENT_BYTES",
+    "MAX_AWARENESS_KEY_BYTES",
     "MAX_AWARENESS_NOTES_PER_SCOPE",
     "MAX_AWARENESS_NOTES_TOTAL",
     "MAX_AWARENESS_NOTE_ID_BYTES",
+    "MAX_AWARENESS_OCCURRENCE_COUNT",
     "MAX_AWARENESS_REASON_CODES",
     "MAX_AWARENESS_SCOPE_ID_BYTES",
     "MAX_AWARENESS_SOURCE_REF_BYTES",
@@ -56,6 +66,8 @@ MAX_AWARENESS_SCOPE_ID_BYTES = 128
 MAX_AWARENESS_ENVIRONMENT_BYTES = 128
 MAX_AWARENESS_SURFACE_BYTES = 128
 MAX_AWARENESS_SOURCE_REF_BYTES = 128
+MAX_AWARENESS_KEY_BYTES = 128
+MAX_AWARENESS_OCCURRENCE_COUNT = 1_000_000
 MAX_AWARENESS_EVIDENCE = 256
 AWARENESS_NOTE_TTL = timedelta(minutes=5)
 
@@ -77,6 +89,49 @@ class AwarenessAdmissionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class AwarenessNoteStatus(StrEnum):
+    """Internal lifecycle state of a bounded awareness record."""
+
+    ACTIVE = "active"
+    HANDLED = "handled"
+    SUPERSEDED = "superseded"
+    EXPIRED = "expired"
+
+
+class AwarenessReconciliationStatus(StrEnum):
+    """Outcome of trusted handled-state reconciliation."""
+
+    HANDLED = "handled"
+    NOT_FOUND = "not_found"
+
+
+@dataclass(frozen=True, slots=True)
+class AwarenessKey:
+    """Optional trusted adapter/runtime identity metadata for one NOTE.
+
+    ``dedup_key`` identifies equivalent occurrences.  ``supersession_key``
+    identifies a state family in which a later NOTE replaces an older one.
+    Either value may be omitted, but an empty key object is not meaningful.
+    Plain strings are intentionally not accepted by ``PeripheralAwarenessBuffer``
+    as a substitute for this typed boundary.
+    """
+
+    dedup_key: str | None = None
+    supersession_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.dedup_key is None and self.supersession_key is None:
+            raise ValueError("awareness keys require dedup_key or supersession_key")
+        if self.dedup_key is not None:
+            _require_bounded_text(self.dedup_key, "dedup_key", MAX_AWARENESS_KEY_BYTES)
+        if self.supersession_key is not None:
+            _require_bounded_text(
+                self.supersession_key,
+                "supersession_key",
+                MAX_AWARENESS_KEY_BYTES,
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class AwarenessScope:
     """Exact isolation key for one runtime awareness surface.
@@ -84,7 +139,7 @@ class AwarenessScope:
     ``scope_id`` is the runtime semantic scope.  ``environment_id`` and
     ``surface_id`` are retained separately because the same semantic scope can
     observe multiple environments and source subjects.  A buffer query must
-    use all three values; there is no actor-wide cross-surface snapshot in A.
+    use all three values; there is no actor-wide cross-surface snapshot.
     """
 
     scope_id: str
@@ -110,7 +165,13 @@ class AwarenessScope:
 
 @dataclass(frozen=True, slots=True)
 class AwarenessNote:
-    """One immutable, bounded, provenance-traceable peripheral NOTE."""
+    """One immutable, bounded, provenance-traceable peripheral NOTE.
+
+    Public active snapshots contain only ``ACTIVE`` notes.  Lifecycle fields
+    remain on the immutable value so internal transitions cannot be represented
+    as arbitrary mutable patches.  Handled and superseded records are removed
+    by the next structural compaction; expiry is a separate transition.
+    """
 
     note_id: str
     scope: AwarenessScope
@@ -119,6 +180,13 @@ class AwarenessNote:
     admitted_at: datetime
     expires_at: datetime
     reason_codes: tuple[CognitionReasonCode, ...]
+    last_seen_at: datetime | None = None
+    occurrence_count: int = 1
+    dedup_key: str | None = None
+    supersession_key: str | None = None
+    status: AwarenessNoteStatus = AwarenessNoteStatus.ACTIVE
+    handled_at: datetime | None = None
+    superseded_by: str | None = None
 
     def __post_init__(self) -> None:
         _require_bounded_text(self.note_id, "note_id", MAX_AWARENESS_NOTE_ID_BYTES)
@@ -146,10 +214,49 @@ class AwarenessNote:
             ("expires_at", self.expires_at),
         ):
             _require_aware_datetime(value, name)
-        if self.admitted_at < self.observed_at:
-            raise ValueError("admitted_at cannot precede observed_at")
-        if self.expires_at <= self.admitted_at:
-            raise ValueError("expires_at must be after admitted_at")
+        last_seen_at = self.last_seen_at
+        if last_seen_at is None:
+            object.__setattr__(self, "last_seen_at", self.admitted_at)
+            last_seen_at = self.admitted_at
+        else:
+            _require_aware_datetime(last_seen_at, "last_seen_at")
+        if self.expires_at <= last_seen_at:
+            raise ValueError("expires_at must be after last_seen_at")
+        if isinstance(self.occurrence_count, bool) or not (
+            0 < self.occurrence_count <= MAX_AWARENESS_OCCURRENCE_COUNT
+        ):
+            raise ValueError("awareness occurrence count is outside its bound")
+        if self.occurrence_count == 1 and self.admitted_at < self.observed_at:
+            raise ValueError("admitted_at cannot precede observed_at for a new note")
+        if self.dedup_key is not None:
+            _require_bounded_text(self.dedup_key, "dedup_key", MAX_AWARENESS_KEY_BYTES)
+        if self.supersession_key is not None:
+            _require_bounded_text(
+                self.supersession_key,
+                "supersession_key",
+                MAX_AWARENESS_KEY_BYTES,
+            )
+        if type(self.status) is not AwarenessNoteStatus:
+            raise TypeError("status must be an AwarenessNoteStatus")
+        if self.handled_at is not None:
+            _require_aware_datetime(self.handled_at, "handled_at")
+        if self.superseded_by is not None:
+            _require_bounded_text(self.superseded_by, "superseded_by", MAX_AWARENESS_NOTE_ID_BYTES)
+        if self.status is AwarenessNoteStatus.HANDLED:
+            if self.handled_at is None or self.superseded_by is not None:
+                raise ValueError("handled notes require handled_at and no superseded_by")
+        elif self.status is AwarenessNoteStatus.SUPERSEDED:
+            if self.superseded_by is None or self.handled_at is not None:
+                raise ValueError("superseded notes require superseded_by and no handled_at")
+        elif self.status is AwarenessNoteStatus.ACTIVE and (
+            self.handled_at is not None or self.superseded_by is not None
+        ):
+            raise ValueError("active notes cannot carry terminal lifecycle fields")
+        elif self.status is AwarenessNoteStatus.EXPIRED and (
+            self.handled_at is not None or self.superseded_by is not None
+        ):
+            raise ValueError("expired notes cannot carry terminal lifecycle fields")
+
         if type(self.reason_codes) is not tuple or not self.reason_codes:
             raise ValueError("awareness notes require reason codes")
         if len(self.reason_codes) > MAX_AWARENESS_REASON_CODES:
@@ -175,17 +282,42 @@ class AwarenessNote:
 
     @property
     def observation_id(self) -> str:
-        """Return the observation identity from the first source reference."""
+        """Return the current observation identity from provenance."""
 
         return self.source_refs[0].removeprefix("observation:")
 
     @property
     def event_id(self) -> str:
-        """Return the event identity from the second source reference."""
+        """Return the current event identity from provenance."""
 
-        if len(self.source_refs) < 2:
-            return ""
         return self.source_refs[1].removeprefix("event:")
+
+
+@dataclass(frozen=True, slots=True)
+class AwarenessCompaction:
+    """Content-free structural removal report from one compaction pass."""
+
+    expired_note_ids: tuple[str, ...] = ()
+    handled_note_ids: tuple[str, ...] = ()
+    superseded_note_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name, values in (
+            ("expired_note_ids", self.expired_note_ids),
+            ("handled_note_ids", self.handled_note_ids),
+            ("superseded_note_ids", self.superseded_note_ids),
+        ):
+            _require_note_id_tuple(values, name)
+
+    @property
+    def removed_count(self) -> int:
+        return (
+            len(self.expired_note_ids) + len(self.handled_note_ids) + len(self.superseded_note_ids)
+        )
+
+    @property
+    def compacted_note_ids(self) -> tuple[str, ...]:
+        return self.expired_note_ids + self.handled_note_ids + self.superseded_note_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +331,9 @@ class AwarenessAdmission:
     reason_code: str | None = None
     scope_count: int = 0
     total_count: int = 0
+    coalesced: bool = False
+    superseded_note_ids: tuple[str, ...] = ()
+    compacted_note_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.status) is not AwarenessAdmissionStatus:
@@ -209,8 +344,11 @@ class AwarenessAdmission:
             raise ValueError("admitted awareness results require a note")
         if self.status is AwarenessAdmissionStatus.REJECTED and self.note is not None:
             raise ValueError("rejected awareness results cannot carry a note")
-        if type(self.evicted_note_ids) is not tuple:
-            raise TypeError("evicted_note_ids must be a tuple")
+        _require_note_id_tuple(self.evicted_note_ids, "evicted_note_ids")
+        _require_note_id_tuple(self.superseded_note_ids, "superseded_note_ids")
+        _require_note_id_tuple(self.compacted_note_ids, "compacted_note_ids")
+        if type(self.coalesced) is not bool:
+            raise TypeError("coalesced must be a bool")
         for value in (self.expired_count, self.scope_count, self.total_count):
             if isinstance(value, bool) or value < 0:
                 raise ValueError("awareness admission counts must be non-negative")
@@ -228,6 +366,10 @@ class AwarenessBufferEvidence:
     evicted_count: int = 0
     expired_count: int = 0
     reason_code: str | None = None
+    coalesced_count: int = 0
+    superseded_count: int = 0
+    handled_count: int = 0
+    compacted_count: int = 0
 
     def __post_init__(self) -> None:
         if self.outcome not in {"admitted", "rejected", "failed"}:
@@ -237,6 +379,10 @@ class AwarenessBufferEvidence:
             ("total_count", self.total_count),
             ("evicted_count", self.evicted_count),
             ("expired_count", self.expired_count),
+            ("coalesced_count", self.coalesced_count),
+            ("superseded_count", self.superseded_count),
+            ("handled_count", self.handled_count),
+            ("compacted_count", self.compacted_count),
         ):
             if isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be non-negative")
@@ -244,15 +390,64 @@ class AwarenessBufferEvidence:
             _require_bounded_text(self.reason_code, "reason_code", 128)
 
 
+@dataclass(frozen=True, slots=True)
+class AwarenessReconciliation:
+    """Result of one trusted runtime handled-state transition."""
+
+    status: AwarenessReconciliationStatus
+    note_id: str
+    scope_count: int = 0
+    total_count: int = 0
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.status) is not AwarenessReconciliationStatus:
+            raise TypeError("status must be an AwarenessReconciliationStatus")
+        _require_bounded_text(self.note_id, "note_id", MAX_AWARENESS_NOTE_ID_BYTES)
+        for value in (self.scope_count, self.total_count):
+            if isinstance(value, bool) or value < 0:
+                raise ValueError("awareness reconciliation counts must be non-negative")
+        if self.reason_code is not None:
+            _require_bounded_text(self.reason_code, "reason_code", 128)
+
+
+class AwarenessHandledAuthority:
+    """Process-local capability required to mark a note handled.
+
+    The constructor requires a buffer-private token.  A model result or raw
+    adapter value cannot reconstruct this authority through the public type.
+    """
+
+    __slots__ = ("_owner_token",)
+
+    def __init__(self, owner_token: object) -> None:
+        self._owner_token = owner_token
+
+    def __repr__(self) -> str:
+        return "AwarenessHandledAuthority()"
+
+    def belongs_to(self, owner_token: object) -> bool:
+        """Check ownership without exposing the private capability token."""
+
+        return self._owner_token is owner_token
+
+
 class PeripheralAwarenessBuffer:
     """Own short-lived NOTE outcomes in bounded, per-surface memory.
 
-    Admission is synchronous and deterministic.  Notes are ordered oldest to
-    newest in snapshots.  Per-scope overflow evicts the oldest note in that
-    exact scope; global overflow evicts the oldest note across all scopes.
-    Duplicate observations are not deduplicated in A: each NOTE admission
-    attempt receives a new process-local note identity.  Deduplication and
-    supersession belong to AWARE-V1-B.
+    Admission is synchronous and deterministic.  Active snapshots are ordered
+    oldest-to-newest by ``last_seen_at`` with ``note_id`` as a stable tie
+    breaker.  The default dedup identity is a hash of trusted runtime event
+    identity and route metadata; it never reads payload values.  Validated
+    runtime/adapter code may provide an :class:`AwarenessKey` for richer
+    coalescing or explicit supersession.
+
+    Duplicate coalescing keeps the original ``note_id`` and first
+    ``admitted_at``, replaces the bounded provenance pair and reason codes with
+    the latest trusted occurrence, refreshes ``last_seen_at``/TTL, and
+    saturating-increments ``occurrence_count``.  A distinct note with the same
+    explicit ``supersession_key`` in the same exact scope marks the older note
+    superseded and retains only the newer active state after compaction.
     """
 
     def __init__(
@@ -285,9 +480,11 @@ class PeripheralAwarenessBuffer:
         self._per_scope_capacity = per_scope_capacity
         self._total_capacity = total_capacity
         self._notes: OrderedDict[str, AwarenessNote] = OrderedDict()
-        self._scope_notes: dict[AwarenessScope, OrderedDict[str, None]] = {}
+        self._dedup_index: dict[tuple[AwarenessScope, str], str] = {}
+        self._supersession_index: dict[tuple[AwarenessScope, str], str] = {}
         self._evidence: deque[AwarenessBufferEvidence] = deque(maxlen=evidence_capacity)
         self._next_note_sequence = 0
+        self._authority_token = object()
         self._lock = RLock()
 
     @property
@@ -302,6 +499,11 @@ class PeripheralAwarenessBuffer:
     def ttl(self) -> timedelta:
         return self._ttl
 
+    def handled_authority(self) -> AwarenessHandledAuthority:
+        """Mint the buffer-bound authority for a trusted runtime call site."""
+
+        return AwarenessHandledAuthority(self._authority_token)
+
     @staticmethod
     def scope_for(scope_id: str, observation: Observation) -> AwarenessScope:
         """Return the exact environment/surface key for an observation."""
@@ -314,6 +516,7 @@ class PeripheralAwarenessBuffer:
         verdict: AttentionVerdict,
         *,
         scope_id: str,
+        awareness_key: AwarenessKey | None = None,
     ) -> AwarenessAdmission:
         """Admit one trusted NOTE verdict without copying its event payload."""
 
@@ -323,32 +526,96 @@ class PeripheralAwarenessBuffer:
             raise TypeError("awareness admission accepts only AttentionVerdict values")
         if verdict.observation_id != observation.observation_id:
             raise ValueError("attention verdict does not match the observation")
+        if awareness_key is not None and type(awareness_key) is not AwarenessKey:
+            raise TypeError("awareness_key must be an AwarenessKey")
 
         with self._lock:
             now = self._now()
-            expired_count = self._expire(now)
+            initial_compaction = self._compact(now, record_evidence=False)
             scope = self.scope_for(scope_id, observation)
             if verdict.decision is not AttentionDecision.NOTE:
                 self._record_evidence(
                     AwarenessBufferEvidence(
                         "rejected",
-                        self._scope_count(scope),
-                        len(self._notes),
-                        expired_count=expired_count,
+                        self._active_scope_count(scope),
+                        self._active_count(),
+                        expired_count=len(initial_compaction.expired_note_ids),
+                        compacted_count=initial_compaction.removed_count,
                         reason_code="decision_not_note",
                     )
                 )
                 return AwarenessAdmission(
                     AwarenessAdmissionStatus.REJECTED,
-                    expired_count=expired_count,
+                    expired_count=len(initial_compaction.expired_note_ids),
                     reason_code="decision_not_note",
-                    scope_count=self._scope_count(scope),
-                    total_count=len(self._notes),
+                    scope_count=self._active_scope_count(scope),
+                    total_count=self._active_count(),
+                    compacted_note_ids=initial_compaction.compacted_note_ids,
                 )
 
+            dedup_key, supersession_key = self._resolve_keys(
+                scope, observation, verdict, awareness_key
+            )
+            duplicate_id = self._dedup_index.get((scope, dedup_key))
+            if duplicate_id is not None:
+                existing = self._notes.get(duplicate_id)
+                if existing is not None and existing.status is AwarenessNoteStatus.ACTIVE:
+                    updated = replace(
+                        existing,
+                        source_refs=(
+                            f"observation:{observation.observation_id}",
+                            f"event:{observation.event.event_id}",
+                        ),
+                        observed_at=now,
+                        last_seen_at=now,
+                        expires_at=now + self._ttl,
+                        reason_codes=verdict.reason_codes,
+                        occurrence_count=min(
+                            MAX_AWARENESS_OCCURRENCE_COUNT,
+                            existing.occurrence_count + 1,
+                        ),
+                    )
+                    self._notes[duplicate_id] = updated
+                    compacted = initial_compaction.compacted_note_ids
+                    self._record_evidence(
+                        AwarenessBufferEvidence(
+                            "admitted",
+                            self._active_scope_count(scope),
+                            self._active_count(),
+                            expired_count=len(initial_compaction.expired_note_ids),
+                            reason_code="coalesced",
+                            coalesced_count=1,
+                            compacted_count=len(compacted),
+                        )
+                    )
+                    return AwarenessAdmission(
+                        AwarenessAdmissionStatus.ADMITTED,
+                        note=updated,
+                        expired_count=len(initial_compaction.expired_note_ids),
+                        scope_count=self._active_scope_count(scope),
+                        total_count=self._active_count(),
+                        coalesced=True,
+                        compacted_note_ids=compacted,
+                    )
+
             self._next_note_sequence += 1
+            note_id = f"awareness-note:{self._next_note_sequence}"
+            superseded_ids: tuple[str, ...] = ()
+            if supersession_key is not None:
+                previous_id = self._supersession_index.get((scope, supersession_key))
+                previous = self._notes.get(previous_id) if previous_id is not None else None
+                if previous is not None and previous.status is AwarenessNoteStatus.ACTIVE:
+                    self._notes[previous.note_id] = replace(
+                        previous,
+                        status=AwarenessNoteStatus.SUPERSEDED,
+                        superseded_by=note_id,
+                    )
+                    self._dedup_index.pop((scope, previous.dedup_key or ""), None)
+                    self._supersession_index.pop((scope, supersession_key), None)
+                    superseded_ids = (previous.note_id,)
+
             note = AwarenessNote(
-                note_id=f"awareness-note:{self._next_note_sequence}",
+                note_id=note_id,
                 scope=scope,
                 source_refs=(
                     f"observation:{observation.observation_id}",
@@ -358,59 +625,173 @@ class PeripheralAwarenessBuffer:
                 admitted_at=now,
                 expires_at=now + self._ttl,
                 reason_codes=verdict.reason_codes,
+                last_seen_at=now,
+                dedup_key=dedup_key,
+                supersession_key=supersession_key,
             )
             self._notes[note.note_id] = note
-            self._scope_notes.setdefault(scope, OrderedDict())[note.note_id] = None
+            self._dedup_index[(scope, dedup_key)] = note.note_id
+            if supersession_key is not None:
+                self._supersession_index[(scope, supersession_key)] = note.note_id
+
+            after_transition = self._compact(now, record_evidence=False)
             evicted: list[str] = []
-            scope_notes = self._scope_notes[scope]
-            while len(scope_notes) > self._per_scope_capacity:
-                evicted.append(self._evict_note(scope_notes.popitem(last=False)[0]))
-            while len(self._notes) > self._total_capacity:
-                oldest_note_id = next(iter(self._notes))
-                evicted.append(self._evict_note(oldest_note_id))
+            evicted.extend(self._enforce_bounds(scope))
+            compacted_ids = _ordered_unique(
+                (*initial_compaction.compacted_note_ids, *after_transition.compacted_note_ids)
+            )
             self._record_evidence(
                 AwarenessBufferEvidence(
                     "admitted",
-                    self._scope_count(scope),
-                    len(self._notes),
+                    self._active_scope_count(scope),
+                    self._active_count(),
                     evicted_count=len(evicted),
-                    expired_count=expired_count,
+                    expired_count=len(initial_compaction.expired_note_ids)
+                    + len(after_transition.expired_note_ids),
+                    reason_code="superseded" if superseded_ids else None,
+                    superseded_count=len(superseded_ids),
+                    compacted_count=len(compacted_ids),
                 )
             )
             return AwarenessAdmission(
                 AwarenessAdmissionStatus.ADMITTED,
                 note=note,
                 evicted_note_ids=tuple(evicted),
-                expired_count=expired_count,
-                scope_count=self._scope_count(scope),
-                total_count=len(self._notes),
+                expired_count=len(initial_compaction.expired_note_ids)
+                + len(after_transition.expired_note_ids),
+                scope_count=self._active_scope_count(scope),
+                total_count=self._active_count(),
+                superseded_note_ids=superseded_ids,
+                compacted_note_ids=compacted_ids,
             )
 
     def snapshot(
         self, scope: AwarenessScope, *, now: datetime | None = None
     ) -> tuple[AwarenessNote, ...]:
-        """Return an immutable oldest-to-newest snapshot for one exact scope."""
+        """Return an immutable oldest-to-newest active snapshot for one scope."""
 
         if type(scope) is not AwarenessScope:
             raise TypeError("scope must be an AwarenessScope")
         with self._lock:
-            self._expire(self._now() if now is None else _validated_now(now))
-            scope_notes = self._scope_notes.get(scope)
-            if scope_notes is None:
-                return ()
-            return tuple(self._notes[note_id] for note_id in scope_notes)
+            self._compact(self._now() if now is None else _validated_now(now))
+            return self._active_snapshot(scope)
+
+    def snapshot_active(
+        self, scope: AwarenessScope, *, now: datetime | None = None
+    ) -> tuple[AwarenessNote, ...]:
+        """Explicit future-projection seam for active awareness only."""
+
+        return self.snapshot(scope, now=now)
 
     def count(self, scope: AwarenessScope, *, now: datetime | None = None) -> int:
-        """Return the current bounded count for one exact scope."""
+        """Return the current bounded active count for one exact scope."""
 
         return len(self.snapshot(scope, now=now))
 
     def total_count(self, *, now: datetime | None = None) -> int:
-        """Return the current process-local total after deterministic expiry."""
+        """Return the current bounded active count after deterministic compaction."""
 
         with self._lock:
-            self._expire(self._now() if now is None else _validated_now(now))
-            return len(self._notes)
+            self._compact(self._now() if now is None else _validated_now(now))
+            return self._active_count()
+
+    def compact(self, *, now: datetime | None = None) -> AwarenessCompaction:
+        """Remove expired, handled, and superseded records deterministically."""
+
+        with self._lock:
+            return self._compact(self._now() if now is None else _validated_now(now))
+
+    def mark_handled(
+        self,
+        note_id: str,
+        *,
+        authority: AwarenessHandledAuthority,
+        now: datetime | None = None,
+    ) -> AwarenessReconciliation:
+        """Mark one active note handled through the trusted runtime authority."""
+
+        _require_bounded_text(note_id, "note_id", MAX_AWARENESS_NOTE_ID_BYTES)
+        self._validate_authority(authority)
+        with self._lock:
+            current = self._compact(self._now() if now is None else _validated_now(now))
+            note = self._notes.get(note_id)
+            if note is None or note.status is not AwarenessNoteStatus.ACTIVE:
+                self._record_evidence(
+                    AwarenessBufferEvidence(
+                        "rejected",
+                        self._active_scope_count(note.scope) if note is not None else 0,
+                        self._active_count(),
+                        expired_count=len(current.expired_note_ids),
+                        reason_code="handled_note_not_active",
+                        compacted_count=current.removed_count,
+                    )
+                )
+                return AwarenessReconciliation(
+                    AwarenessReconciliationStatus.NOT_FOUND,
+                    note_id,
+                    scope_count=self._active_scope_count(note.scope) if note is not None else 0,
+                    total_count=self._active_count(),
+                    reason_code="handled_note_not_active",
+                )
+
+            handled_at = self._now() if now is None else _validated_now(now)
+            self._notes[note_id] = replace(
+                note,
+                status=AwarenessNoteStatus.HANDLED,
+                handled_at=handled_at,
+            )
+            self._dedup_index.pop((note.scope, note.dedup_key or ""), None)
+            if note.supersession_key is not None:
+                self._supersession_index.pop((note.scope, note.supersession_key), None)
+            self._record_evidence(
+                AwarenessBufferEvidence(
+                    "admitted",
+                    self._active_scope_count(note.scope),
+                    self._active_count(),
+                    expired_count=len(current.expired_note_ids),
+                    reason_code="handled",
+                    handled_count=1,
+                    compacted_count=current.removed_count,
+                )
+            )
+            return AwarenessReconciliation(
+                AwarenessReconciliationStatus.HANDLED,
+                note_id,
+                scope_count=self._active_scope_count(note.scope),
+                total_count=self._active_count(),
+            )
+
+    def mark_handled_by_key(
+        self,
+        scope: AwarenessScope,
+        awareness_key: AwarenessKey,
+        *,
+        authority: AwarenessHandledAuthority,
+        now: datetime | None = None,
+    ) -> AwarenessReconciliation:
+        """Handle an active note by an explicit scoped dedup key."""
+
+        if type(scope) is not AwarenessScope:
+            raise TypeError("scope must be an AwarenessScope")
+        if type(awareness_key) is not AwarenessKey:
+            raise TypeError("awareness_key must be an AwarenessKey")
+        if awareness_key.dedup_key is None:
+            raise ValueError("mark_handled_by_key requires a dedup_key")
+        self._validate_authority(authority)
+        with self._lock:
+            self._compact(self._now() if now is None else _validated_now(now))
+            note_id = self._dedup_index.get((scope, awareness_key.dedup_key))
+        if note_id is None:
+            digest = sha256(awareness_key.dedup_key.encode("utf-8")).hexdigest()[:32]
+            missing_id = f"awareness-key:{digest}"
+            return AwarenessReconciliation(
+                AwarenessReconciliationStatus.NOT_FOUND,
+                missing_id,
+                scope_count=0,
+                total_count=self.total_count(now=now),
+                reason_code="handled_key_not_found",
+            )
+        return self.mark_handled(note_id, authority=authority, now=now)
 
     def clear_scope(self, scope: AwarenessScope, *, now: datetime | None = None) -> int:
         """Clear one exact scope for lifecycle teardown or explicit reset."""
@@ -418,14 +799,13 @@ class PeripheralAwarenessBuffer:
         if type(scope) is not AwarenessScope:
             raise TypeError("scope must be an AwarenessScope")
         with self._lock:
-            self._expire(self._now() if now is None else _validated_now(now))
-            scope_notes = self._scope_notes.pop(scope, None)
-            if scope_notes is None:
-                return 0
+            self._compact(self._now() if now is None else _validated_now(now))
             removed = 0
-            for note_id in tuple(scope_notes):
-                if self._notes.pop(note_id, None) is not None:
-                    removed += 1
+            for note_id, note in tuple(self._notes.items()):
+                if note.scope != scope:
+                    continue
+                self._remove_note(note_id)
+                removed += 1
             return removed
 
     def evidence(self) -> tuple[AwarenessBufferEvidence, ...]:
@@ -438,36 +818,164 @@ class PeripheralAwarenessBuffer:
         value = self._clock() if callable(self._clock) else self._clock.now()
         return _validated_now(value)
 
-    def _expire(self, now: datetime) -> int:
-        expired = [note_id for note_id, note in self._notes.items() if note.expires_at <= now]
-        for note_id in expired:
-            self._evict_note(note_id)
-        if expired:
+    def _resolve_keys(
+        self,
+        scope: AwarenessScope,
+        observation: Observation,
+        verdict: AttentionVerdict,
+        awareness_key: AwarenessKey | None,
+    ) -> tuple[str, str | None]:
+        explicit_dedup = awareness_key.dedup_key if awareness_key is not None else None
+        dedup_key = explicit_dedup or _default_dedup_key(scope, observation, verdict)
+        supersession_key = awareness_key.supersession_key if awareness_key is not None else None
+        _require_bounded_text(dedup_key, "dedup_key", MAX_AWARENESS_KEY_BYTES)
+        if supersession_key is not None:
+            _require_bounded_text(
+                supersession_key,
+                "supersession_key",
+                MAX_AWARENESS_KEY_BYTES,
+            )
+        return dedup_key, supersession_key
+
+    def _compact(self, now: datetime, *, record_evidence: bool = True) -> AwarenessCompaction:
+        expired: list[str] = []
+        handled: list[str] = []
+        superseded: list[str] = []
+        for note_id, note in tuple(self._notes.items()):
+            if note.status is AwarenessNoteStatus.HANDLED:
+                handled.append(note_id)
+            elif note.status is AwarenessNoteStatus.SUPERSEDED:
+                superseded.append(note_id)
+            elif note.status is AwarenessNoteStatus.ACTIVE and note.expires_at <= now:
+                expired.append(note_id)
+        for note_id in (*expired, *handled, *superseded):
+            self._remove_note(note_id)
+        result = AwarenessCompaction(tuple(expired), tuple(handled), tuple(superseded))
+        if record_evidence and result.removed_count:
+            reason = (
+                "expired"
+                if result.expired_note_ids
+                else "handled"
+                if result.handled_note_ids
+                else "superseded"
+            )
             self._record_evidence(
                 AwarenessBufferEvidence(
                     "admitted",
-                    0,
-                    len(self._notes),
-                    expired_count=len(expired),
-                    reason_code="expired",
+                    self._active_count(),
+                    self._active_count(),
+                    expired_count=len(result.expired_note_ids),
+                    reason_code=reason,
+                    handled_count=len(result.handled_note_ids),
+                    superseded_count=len(result.superseded_note_ids),
+                    compacted_count=result.removed_count,
                 )
             )
-        return len(expired)
+        return result
 
-    def _evict_note(self, note_id: str) -> str:
+    def _enforce_bounds(self, scope: AwarenessScope) -> list[str]:
+        evicted: list[str] = []
+        while self._active_scope_count(scope) > self._per_scope_capacity:
+            oldest = self._oldest_active_id(scope)
+            if oldest is None:
+                break
+            evicted.append(self._remove_note(oldest))
+        while self._active_count() > self._total_capacity:
+            oldest = self._oldest_active_id()
+            if oldest is None:
+                break
+            evicted.append(self._remove_note(oldest))
+        return evicted
+
+    def _oldest_active_id(self, scope: AwarenessScope | None = None) -> str | None:
+        candidates = (
+            note
+            for note in self._notes.values()
+            if note.status is AwarenessNoteStatus.ACTIVE and (scope is None or note.scope == scope)
+        )
+        oldest = min(candidates, key=_note_order_key, default=None)
+        return None if oldest is None else oldest.note_id
+
+    def _remove_note(self, note_id: str) -> str:
         note = self._notes.pop(note_id)
-        scope_notes = self._scope_notes[note.scope]
-        scope_notes.pop(note_id, None)
-        if not scope_notes:
-            del self._scope_notes[note.scope]
+        if note.dedup_key is not None:
+            dedup_index_key = (note.scope, note.dedup_key)
+            if self._dedup_index.get(dedup_index_key) == note_id:
+                self._dedup_index.pop(dedup_index_key, None)
+        if note.supersession_key is not None:
+            supersession_index_key = (note.scope, note.supersession_key)
+            if self._supersession_index.get(supersession_index_key) == note_id:
+                self._supersession_index.pop(supersession_index_key, None)
         return note.note_id
 
-    def _scope_count(self, scope: AwarenessScope) -> int:
-        scope_notes = self._scope_notes.get(scope)
-        return 0 if scope_notes is None else len(scope_notes)
+    def _active_snapshot(self, scope: AwarenessScope) -> tuple[AwarenessNote, ...]:
+        return tuple(
+            sorted(
+                (
+                    note
+                    for note in self._notes.values()
+                    if note.scope == scope and note.status is AwarenessNoteStatus.ACTIVE
+                ),
+                key=_note_order_key,
+            )
+        )
+
+    def _active_scope_count(self, scope: AwarenessScope) -> int:
+        return sum(
+            note.status is AwarenessNoteStatus.ACTIVE and note.scope == scope
+            for note in self._notes.values()
+        )
+
+    def _active_count(self) -> int:
+        return sum(note.status is AwarenessNoteStatus.ACTIVE for note in self._notes.values())
+
+    def _validate_authority(self, authority: AwarenessHandledAuthority) -> None:
+        if type(authority) is not AwarenessHandledAuthority:
+            raise TypeError("authority must be an AwarenessHandledAuthority")
+        if not authority.belongs_to(self._authority_token):
+            raise ValueError("authority belongs to another awareness buffer")
 
     def _record_evidence(self, evidence: AwarenessBufferEvidence) -> None:
         self._evidence.append(evidence)
+
+
+def _default_dedup_key(
+    scope: AwarenessScope,
+    observation: Observation,
+    verdict: AttentionVerdict,
+) -> str:
+    """Hash only bounded runtime metadata, never the external event payload."""
+
+    material = "\x1f".join(
+        (
+            scope.scope_id,
+            scope.environment_id,
+            scope.surface_id or "",
+            observation.event.event_id,
+            observation.event.kind,
+            *(code.value for code in verdict.reason_codes),
+        )
+    ).encode("utf-8")
+    return sha256(material).hexdigest()
+
+
+def _note_order_key(note: AwarenessNote) -> tuple[datetime, str]:
+    return (note.last_seen_at or note.admitted_at, note.note_id)
+
+
+def _ordered_unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def _require_note_id_tuple(values: tuple[str, ...], name: str) -> None:
+    if type(values) is not tuple:
+        raise TypeError(f"{name} must be a tuple")
+    if len(values) > MAX_AWARENESS_NOTES_TOTAL:
+        raise ValueError(f"{name} bound exceeded")
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} must contain unique note IDs")
+    for value in values:
+        _require_bounded_text(value, f"{name} item", MAX_AWARENESS_NOTE_ID_BYTES)
 
 
 def _utc_now() -> datetime:
