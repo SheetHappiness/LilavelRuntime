@@ -42,6 +42,7 @@ from lilavel_runtime import (
     ToolResult,
     WorldEvent,
 )
+from lilavel_runtime.context_integration import ProductionContextComposer
 
 from .diagnostics import (
     DiscordDiagnostics,
@@ -439,6 +440,7 @@ class DiscordTextEdge:
         semantic_streaming: bool = True,
         semantic_lookahead_s: float = DEFAULT_SEMANTIC_LOOKAHEAD_S,
         semantic_max_tail_chars: int = DEFAULT_SEMANTIC_MAX_TAIL_CHARS,
+        context_composer: ProductionContextComposer | None = None,
     ) -> None:
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
@@ -513,6 +515,7 @@ class DiscordTextEdge:
             route_runtime_factory=route_runtime_factory if tool_enabled else None,
             core_factory=core_factory,
             session_configurator=configure_tool_runtime if tool_enabled else None,
+            context_composer=context_composer,
             close_timeout_s=close_timeout_s,
         )
         self._runtime = LilavelRuntime(

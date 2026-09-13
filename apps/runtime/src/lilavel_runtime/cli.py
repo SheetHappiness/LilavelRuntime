@@ -9,13 +9,18 @@ from dataclasses import dataclass, field
 
 from lilavel_core import ConversationCore, ModelRuntimeV3
 from lilavel_core.production_cognition import (
-    build_character_guidance,
+    build_stable_runtime_guidance,
     build_turn_behavior_guidance,
 )
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from .cognition_model import LocalCognitionEngine
+from .context_builder import ContextFrameBuilder, MindStateIntentionResolver
+from .context_integration import (
+    ProductionContextComposer,
+    production_context_request_factory,
+)
 from .contracts import ActionProposalKind
 from .intervention import AmbientSpeechRolloutMode
 from .kernel import LilavelRuntime
@@ -98,13 +103,21 @@ async def run_cli(
     # exposed to this model host.
     model = ModelRuntimeV3()
     mind_state = MindState()
+    context_builder = ContextFrameBuilder(
+        intention_resolver=MindStateIntentionResolver(mind_state),
+    )
+    context_composer = ProductionContextComposer(
+        context_builder,
+        request_factory=production_context_request_factory,
+    )
     core = ConversationCore(
         model,
-        trusted_guidance=build_character_guidance(),
+        trusted_guidance=build_stable_runtime_guidance(),
         turn_guidance=lambda behavior: build_turn_behavior_guidance(
             behavior,
             mind_state.projection().guidance_blocks(),
         ),
+        context_guidance=context_composer,
         scope_id="local-cli",
     )
     wake_policy = (
@@ -120,7 +133,11 @@ async def run_cli(
         wake_policy=wake_policy,
         idle_timeout_s=idle_seconds,
     )
-    engine = LocalCognitionEngine(model, presence.history_for_cognition)
+    engine = LocalCognitionEngine(
+        model,
+        presence.history_for_cognition,
+        context_composer=context_composer,
+    )
     application = ProposalApplicationCoordinator(
         mind_state,
         scope_id="runtime",
@@ -138,6 +155,7 @@ async def run_cli(
         cognition_engine=engine,
         mind_state=mind_state,
         proposal_application_coordinator=application,
+        context_builder=context_builder,
     )
     renderer = asyncio.create_task(sink.render(), name="lilavel-cli-output")
     pending: set[asyncio.Task[str]] = set()

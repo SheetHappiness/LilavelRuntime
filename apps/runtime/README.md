@@ -127,13 +127,41 @@ inert. MIND-1D owns proposal validation/application and effect authorization.
 MIND-1E adds the separate temporal admission path. No Character snapshot is added here because the runtime
 repository has no supported Character composition seam at this boundary.
 
+## CTX-V1-C production context integration
+
+`ProductionContextComposer` is the one Runtime seam that appends deterministic,
+purpose-specific `ContextFrame` projections to existing model requests. It
+keeps Core-owned canonical `ContextMessage` history separate from volatile
+runtime guidance and compiles the stable OperatingCanon through Core's one
+canonical compiler. The production order is Character guidance, OperatingCanon,
+stable task policy, canonical history where applicable, ContextFrame projection,
+then the current user/observation/wake input.
+
+The same existing model call carries the correct projection for
+`USER_RESPONSE`, `AMBIENT_COGNITION`, `INTERNAL_APPRAISAL`, and
+`TEMPORAL_WAKE`; CTX-C adds no inference or semantic lane. Temporal wake uses
+the current clock and current resolver state to reconsider an old reason rather
+than replaying historical context. Social context is advisory, and E2/P4
+effect-time speech revalidation remains authoritative. Resolver failure omits
+only the context contribution and preserves stable policy and canonical
+evidence.
+
+Projection blocks are omitted structurally when the guidance or combined
+request budget is reached; UTF-8 is never sliced. Assembly evidence is bounded
+and content-free: purpose, injected/omitted state, block kinds, byte counts,
+omission count, and outcome. It never records raw user, observation,
+intention, frame, source, or model content. Default ambient speech rollout
+remains `OFF`.
+
 ## COG-V1-C disposition planner
 
 `DispositionPlanner` is an opt-in model-backed seam for evaluating how a direct
-USER turn should be approached. It is not connected to the production USER
-conversation path. It sends at most the last four canonical role/text messages
-alongside Core's deterministic Character v0 planner projection, then strictly
-parses a bounded `DispositionCandidate`.
+USER turn should be approached. D2 may supply it with a minimal bounded
+`USER_RESPONSE` context projection, but it remains an advisory planner rather
+than an admission authority. It sends at most the last four canonical
+role/text messages alongside Core's deterministic Character v0 planner
+projection and the stable OperatingCanon, then strictly parses a bounded
+`DispositionCandidate`.
 
 The candidate can select only the existing Core disposition vocabulary and
 bounded reason codes. Runtime-owned mappings compile trusted `WorkingState.focus`

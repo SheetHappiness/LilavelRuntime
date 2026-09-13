@@ -103,6 +103,22 @@ from .context_eval import (
     ContextScenarioFamily,
     evaluate_context_corpus,
 )
+from .context_integration import (
+    MAX_CONTEXT_ASSEMBLY_EVIDENCE,
+    MAX_TOTAL_REQUEST_CONTEXT_BYTES,
+    ContextAssemblyEvidence,
+    ContextRequestFactory,
+    ProductionContextComposer,
+    production_context_request_factory,
+    request_context_bytes,
+)
+from .context_integration_eval import (
+    CTX_V1_C_SCENARIOS,
+    ContextIntegrationEvalReport,
+    ContextIntegrationEvalResult,
+    ContextIntegrationEvalScenario,
+    evaluate_context_integration_corpus,
+)
 from .contracts import (
     MAX_ACTION_PROPOSAL_CONTENT_BYTES,
     MAX_COGNITION_PROPOSALS,
@@ -397,6 +413,18 @@ __all__ = [
     "AttentionVerdict",
     "ApplicationToolRegistry",
     "AMBIENT_INTERVENTION_CONTROL_GUIDANCE",
+    "ContextAssemblyEvidence",
+    "ContextRequestFactory",
+    "MAX_CONTEXT_ASSEMBLY_EVIDENCE",
+    "MAX_TOTAL_REQUEST_CONTEXT_BYTES",
+    "ProductionContextComposer",
+    "production_context_request_factory",
+    "request_context_bytes",
+    "CTX_V1_C_SCENARIOS",
+    "ContextIntegrationEvalReport",
+    "ContextIntegrationEvalResult",
+    "ContextIntegrationEvalScenario",
+    "evaluate_context_integration_corpus",
     "AmbientCognitionEvidence",
     "AmbientInterventionCandidate",
     "AmbientInterventionMetadata",

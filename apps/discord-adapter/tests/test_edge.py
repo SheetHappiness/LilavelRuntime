@@ -947,7 +947,10 @@ def test_edge_close_surfaces_runtime_shutdown_failure_after_closing_client() -> 
 
 
 def test_default_dm_wires_cognition_and_preserves_history() -> None:
-    from lilavel_core.production_cognition import build_turn_guidance
+    from lilavel_core.production_cognition import (
+        build_stable_runtime_guidance,
+        build_turn_guidance,
+    )
 
     async def scenario() -> None:
         runtime = FakeRuntime()
@@ -973,9 +976,13 @@ def test_default_dm_wires_cognition_and_preserves_history() -> None:
             await wait_until(lambda: len(runtime.generations) == 2)
             finish(runtime.generations[1], "Second reply.")
             await edge.wait_idle()
+            stable_prefix = (
+                *build_stable_runtime_guidance(),
+                build_turn_guidance()[-1],
+            )
             for request in runtime.requests:
-                assert request.system_prompt == build_turn_guidance()
-                assert len(request.system_prompt) == 9
+                assert request.system_prompt[: len(stable_prefix)] == stable_prefix
+                assert request.system_prompt[len(stable_prefix)].startswith("[Context purpose]")
                 rendered = "\n".join(request.system_prompt)
                 assert "[Self concept]" in rendered
                 assert "I am Lilavel" in rendered

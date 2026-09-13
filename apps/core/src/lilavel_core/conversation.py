@@ -96,6 +96,23 @@ class FullHistoryContextComposer:
         return history
 
 
+class ConversationContextGuidanceComposer(Protocol):
+    """Append one runtime-owned volatile guidance projection to a USER request.
+
+    Core passes only the request's already-composed canonical messages and
+    existing trusted guidance.  The callback returns guidance blocks only; it
+    cannot mutate Core history or create an effect authority.
+    """
+
+    def compose(
+        self,
+        scope_id: str,
+        run: ConversationRun,
+        messages: tuple[ContextMessage, ...],
+        existing_guidance: tuple[str, ...],
+    ) -> Sequence[str]: ...
+
+
 RUNTIME_EVIDENCE_CAPACITY: Final = 256
 
 type RuntimeEvidenceKind = Literal[
@@ -722,6 +739,7 @@ class ConversationCore:
         composer: ConversationContextComposer | None = None,
         trusted_guidance: Sequence[str] | Callable[[], Sequence[str]] = (),
         turn_guidance: Callable[[TurnBehavior], Sequence[str]] | None = None,
+        context_guidance: ConversationContextGuidanceComposer | None = None,
         scope_id: str | None = None,
         store: ConversationStore | None = None,
         runtime_evidence_capacity: int = RUNTIME_EVIDENCE_CAPACITY,
@@ -732,6 +750,7 @@ class ConversationCore:
             trusted_guidance if callable(trusted_guidance) else tuple(trusted_guidance)
         )
         self._turn_guidance = turn_guidance
+        self._context_guidance = context_guidance
         self._lock = RLock()
         self._runtime_evidence = _RuntimeEvidenceTrace(runtime_evidence_capacity)
         self._d1_evidence = _RuntimeEvidenceTrace(runtime_evidence_capacity)
@@ -874,7 +893,38 @@ class ConversationCore:
             if behavior is None:
                 raise ConversationError("conversation run behavior was not bound")
             blocks = (*blocks, *tuple(self._turn_guidance(behavior)))
+        if run is not None and self._context_guidance is not None:
+            try:
+                context_blocks = tuple(
+                    self._context_guidance.compose(
+                        self._scope_id,
+                        run,
+                        composed,
+                        tuple(blocks),
+                    )
+                )
+            except Exception:
+                # Runtime context is advisory. A malformed/unavailable context
+                # provider cannot prevent a safe canonical USER request from
+                # proceeding, and Core never guesses a replacement fact.
+                context_blocks = ()
+            blocks = (*blocks, *context_blocks)
         return ModelRequest(messages=composed, system_prompt=blocks)
+
+    def bind_context_guidance(
+        self,
+        context_guidance: ConversationContextGuidanceComposer | None,
+    ) -> None:
+        """Bind the runtime-owned volatile context seam before a run starts."""
+
+        if context_guidance is not None and not callable(
+            getattr(context_guidance, "compose", None)
+        ):
+            raise TypeError("context_guidance must provide compose")
+        with self._lock:
+            if self._active is not None and not self._active.settled:
+                raise ConversationBusy("cannot change context guidance during an active run")
+            self._context_guidance = context_guidance
 
     def record_turn_behavior_resolution(
         self, run: ConversationRun, resolution: TurnBehaviorResolution

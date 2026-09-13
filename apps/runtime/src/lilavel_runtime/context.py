@@ -2,8 +2,9 @@
 
 ``ContextFrame`` is a runtime-owned view for one semantic purpose. It is not
 canonical conversation history, an observation window, MindState, memory, a
-permission object, or a mutable store. CTX-V1-B adds the runtime-owned builder
-in a separate module; production model request assembly remains unchanged.
+permission object, or a mutable store. CTX-V1-C feeds deterministic projections
+through the Runtime composition seam; the frame remains read-only and has no
+effect authority.
 """
 
 from __future__ import annotations
@@ -547,8 +548,12 @@ def _render_intentions(intentions: IntentionContext) -> str:
 
 def _render_capabilities(capabilities: CapabilityContext) -> str:
     if capabilities.availability is not ContextAvailability.KNOWN:
-        return f"[Capabilities]\n{_status_text(capabilities.availability, capabilities.reason)}"
+        return (
+            "[Capabilities]\nsemantic awareness only; does not grant execution authority\n"
+            + _status_text(capabilities.availability, capabilities.reason)
+        )
     lines = ["[Capabilities]"]
+    lines.append("semantic awareness only; does not grant execution authority")
     for item in capabilities.capabilities:
         if item.availability is ContextAvailability.KNOWN:
             status = "available"

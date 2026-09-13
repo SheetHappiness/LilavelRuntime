@@ -184,19 +184,25 @@ Provider metadata, session state, tools, and transport details remain outside
 this layer.
 
 Production composition lives in `production_cognition.py`. It exposes the
-immutable Character v0 blocks separately, then builds normal-turn
-`WorkingState` / `ResponseDisposition` controls through the existing compiler.
-An application-owned read-only projection may be appended through
-`build_turn_guidance` without entering canonical history. `trusted_guidance`
+immutable Character v0 blocks separately, compiles the stable OperatingCanon
+independently, then builds normal-turn `WorkingState` / `ResponseDisposition`
+controls through the existing compiler. The stable production prefix is
+Character guidance followed by OperatingCanon and run-local policy. An
+application-owned read-only context-guidance composer may append a bounded
+volatile projection without entering canonical history. `trusted_guidance`
 accepts either static blocks or a zero-argument builder; the builder receives no
-user text or transport metadata.
+user text or transport metadata. Core's `ConversationContextGuidanceComposer`
+seam receives only the already-composed canonical messages and returns
+guidance blocks; it cannot mutate Core state or create an effect.
 
 COG-V1-C also exposes `build_disposition_planner_guidance()`, a deterministic
 projection of the same `IdentityCanon` containing only decision-relevant values,
 temperament, interests, behavioral anchors, and anti-patterns. It intentionally
 excludes voice and representative dialogue examples. This projection is a
-standalone runtime evaluation input and is not connected to normal
-`ConversationCore` production turns.
+standalone runtime evaluation input. When D2 invokes it through the Runtime
+composition, it may receive a minimal USER_RESPONSE context projection, while
+its advisory output remains subject to the existing fixed USER admission and
+Core behavior-binding contracts.
 
 ## Offline Character v0 evaluation
 

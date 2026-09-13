@@ -520,9 +520,83 @@ projection is never byte-sliced. Social context is advisory evidence only and
 cannot grant an effect; E2 revalidates social permission at application time
 because a captured frame may be stale.
 
-CTX-V1-B leaves production request composition unchanged. CTX-V1-C is the
-handoff for deliberate USER/NON_USER model-request integration, prompt-layer
-ordering, caching-aware stable prefixes, and freshness/behavior evaluation.
+### CTX-V1-C production request integration
+
+`ProductionContextComposer` in
+`apps/runtime/src/lilavel_runtime/context_integration.py` is the single Runtime
+seam that compiles a purpose-specific `ContextFrame` into model guidance. The
+production composition passes one shared composer to Core and the cognition
+engine; the composer uses `production_context_request_factory` to translate
+only typed, runtime-owned cognition provenance into builder requests. It never
+accepts raw observation payloads, model output, installed-tool metadata, or
+conversation text as context authority.
+
+Provider-neutral requests use this stable-to-volatile order wherever the
+transport supports separate fields:
+
+```text
+CharacterCanon guidance
+OperatingCanon
+stable task/control policy
+canonical ConversationCore messages (when applicable)
+purpose-specific ContextFrame projection
+current user/observation/wake input
+```
+
+Character and Operating guidance are compiled independently. OperatingCanon
+is byte-stable for the same canon and contains no frame ID, UUID, capture time,
+source reference, current time, current surface, or current capability. The
+ContextFrame projection is appended after stable guidance, and empty or
+over-budget optional blocks are omitted as whole blocks in compiler order;
+arbitrary UTF-8 slicing is never used. Core keeps canonical history in its
+structured `messages` field, while the Runtime composer owns only volatile
+guidance. The current wire budgets are 64 KiB for canonical/prompt input,
+16 KiB and 32 blocks for trusted guidance, and an explicit 80 KiB combined
+request accounting bound.
+
+The four existing model-backed purposes are wired at these points:
+
+| Purpose | Existing model call | Context layer | Canonical evidence |
+| --- | --- | --- | --- |
+| `USER_RESPONSE` | `ConversationCore.build_model_request` | Core callback from `ProductionContextComposer` | Core-owned messages |
+| `USER_RESPONSE` planner | `DispositionPlanner.build_request` when D2 planning is enabled | bounded USER projection | planner's existing recent Core messages |
+| `AMBIENT_COGNITION` | `LocalCognitionEngine._ambient_request` | one E2 inference | admitted observations |
+| `INTERNAL_APPRAISAL` | `LocalCognitionEngine._appraisal_request` | existing appraisal inference | Presence/Core completed-turn resolver |
+| `TEMPORAL_WAKE` | `LocalCognitionEngine._temporal_request` | existing cognition inference | wake reason and typed temporal provenance |
+
+No context-generation model call or semantic lane was added. Planner context
+is intentionally minimal and advisory: it can orient disposition to current
+runtime facts when a composer is supplied, but planner output remains subject
+to the existing D2 policy and Core behavior binding. Direct USER FAST and PLAN
+routes therefore retain their existing call count and commit semantics.
+
+Temporal wake uses the current builder clock and current resolver state. A
+historical wake reason is evidence for reconsideration, never a replayed world
+snapshot. A social snapshot shown to ambient cognition is advisory only; every
+SPEAK continues through current E2/P4 effect-time revalidation. Context failure
+fails closed for that contribution and preserves stable guidance and existing
+canonical evidence. It never mutates unrelated runtime state.
+
+Content-free bounded assembly evidence records purpose, OperatingCanon and
+projection presence, included projection block kinds, projection/history/input
+bytes, total request-context bytes, omission count, and outcome. It does not
+record user text, observation or intention content, frame IDs, source refs,
+raw model JSON, or chain-of-thought. CTX-V1 is complete at this boundary:
+
+```text
+Runtime-owned state
+    ↓
+ContextFrameBuilder
+    ↓
+purpose-specific ContextFrame
+    ↓
+deterministic projection
+    ↓
+production model request
+```
+
+CharacterCanon, OperatingCanon, ConversationCore history, MindState, and
+future Memory remain separately owned.
 
 ## MIND-1F-B semantic admission actor
 

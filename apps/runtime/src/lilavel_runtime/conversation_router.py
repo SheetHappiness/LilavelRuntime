@@ -26,6 +26,8 @@ from lilavel_core import (
 from lilavel_core.production_cognition import create_conversation
 
 from .cognition_model import DispositionPlanner
+from .context_builder import ContextFrameBuilder
+from .context_integration import ProductionContextComposer
 from .contracts import ActionExecutor, Observation, ToolCall, ToolResult
 from .deliberation_policy import DeterministicDeliberationPolicy
 from .user_disposition import DeliberationMode, UserDispositionResolver
@@ -48,10 +50,14 @@ PlannerFactory = Callable[[ConversationRuntime], DispositionPlanner]
 DeliberationPolicyFactory = Callable[[ConversationRuntime], DeliberationPolicy]
 
 
-def _default_planner_factory(runtime: ConversationRuntime) -> DispositionPlanner:
+def _default_planner_factory(
+    runtime: ConversationRuntime,
+    *,
+    context_composer: ProductionContextComposer | None = None,
+) -> DispositionPlanner:
     if not isinstance(runtime, RunAwareConversationRuntime):
         raise TypeError("ALWAYS_PLAN requires a run-aware ConversationRuntime")
-    return DispositionPlanner(runtime)
+    return DispositionPlanner(runtime, context_composer=context_composer)
 
 
 def _default_deliberation_policy_factory(runtime: ConversationRuntime) -> DeliberationPolicy:
@@ -149,6 +155,7 @@ class CoreConversationRouter:
         deliberation_mode: DeliberationMode = DeliberationMode.DEFAULT_ONLY,
         planner_factory: PlannerFactory | None = None,
         deliberation_policy_factory: DeliberationPolicyFactory | None = None,
+        context_composer: ProductionContextComposer | None = None,
         close_timeout_s: float = 15.0,
     ) -> None:
         if close_timeout_s <= 0:
@@ -160,7 +167,20 @@ class CoreConversationRouter:
         if type(deliberation_mode) is not DeliberationMode:
             raise TypeError("deliberation_mode must be a DeliberationMode")
         self._deliberation_mode = deliberation_mode
-        self._planner_factory = planner_factory or _default_planner_factory
+        self._context_composer = context_composer or ProductionContextComposer(
+            ContextFrameBuilder()
+        )
+        if planner_factory is None:
+
+            def default_planner_factory(runtime: ConversationRuntime) -> DispositionPlanner:
+                return _default_planner_factory(
+                    runtime,
+                    context_composer=self._context_composer,
+                )
+
+            self._planner_factory = default_planner_factory
+        else:
+            self._planner_factory = planner_factory
         self._deliberation_policy_factory = (
             deliberation_policy_factory or _default_deliberation_policy_factory
         )
@@ -367,6 +387,7 @@ class CoreConversationRouter:
                 else self._runtime_factory()
             )
             core = self._core_factory(runtime)
+            core.bind_context_guidance(self._context_composer)
             if self._session_configurator is not None:
                 self._session_configurator(runtime, core, key)
             planner = None

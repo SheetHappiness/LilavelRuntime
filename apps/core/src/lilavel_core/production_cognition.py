@@ -10,7 +10,12 @@ from .cognition import (
     compile_planner_guidance,
     default_turn_behavior,
 )
-from .conversation import ConversationCore, ConversationRuntime
+from .conversation import (
+    ConversationContextGuidanceComposer,
+    ConversationCore,
+    ConversationRuntime,
+)
+from .operating import LILAVEL_OPERATING_CANON_V1, compile_operating_canon
 
 # Retained only as the B-arm fixture for the offline cognition comparison;
 # production guidance below uses LILAVEL_CHARACTER_V0.
@@ -32,6 +37,18 @@ def build_character_guidance() -> tuple[str, ...]:
     """Return only the immutable Character v0 guidance blocks."""
 
     return compile_guidance(LILAVEL_CHARACTER_V0)
+
+
+def build_operating_guidance() -> tuple[str, ...]:
+    """Return the one canonical, stable OperatingCanon projection."""
+
+    return compile_operating_canon(LILAVEL_OPERATING_CANON_V1)
+
+
+def build_stable_runtime_guidance() -> tuple[str, ...]:
+    """Return stable CharacterCanon-derived and operating-law guidance."""
+
+    return (*build_character_guidance(), *build_operating_guidance())
 
 
 def build_disposition_planner_guidance() -> tuple[str, ...]:
@@ -77,10 +94,15 @@ def build_turn_behavior_guidance(
     )
 
 
-def create_conversation(runtime: ConversationRuntime) -> ConversationCore:
+def create_conversation(
+    runtime: ConversationRuntime,
+    *,
+    context_guidance: ConversationContextGuidanceComposer | None = None,
+) -> ConversationCore:
     """Compose the production Core without accepting transport metadata."""
     return ConversationCore(
         runtime,
-        trusted_guidance=build_character_guidance(),
+        trusted_guidance=build_stable_runtime_guidance(),
         turn_guidance=build_turn_behavior_guidance,
+        context_guidance=context_guidance,
     )

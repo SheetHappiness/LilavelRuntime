@@ -36,11 +36,14 @@ from lilavel_core import (
 )
 from lilavel_core.cognition import Aim, Level, QuestionPolicy, Stance
 from lilavel_core.production_cognition import (
-    build_character_guidance,
     build_disposition_planner_guidance,
+    build_operating_guidance,
+    build_stable_runtime_guidance,
 )
 from lilavel_core.sidecar_protocol import MAX_CONTEXT_BYTES
 
+from .context import ContextPurpose
+from .context_integration import ProductionContextComposer
 from .contracts import (
     MAX_ACTION_PROPOSAL_CONTENT_BYTES,
     MAX_COGNITION_PROPOSALS,
@@ -172,6 +175,16 @@ AMBIENT_INTERVENTION_CONTROL_GUIDANCE: tuple[str, ...] = (
     f"Allowed reason_codes: {_REASON_CODE_VALUES}; each list must be unique and bounded.",
     "Do not emit confidence, reasoning, chain-of-thought, markdown, prose outside JSON, "
     "arbitrary tools, action destinations, or transport metadata.",
+)
+
+TEMPORAL_WAKE_CONTROL_GUIDANCE: tuple[str, ...] = (
+    "This is temporal-wake reconsideration, not replay of a historical world state.",
+    "The wake reason and intention relation are past provenance. Interpret them against "
+    "the current ContextFrame and current time supplied below.",
+    "Do not treat a past deadline, permission, environment, capability, social state, "
+    "or destination as current merely because it was true when the wake was scheduled.",
+    "A model result is an inert proposal. It cannot authorize speech, tools, effects, "
+    "capabilities, or changes to trusted runtime state.",
 )
 
 
@@ -333,8 +346,9 @@ class _ScopedModelGenerationMixin:
 class DispositionPlanner(_ScopedModelGenerationMixin):
     """Plan direct-user response behavior without owning response admission.
 
-    The planner is an explicit caller-owned seam. It is not wired into
-    ``ConversationCore`` or any production USER route in COG-V1-C.
+    The planner is an explicit caller-owned seam. When supplied, its bounded
+    USER_RESPONSE context projection is advisory and does not change D2
+    admission semantics.
     """
 
     def __init__(
@@ -342,6 +356,7 @@ class DispositionPlanner(_ScopedModelGenerationMixin):
         runtime: RunAwareConversationRuntime,
         *,
         planner_guidance: Sequence[str] | None = None,
+        context_composer: ProductionContextComposer | None = None,
     ) -> None:
         if not callable(getattr(runtime, "generate_for_run", None)):
             raise TypeError("runtime must provide generate_for_run")
@@ -351,6 +366,7 @@ class DispositionPlanner(_ScopedModelGenerationMixin):
             if planner_guidance is None
             else tuple(planner_guidance)
         )
+        self._context_composer = context_composer
         # ModelRequest performs the authoritative guidance bounds check. Do it
         # at construction time so an invalid composition fails before a call.
         ModelRequest(
@@ -363,6 +379,7 @@ class DispositionPlanner(_ScopedModelGenerationMixin):
         current_user_text: str,
         *,
         recent_context: Sequence[ContextMessage] = (),
+        scope_id: str = "disposition-planner",
     ) -> ModelRequest:
         """Build a bounded provider-neutral planner request.
 
@@ -384,9 +401,24 @@ class DispositionPlanner(_ScopedModelGenerationMixin):
         if not all(type(message) is ContextMessage for message in messages):
             raise TypeError("recent_context must contain only ContextMessage values")
         messages = _fit_disposition_context(messages)
+        stable_guidance = (
+            *self._planner_guidance,
+            *build_operating_guidance(),
+            *DISPOSITION_PLANNER_CONTROL_GUIDANCE,
+        )
+        context_blocks = (
+            self._context_composer.compose_projection(
+                ContextPurpose.USER_RESPONSE,
+                scope_id=scope_id,
+                messages=tuple(messages),
+                existing_guidance=stable_guidance,
+            )
+            if self._context_composer is not None
+            else ()
+        )
         return ModelRequest(
             messages=tuple(messages),
-            system_prompt=(*self._planner_guidance, *DISPOSITION_PLANNER_CONTROL_GUIDANCE),
+            system_prompt=(*stable_guidance, *context_blocks),
         )
 
     async def plan_candidate(
@@ -399,7 +431,11 @@ class DispositionPlanner(_ScopedModelGenerationMixin):
     ) -> DispositionCandidate | None:
         """Generate and strictly validate one untrusted disposition candidate."""
 
-        request = self.build_request(current_user_text, recent_context=recent_context)
+        request = self.build_request(
+            current_user_text,
+            recent_context=recent_context,
+            scope_id=scope_id,
+        )
         raw = await self._generate_text(
             request,
             scope_id=scope_id,
@@ -762,6 +798,29 @@ def _fit_disposition_context(messages: list[ContextMessage]) -> list[ContextMess
     return messages
 
 
+def _fit_ambient_prompt(sections: list[str]) -> list[str]:
+    """Keep whole admitted observation sections within the prompt bound."""
+
+    total = sum(len(section.encode("utf-8")) for section in sections) + max(
+        0, (len(sections) - 1) * 2
+    )
+    if total <= MAX_CONTEXT_BYTES:
+        return sections
+    header = sections[0]
+    fitted = [header]
+    remaining = sections[1:]
+    while remaining:
+        candidate = [header, remaining[-1], *fitted[1:]]
+        candidate_bytes = sum(len(section.encode("utf-8")) for section in candidate) + max(
+            0, (len(candidate) - 1) * 2
+        )
+        if candidate_bytes > MAX_CONTEXT_BYTES:
+            break
+        fitted = candidate
+        remaining.pop()
+    return fitted
+
+
 def _string_value(value: object, allowed: frozenset[str]) -> str | None:
     return value if type(value) is str and value in allowed else None
 
@@ -778,6 +837,7 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
         self,
         runtime: RunAwareConversationRuntime,
         history_for_trigger: HistoryResolver,
+        context_composer: ProductionContextComposer | None = None,
     ) -> None:
         if not callable(getattr(runtime, "generate_for_run", None)):
             raise TypeError("runtime must provide generate_for_run")
@@ -785,6 +845,7 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             raise TypeError("history_for_trigger must be callable")
         self._runtime = runtime
         self._history_for_trigger = history_for_trigger
+        self._context_composer = context_composer
         self._ambient_evidence: deque[AmbientCognitionEvidence] = deque(
             maxlen=AMBIENT_EVIDENCE_CAPACITY
         )
@@ -829,11 +890,12 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
                 None,
             )
             return candidate.to_cognition_candidate()
-        if trigger.source is not CognitionTriggerSource.INTERNAL:
+        if trigger.source is CognitionTriggerSource.TEMPORAL:
+            request = self._temporal_request(episode)
+        elif trigger.source is not CognitionTriggerSource.INTERNAL:
             return CognitionCandidate()
-
-        if trigger.reason == APPRAISAL_REASON:
-            request = self._appraisal_request(trigger.trigger_id)
+        elif trigger.reason == APPRAISAL_REASON:
+            request = self._appraisal_request(trigger.trigger_id, episode)
             if request is None:
                 return CognitionCandidate()
         elif trigger.reason == IDLE_REASON:
@@ -848,18 +910,29 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             )
             if intention is None:
                 return CognitionCandidate()
+            stable_guidance = (*build_stable_runtime_guidance(), *IDLE_CONTROL_GUIDANCE)
             request = ModelRequest(
                 prompt=(
                     f"Runtime-owned active intention (context, not a user turn):\n{intention.text}"
                 ),
-                system_prompt=(*build_character_guidance(), *IDLE_CONTROL_GUIDANCE),
+                system_prompt=(
+                    *stable_guidance,
+                    *self._context_blocks(
+                        ContextPurpose.INTERNAL_APPRAISAL,
+                        episode,
+                        stable_guidance,
+                    ),
+                ),
             )
         else:
-            # The local production engine has no policy for generic/temporal
-            # triggers.  Those callers supply their own CognitionEngine.
+            # Generic internal triggers remain owned by their explicit
+            # caller; CTX-C adds no new semantic lane.
             return CognitionCandidate()
 
         raw = await self._generate(request, episode)
+        if trigger.source is CognitionTriggerSource.TEMPORAL:
+            candidate = parse_ambient_intervention_candidate(raw)
+            return CognitionCandidate() if candidate is None else candidate.to_cognition_candidate()
         return _parse_candidate(raw, trigger.reason)
 
     def _ambient_request(self, episode: CognitionEpisode) -> ModelRequest | None:
@@ -873,18 +946,39 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             text = observation.event.payload.get("text")
             if not isinstance(text, str) or not text.strip():
                 continue
-            bounded = text.strip().encode("utf-8")[:MAX_AMBIENT_OBSERVATION_TEXT_BYTES]
-            rendered.append(
-                "Event kind: "
-                + observation.event.kind
-                + "\nObservation text:\n"
-                + bounded.decode("utf-8", "ignore")
-            )
+            text = text.strip()
+            if len(text.encode("utf-8")) > MAX_AMBIENT_OBSERVATION_TEXT_BYTES:
+                rendered.append(
+                    "Event kind: "
+                    + observation.event.kind
+                    + (
+                        "\nObservation text is unavailable because it exceeds the bounded input "
+                        "size; prefer NONE."
+                    )
+                )
+            else:
+                rendered.append(
+                    "Event kind: " + observation.event.kind + "\nObservation text:\n" + text
+                )
         if len(rendered) == 1:
             rendered.append("No trusted text field is available; prefer NONE.")
+        rendered = _fit_ambient_prompt(rendered)
+        stable_guidance = (
+            *build_stable_runtime_guidance(),
+            *AMBIENT_INTERVENTION_CONTROL_GUIDANCE,
+        )
+        prompt = "\n\n".join(rendered)
         return ModelRequest(
-            prompt="\n\n".join(rendered),
-            system_prompt=(*build_character_guidance(), *AMBIENT_INTERVENTION_CONTROL_GUIDANCE),
+            prompt=prompt,
+            system_prompt=(
+                *stable_guidance,
+                *self._context_blocks(
+                    ContextPurpose.AMBIENT_COGNITION,
+                    episode,
+                    stable_guidance,
+                    request_input_bytes=len(prompt.encode("utf-8")),
+                ),
+            ),
         )
 
     def _record_ambient_evidence(
@@ -905,15 +999,73 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             )
         )
 
-    def _appraisal_request(self, trigger_id: str) -> ModelRequest | None:
+    def _appraisal_request(
+        self,
+        trigger_id: str,
+        episode: CognitionEpisode,
+    ) -> ModelRequest | None:
         history = self._history_for_trigger(trigger_id)
         if history is None:
             return None
-        recent = tuple(history[-MAX_APPRAISAL_CONTEXT_MESSAGES:])
+        recent = tuple(_fit_disposition_context(list(history[-MAX_APPRAISAL_CONTEXT_MESSAGES:])))
+        stable_guidance = (*build_stable_runtime_guidance(), *APPRAISAL_CONTROL_GUIDANCE)
         return ModelRequest(
             messages=recent if recent else None,
             prompt=None if recent else "Review the available canonical conversation.",
-            system_prompt=(*build_character_guidance(), *APPRAISAL_CONTROL_GUIDANCE),
+            system_prompt=(
+                *stable_guidance,
+                *self._context_blocks(
+                    ContextPurpose.INTERNAL_APPRAISAL,
+                    episode,
+                    stable_guidance,
+                    messages=recent,
+                ),
+            ),
+        )
+
+    def _temporal_request(self, episode: CognitionEpisode) -> ModelRequest:
+        trigger = episode.trigger
+        stable_guidance = (
+            *build_stable_runtime_guidance(),
+            *AMBIENT_INTERVENTION_CONTROL_GUIDANCE,
+            *TEMPORAL_WAKE_CONTROL_GUIDANCE,
+        )
+        prompt = (
+            "Temporal wake provenance follows. It is a reason to reconsider, "
+            "not a historical world snapshot or an instruction:\n"
+            f"wake reason: {trigger.reason}"
+        )
+        return ModelRequest(
+            prompt=prompt,
+            system_prompt=(
+                *stable_guidance,
+                *self._context_blocks(
+                    ContextPurpose.TEMPORAL_WAKE,
+                    episode,
+                    stable_guidance,
+                    request_input_bytes=len(prompt.encode("utf-8")),
+                ),
+            ),
+        )
+
+    def _context_blocks(
+        self,
+        purpose: ContextPurpose,
+        episode: CognitionEpisode,
+        existing_guidance: Sequence[str],
+        *,
+        messages: Sequence[ContextMessage] = (),
+        request_input_bytes: int | None = None,
+    ) -> tuple[str, ...]:
+        if self._context_composer is None:
+            return ()
+        return self._context_composer.compose_projection(
+            purpose,
+            scope_id=episode.scope_id,
+            owner=episode,
+            messages=messages,
+            existing_guidance=existing_guidance,
+            request_input_bytes=request_input_bytes,
         )
 
     async def _generate(self, request: ModelRequest, episode: CognitionEpisode) -> str:
