@@ -16,6 +16,7 @@ from typing import cast
 from uuid import uuid4
 
 from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus
+from lilavel_core import CognitionReasonCode, InterventionDecision
 from lilavel_core.tool_runtime import (
     ApplicationToolSessionFactory,
     ToolBatchCorrelation,
@@ -24,11 +25,28 @@ from lilavel_core.tool_runtime import (
 )
 
 from .contracts import (
+    ActionProposal,
     ActionProposalKind,
     ApplicationPermit,
     CognitionOutcome,
+    CognitionTriggerSource,
     StateProposal,
     StateProposalKind,
+)
+from .intervention import (
+    ActivityState,
+    AmbientSpeechRolloutMode,
+    DeterministicInterventionPolicy,
+    FloorState,
+    FreshnessBucket,
+    FreshnessClass,
+    HandlingState,
+    InterventionCandidate,
+    SocialPermissionContext,
+    SocialPermissionResult,
+    SocialSensitivity,
+    SpeakingSurfaceState,
+    SpeechAccounting,
 )
 from .mind import (
     MindState,
@@ -37,6 +55,7 @@ from .mind import (
     MindStateDeltaKind,
     MindStateVersionConflict,
 )
+from .semantic_actor import SemanticPriority, SemanticSourceKind
 from .temporal import (
     TemporalApplication,
     TemporalApplicationStatus,
@@ -55,6 +74,9 @@ _APPLICATION_PERMIT_DOMAIN = "lilavel-application-permit-v1"
 type _ReplayKey = tuple[str, int]
 
 type StateProvenanceResolver = Callable[[CognitionOutcome], "MindStateProvenance | None"]
+type SpeechPermissionContextResolver = Callable[
+    [CognitionOutcome, int, ActionProposal], SocialPermissionContext | None
+]
 
 
 class ProposalApplicationStatus(StrEnum):
@@ -83,6 +105,15 @@ class ActionApplicationStatus(StrEnum):
     PARTIAL = "partial"
     REJECTED = "rejected"
     FAILED = "failed"
+
+
+class SpeechRevalidationStatus(StrEnum):
+    """Content-free effect-time SPEAK guard outcome."""
+
+    NOT_RUN = "not_run"
+    ALLOWED = "allowed"
+    DENIED = "denied"
+    SHADOW_SUPPRESSED = "shadow_suppressed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +170,57 @@ class ActionApplication:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeechRevalidationEvidence:
+    """Bounded, content-free evidence for one SPEAK proposal."""
+
+    sequence: int
+    trigger_source: CognitionTriggerSource | None
+    rollout_mode: AmbientSpeechRolloutMode
+    candidate_intervention: InterventionDecision | None
+    candidate_valid: bool
+    speak_proposed: bool
+    revalidation: SpeechRevalidationStatus
+    denial_reason: str | None = None
+    shadow_would_speak: bool = False
+    external_attempted: bool = False
+    effect: ToolEffect | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.sequence, bool) or self.sequence <= 0:
+            raise ValueError("speech evidence sequence must be positive")
+        if (
+            self.trigger_source is not None
+            and type(self.trigger_source) is not CognitionTriggerSource
+        ):
+            raise TypeError("trigger_source must be a CognitionTriggerSource")
+        if type(self.rollout_mode) is not AmbientSpeechRolloutMode:
+            raise TypeError("rollout_mode must be an AmbientSpeechRolloutMode")
+        if (
+            self.candidate_intervention is not None
+            and type(self.candidate_intervention) is not InterventionDecision
+        ):
+            raise TypeError("candidate_intervention must be an InterventionDecision")
+        if type(self.candidate_valid) is not bool:
+            raise TypeError("candidate_valid must be a bool")
+        if type(self.speak_proposed) is not bool:
+            raise TypeError("speak_proposed must be a bool")
+        if type(self.revalidation) is not SpeechRevalidationStatus:
+            raise TypeError("revalidation must be a SpeechRevalidationStatus")
+        if self.denial_reason is not None and (
+            type(self.denial_reason) is not str
+            or not self.denial_reason.strip()
+            or len(self.denial_reason.encode("utf-8")) > 128
+        ):
+            raise ValueError("denial_reason must be bounded non-empty text")
+        if type(self.shadow_would_speak) is not bool:
+            raise TypeError("shadow_would_speak must be a bool")
+        if type(self.external_attempted) is not bool:
+            raise TypeError("external_attempted must be a bool")
+        if self.effect is not None and type(self.effect) is not ToolEffect:
+            raise TypeError("effect must be a ToolEffect")
+
+
+@dataclass(frozen=True, slots=True)
 class ProposalApplicationResult:
     application_id: str
     outcome_id: str
@@ -161,6 +243,7 @@ class _PreparedState:
 @dataclass(frozen=True, slots=True)
 class _PreparedActions:
     calls: tuple[ToolCall, ...]
+    call_indices: tuple[int, ...]
     results: tuple[ActionProposalApplication, ...]
     valid: bool
     reason_code: str | None
@@ -200,6 +283,11 @@ def _proposal_digest(outcome: CognitionOutcome) -> str:
             {"kind": proposal.kind.value, "content": proposal.content}
             for proposal in outcome.action_proposals
         ],
+        "ambient_intervention": _ambient_metadata_encoding(outcome),
+        "trigger_source": (
+            outcome.trigger_source.value if outcome.trigger_source is not None else None
+        ),
+        "observation_ids": outcome.observation_ids,
         "temporal_proposals": temporal,
     }
     canonical = json.dumps(
@@ -209,6 +297,38 @@ def _proposal_digest(outcome: CognitionOutcome) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return sha256(canonical).hexdigest()
+
+
+def _ambient_metadata_encoding(outcome: CognitionOutcome) -> dict[str, object] | None:
+    metadata = outcome.ambient_intervention
+    if metadata is None:
+        return None
+    disposition = metadata.disposition
+    return {
+        "intervention": metadata.intervention.value,
+        "reason_codes": tuple(code.value for code in metadata.reason_codes),
+        "disposition": (
+            None
+            if disposition is None
+            else {
+                "aim": disposition.aim,
+                "directness": disposition.directness,
+                "desired_length": disposition.desired_length,
+                "humor_allowed": disposition.humor_allowed,
+                "question_policy": disposition.question_policy,
+                "initiative": disposition.initiative,
+            }
+        ),
+        "working_state": (
+            None
+            if metadata.working_state is None
+            else {
+                "focus": metadata.working_state.focus,
+                "stance": metadata.working_state.stance,
+                "engagement": metadata.working_state.engagement,
+            }
+        ),
+    }
 
 
 class _CoordinatorApplicationPermitIssuer:
@@ -244,6 +364,11 @@ class ProposalApplicationCoordinator:
         temporal_coordinator: TemporalCoordinator | None = None,
         runtime_instance_id: str = "runtime",
         fence_capacity: int = MAX_APPLICATION_FENCES,
+        ambient_speech_mode: AmbientSpeechRolloutMode = AmbientSpeechRolloutMode.OFF,
+        speech_context_resolver: SpeechPermissionContextResolver | None = None,
+        speech_policy: DeterministicInterventionPolicy | None = None,
+        speech_accounting: SpeechAccounting | None = None,
+        speech_evidence_capacity: int = MAX_APPLICATION_REPLAY_WINDOW,
     ) -> None:
         if type(mind_state) is not MindState:
             raise TypeError("mind_state must be a MindState")
@@ -251,6 +376,19 @@ class ProposalApplicationCoordinator:
         _require_text(runtime_instance_id, "runtime_instance_id")
         if isinstance(fence_capacity, bool) or not 0 < fence_capacity <= MAX_APPLICATION_FENCES:
             raise ValueError("fence_capacity is outside its bound")
+        if type(ambient_speech_mode) is not AmbientSpeechRolloutMode:
+            raise TypeError("ambient_speech_mode must be an AmbientSpeechRolloutMode")
+        if speech_context_resolver is not None and not callable(speech_context_resolver):
+            raise TypeError("speech_context_resolver must be callable")
+        if speech_policy is not None and type(speech_policy) is not DeterministicInterventionPolicy:
+            raise TypeError("speech_policy must be a DeterministicInterventionPolicy")
+        if speech_accounting is not None and type(speech_accounting) is not SpeechAccounting:
+            raise TypeError("speech_accounting must be a SpeechAccounting")
+        if (
+            isinstance(speech_evidence_capacity, bool)
+            or not 0 < speech_evidence_capacity <= MAX_APPLICATION_REPLAY_WINDOW
+        ):
+            raise ValueError("speech_evidence_capacity is outside its bound")
         if (tool_registry is None) != (tool_session_factory is None):
             raise ValueError("tool registry and session factory must be supplied together")
 
@@ -268,6 +406,14 @@ class ProposalApplicationCoordinator:
         self._temporal_coordinator = temporal_coordinator
         self._action_tool_names = cast(Mapping[ActionProposalKind, str], MappingProxyType(routes))
         self._fence_capacity = fence_capacity
+        self._ambient_speech_mode = ambient_speech_mode
+        self._speech_context_resolver = speech_context_resolver
+        self._speech_policy = speech_policy or DeterministicInterventionPolicy()
+        self._speech_accounting = speech_accounting or SpeechAccounting()
+        self._speech_evidence: deque[SpeechRevalidationEvidence] = deque(
+            maxlen=speech_evidence_capacity
+        )
+        self._speech_evidence_sequence = 0
         self._lock = threading.RLock()
         self._fences: dict[_ReplayKey, ProposalApplicationResult] = {}
         self._rejections: deque[ProposalApplicationResult] = deque(maxlen=fence_capacity)
@@ -297,6 +443,50 @@ class ProposalApplicationCoordinator:
     def retained_replay_count(self) -> int:
         with self._lock:
             return len(self._fences)
+
+    @property
+    def ambient_speech_mode(self) -> AmbientSpeechRolloutMode:
+        """Return the explicit ambient speech rollout mode."""
+
+        with self._lock:
+            return self._ambient_speech_mode
+
+    @property
+    def speech_accounting(self) -> SpeechAccounting:
+        """Return runtime-owned confirmed-speech accounting."""
+
+        return self._speech_accounting
+
+    def speech_evidence(self) -> tuple[SpeechRevalidationEvidence, ...]:
+        """Return bounded content-free SPEAK guard evidence."""
+
+        with self._lock:
+            return tuple(self._speech_evidence)
+
+    def configure_speech_guard(
+        self,
+        *,
+        ambient_speech_mode: AmbientSpeechRolloutMode | None = None,
+        speech_context_resolver: SpeechPermissionContextResolver | None = None,
+    ) -> None:
+        """Configure the guard before runtime startup.
+
+        This is a composition hook for ``LilavelRuntime``. It never grants
+        model output any destination or effect authority.
+        """
+
+        if (
+            ambient_speech_mode is not None
+            and type(ambient_speech_mode) is not AmbientSpeechRolloutMode
+        ):
+            raise TypeError("ambient_speech_mode must be an AmbientSpeechRolloutMode")
+        if speech_context_resolver is not None and not callable(speech_context_resolver):
+            raise TypeError("speech_context_resolver must be callable")
+        with self._lock:
+            if ambient_speech_mode is not None:
+                self._ambient_speech_mode = ambient_speech_mode
+            if speech_context_resolver is not None:
+                self._speech_context_resolver = speech_context_resolver
 
     @property
     def application_count(self) -> int:
@@ -626,7 +816,7 @@ class ProposalApplicationCoordinator:
                 temporal=temporal,
             )
 
-        actions = self._execute_actions(prepared_actions, application_id)
+        actions = self._execute_actions(prepared_actions, outcome, application_id)
         return ProposalApplicationResult(
             application_id,
             outcome.episode_id,
@@ -669,7 +859,7 @@ class ProposalApplicationCoordinator:
 
     def _prepare_actions(self, outcome: CognitionOutcome, application_id: str) -> _PreparedActions:
         if not outcome.action_proposals:
-            return _PreparedActions((), (), True, None)
+            return _PreparedActions((), (), (), True, None)
         if self._tool_registry is None or self._tool_session_factory is None:
             unavailable_results = tuple(
                 self._action_result(
@@ -689,16 +879,17 @@ class ProposalApplicationCoordinator:
                 for index, _ in enumerate(outcome.action_proposals)
             )
             return _PreparedActions(
-                (), unavailable_results, False, "tool_application_not_configured"
+                (), (), unavailable_results, False, "tool_application_not_configured"
             )
 
         route_names = tuple(dict.fromkeys(self._action_tool_names.values()))
         try:
             exposure = self._tool_registry.snapshot(route_names)
         except Exception:
-            return _PreparedActions((), (), False, "tool_exposure_invalid")
+            return _PreparedActions((), (), (), False, "tool_exposure_invalid")
 
         calls: list[ToolCall] = []
+        call_indices: list[int] = []
         results: list[ActionProposalApplication] = []
         valid = True
         first_reason: str | None = None
@@ -760,18 +951,62 @@ class ProposalApplicationCoordinator:
                 )
             else:
                 calls.append(call)
+                call_indices.append(index)
                 results.append(
                     self._action_result(index, call_id, name, None, None, None, attempted=False)
                 )
 
         if not valid:
-            return _PreparedActions((), tuple(results), False, first_reason or "batch_rejected")
-        return _PreparedActions(tuple(calls), tuple(results), True, None)
+            return _PreparedActions((), (), tuple(results), False, first_reason or "batch_rejected")
+        return _PreparedActions(tuple(calls), tuple(call_indices), tuple(results), True, None)
 
     def _execute_actions(
-        self, prepared: _PreparedActions, application_id: str
+        self,
+        prepared: _PreparedActions,
+        outcome: CognitionOutcome,
+        application_id: str,
     ) -> ActionApplication:
         assert self._tool_session_factory is not None
+        call_by_index = dict(zip(prepared.call_indices, prepared.calls, strict=True))
+        guarded_results = list(prepared.results)
+        guarded_calls: list[ToolCall] = []
+        guarded_indices: list[int] = []
+        guarded_evidence: dict[int, SpeechRevalidationEvidence] = {}
+        for index, proposal in enumerate(outcome.action_proposals):
+            call = call_by_index.get(index)
+            if call is None:
+                continue
+            if proposal.kind is ActionProposalKind.SPEAK:
+                allowed, result, evidence = self._revalidate_speak(
+                    outcome, index, proposal, guarded_results[index]
+                )
+                guarded_results[index] = result
+                guarded_evidence[index] = evidence
+                if not allowed:
+                    continue
+            guarded_calls.append(call)
+            guarded_indices.append(index)
+
+        guarded = _PreparedActions(
+            tuple(guarded_calls),
+            tuple(guarded_indices),
+            tuple(guarded_results),
+            True,
+            None,
+        )
+        if not guarded.calls:
+            actions = ActionApplication(
+                self._action_status(guarded.results),
+                guarded.results,
+                "not_attempted",
+                next(
+                    (item.reason_code for item in guarded.results if item.reason_code is not None),
+                    None,
+                ),
+            )
+            self._record_speech_evidence(guarded_evidence, actions)
+            return actions
+
         context = ToolGenerationContext(
             self._runtime_instance_id,
             self._scope_id,
@@ -782,24 +1017,246 @@ class ProposalApplicationCoordinator:
         try:
             session = self._tool_session_factory.create(context)
         except Exception:
-            return self._actions_not_attempted(prepared, "tool_session_unavailable")
+            actions = self._actions_not_attempted(guarded, "tool_session_unavailable")
+            self._record_speech_evidence(guarded_evidence, actions)
+            return actions
 
         correlation = ToolBatchCorrelation(context, 1)
         try:
             raw_results = tuple(
-                session.execute_batch(correlation, prepared.calls, threading.Event())
+                session.execute_batch(correlation, guarded.calls, threading.Event())
             )
         except ToolSessionUncontained:
-            actions = self._settlements(prepared, (), unknown_index=0)
-            return ActionApplication(
-                self._action_status(actions), actions, "uncontained", "executor_uncontained"
+            settlements = self._settlements(guarded, (), unknown_index=0)
+            actions = ActionApplication(
+                self._action_status(settlements),
+                settlements,
+                "uncontained",
+                "executor_uncontained",
             )
+            self._record_speech_evidence(guarded_evidence, actions)
+            return actions
         except Exception:
-            return self._actions_not_attempted(prepared, "tool_session_failed")
+            actions = self._actions_not_attempted(guarded, "tool_session_failed")
+            self._record_speech_evidence(guarded_evidence, actions)
+            return actions
 
-        actions = self._settlements(prepared, raw_results)
+        settlements = self._settlements(guarded, raw_results)
         settlement = getattr(session, "settlement", None)
-        return ActionApplication(self._action_status(actions), actions, settlement, None)
+        actions = ActionApplication(self._action_status(settlements), settlements, settlement, None)
+        self._record_speech_evidence(guarded_evidence, actions)
+        self._record_confirmed_speech(outcome, actions)
+        return actions
+
+    def _revalidate_speak(
+        self,
+        outcome: CognitionOutcome,
+        index: int,
+        proposal: ActionProposal,
+        prepared: ActionProposalApplication,
+    ) -> tuple[bool, ActionProposalApplication, SpeechRevalidationEvidence]:
+        metadata = outcome.ambient_intervention
+        candidate_decision = metadata.intervention if metadata is not None else None
+        candidate = (
+            InterventionCandidate(metadata.intervention, metadata.reason_codes)
+            if metadata is not None
+            else InterventionCandidate(
+                InterventionDecision.RESPOND,
+                (CognitionReasonCode.RESPONSE_OBLIGATION,),
+            )
+        )
+        if metadata is not None and self._ambient_speech_mode is AmbientSpeechRolloutMode.OFF:
+            return self._guard_denial(
+                outcome,
+                prepared,
+                candidate_decision,
+                True,
+                "ambient_speech_off",
+                SpeechRevalidationStatus.DENIED,
+                False,
+            )
+
+        context = self._resolve_speech_context(outcome, index, proposal, metadata is None)
+        if context is None:
+            return self._guard_denial(
+                outcome,
+                prepared,
+                candidate_decision,
+                metadata is not None,
+                "speech_permission_unavailable",
+                SpeechRevalidationStatus.DENIED,
+                False,
+            )
+        try:
+            permission = self._speech_policy.revalidate(candidate, context)
+        except Exception:
+            permission = None
+        if not isinstance(permission, SocialPermissionResult) or not permission.permitted:
+            reason = (
+                _permission_reason(permission)
+                if isinstance(permission, SocialPermissionResult)
+                else "speech_permission_failed"
+            )
+            return self._guard_denial(
+                outcome,
+                prepared,
+                candidate_decision,
+                metadata is not None,
+                reason,
+                SpeechRevalidationStatus.DENIED,
+                False,
+            )
+
+        if metadata is not None and self._ambient_speech_mode is AmbientSpeechRolloutMode.SHADOW:
+            return self._guard_denial(
+                outcome,
+                prepared,
+                candidate_decision,
+                True,
+                "shadow_only",
+                SpeechRevalidationStatus.SHADOW_SUPPRESSED,
+                True,
+            )
+        evidence = self._new_speech_evidence(
+            outcome,
+            candidate_decision,
+            metadata is not None,
+            SpeechRevalidationStatus.ALLOWED,
+            None,
+            False,
+        )
+        return True, prepared, evidence
+
+    def _resolve_speech_context(
+        self,
+        outcome: CognitionOutcome,
+        index: int,
+        proposal: ActionProposal,
+        legacy: bool,
+    ) -> SocialPermissionContext | None:
+        resolver = self._speech_context_resolver
+        if resolver is not None:
+            try:
+                context = resolver(outcome, index, proposal)
+            except Exception:
+                return None
+            return context if type(context) is SocialPermissionContext else None
+        if not legacy:
+            return None
+        recent, budget = self._speech_accounting.snapshot()
+        return SocialPermissionContext(
+            priority=SemanticPriority.NON_USER,
+            source_kind=SemanticSourceKind.INTERNAL,
+            speaking_surface=SpeakingSurfaceState.AVAILABLE,
+            freshness_class=FreshnessClass.INTERNAL,
+            freshness=FreshnessBucket.FRESH,
+            activity=ActivityState.CURRENT,
+            floor=FloorState.FREE,
+            recent_speech=recent,
+            intervention_budget=budget,
+            handling=HandlingState.UNRESOLVED,
+            sensitivity=SocialSensitivity.ORDINARY,
+            response_obligation=True,
+            continuity_current=True,
+        )
+
+    def _guard_denial(
+        self,
+        outcome: CognitionOutcome,
+        prepared: ActionProposalApplication,
+        candidate_decision: InterventionDecision | None,
+        candidate_valid: bool,
+        reason: str,
+        status: SpeechRevalidationStatus,
+        shadow_would_speak: bool,
+    ) -> tuple[bool, ActionProposalApplication, SpeechRevalidationEvidence]:
+        result = ToolResult(
+            prepared.call_id,
+            ToolResultStatus.DENIED,
+            None,
+            reason_code=reason,
+            effect=ToolEffect.NONE,
+        )
+        rejected = self._action_result(
+            prepared.proposal_index,
+            prepared.call_id,
+            prepared.tool_name,
+            result.status,
+            result.effect,
+            result.reason_code,
+            result=result,
+        )
+        evidence = self._new_speech_evidence(
+            outcome,
+            candidate_decision,
+            candidate_valid,
+            status,
+            reason,
+            shadow_would_speak,
+        )
+        return False, rejected, evidence
+
+    def _new_speech_evidence(
+        self,
+        outcome: CognitionOutcome,
+        candidate_decision: InterventionDecision | None,
+        candidate_valid: bool,
+        revalidation: SpeechRevalidationStatus,
+        denial_reason: str | None,
+        shadow_would_speak: bool,
+    ) -> SpeechRevalidationEvidence:
+        self._speech_evidence_sequence += 1
+        return SpeechRevalidationEvidence(
+            self._speech_evidence_sequence,
+            outcome.trigger_source,
+            self._ambient_speech_mode,
+            candidate_decision,
+            candidate_valid,
+            True,
+            revalidation,
+            denial_reason,
+            shadow_would_speak,
+        )
+
+    def _record_speech_evidence(
+        self,
+        evidence: Mapping[int, SpeechRevalidationEvidence],
+        actions: ActionApplication,
+    ) -> None:
+        for index, item in evidence.items():
+            result = next(
+                (proposal for proposal in actions.proposals if proposal.proposal_index == index),
+                None,
+            )
+            if result is not None:
+                self._speech_evidence.append(
+                    replace(
+                        item,
+                        external_attempted=result.attempted,
+                        effect=result.effect,
+                    )
+                )
+
+    def _record_confirmed_speech(
+        self, outcome: CognitionOutcome, actions: ActionApplication
+    ) -> None:
+        for item in actions.proposals:
+            if item.proposal_index >= len(outcome.action_proposals):
+                continue
+            if outcome.action_proposals[item.proposal_index].kind is not ActionProposalKind.SPEAK:
+                continue
+            if (
+                item.tool_name is not None
+                and item.status is ToolResultStatus.OK
+                and item.effect is ToolEffect.CONFIRMED
+                and item.attempted
+            ):
+                decision = (
+                    outcome.ambient_intervention.intervention
+                    if outcome.ambient_intervention is not None
+                    else InterventionDecision.RESPOND
+                )
+                self._speech_accounting.record_confirmed_speech(decision)
 
     def _prepare_temporal(self, outcome: CognitionOutcome) -> _PreparedTemporal:
         if not outcome.temporal_proposals:
@@ -885,35 +1342,15 @@ class ProposalApplicationCoordinator:
         *,
         unknown_index: int | None = None,
     ) -> tuple[ActionProposalApplication, ...]:
-        results: list[ActionProposalApplication] = []
-        for index, call in enumerate(prepared.calls):
-            if index < len(raw_results) and type(raw_results[index]) is ToolResult:
-                result = cast(ToolResult, raw_results[index])
+        results = list(prepared.results)
+        for call_position, (proposal_index, call) in enumerate(
+            zip(prepared.call_indices, prepared.calls, strict=True)
+        ):
+            if call_position < len(raw_results) and type(raw_results[call_position]) is ToolResult:
+                result = cast(ToolResult, raw_results[call_position])
                 if result.call_id == call.call_id:
-                    results.append(
-                        self._action_result(
-                            index,
-                            call.call_id,
-                            call.tool_name,
-                            result.status,
-                            result.effect,
-                            result.reason_code,
-                            result=result,
-                            attempted=True,
-                        )
-                    )
-                    continue
-            if unknown_index == index:
-                result = ToolResult(
-                    call.call_id,
-                    ToolResultStatus.FAILED,
-                    None,
-                    reason_code="executor_uncontained",
-                    effect=ToolEffect.UNKNOWN,
-                )
-                results.append(
-                    self._action_result(
-                        index,
+                    results[proposal_index] = self._action_result(
+                        proposal_index,
                         call.call_id,
                         call.tool_name,
                         result.status,
@@ -922,17 +1359,33 @@ class ProposalApplicationCoordinator:
                         result=result,
                         attempted=True,
                     )
+                    continue
+            if unknown_index == call_position:
+                result = ToolResult(
+                    call.call_id,
+                    ToolResultStatus.FAILED,
+                    None,
+                    reason_code="executor_uncontained",
+                    effect=ToolEffect.UNKNOWN,
+                )
+                results[proposal_index] = self._action_result(
+                    proposal_index,
+                    call.call_id,
+                    call.tool_name,
+                    result.status,
+                    result.effect,
+                    result.reason_code,
+                    result=result,
+                    attempted=True,
                 )
             else:
-                results.append(
-                    self._action_result(
-                        index,
-                        call.call_id,
-                        call.tool_name,
-                        None,
-                        None,
-                        "not_attempted",
-                    )
+                results[proposal_index] = self._action_result(
+                    proposal_index,
+                    call.call_id,
+                    call.tool_name,
+                    None,
+                    None,
+                    "not_attempted",
                 )
         return tuple(results)
 
@@ -1110,6 +1563,23 @@ class ProposalApplicationCoordinator:
         if not results:
             return ActionApplicationStatus.NOT_ATTEMPTED
         if any(not item.attempted for item in results):
+            if any(
+                item.status
+                in {
+                    ToolResultStatus.INVALID,
+                    ToolResultStatus.DENIED,
+                    ToolResultStatus.UNAVAILABLE,
+                }
+                for item in results
+            ) and not any(
+                item.status in {ToolResultStatus.FAILED, ToolResultStatus.TIMED_OUT}
+                for item in results
+            ):
+                return (
+                    ActionApplicationStatus.PARTIAL
+                    if any(item.status is ToolResultStatus.OK for item in results)
+                    else ActionApplicationStatus.REJECTED
+                )
             return (
                 ActionApplicationStatus.PARTIAL
                 if any(item.status is ToolResultStatus.OK for item in results)
@@ -1236,10 +1706,17 @@ def _require_text(value: str, name: str) -> None:
         raise ValueError(f"{name} must be non-empty bounded text")
 
 
+def _permission_reason(result: SocialPermissionResult) -> str:
+    if not result.reason_codes:
+        return "speech_permission_denied"
+    return result.reason_codes[0].value
+
+
 __all__ = [
     "ActionApplication",
     "ActionApplicationStatus",
     "ActionProposalApplication",
+    "AmbientSpeechRolloutMode",
     "MAX_APPLICATION_FENCES",
     "MAX_APPLICATION_REPLAY_WINDOW",
     "MindStateProvenance",
@@ -1250,6 +1727,9 @@ __all__ = [
     "StateApplicationStatus",
     "StateProposalApplication",
     "StateProvenanceResolver",
+    "SpeechPermissionContextResolver",
+    "SpeechRevalidationEvidence",
+    "SpeechRevalidationStatus",
     "TemporalApplication",
     "TemporalApplicationStatus",
     "TemporalProposalApplication",

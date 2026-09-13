@@ -164,7 +164,10 @@ class CognitionEpisodeRunner:
             state_proposals=candidate.state_proposals,
             action_proposals=candidate.action_proposals,
             temporal_proposals=candidate.temporal_proposals,
+            ambient_intervention=candidate.ambient_intervention,
             scope_id=episode.scope_id,
             based_on_state_version=episode.context.mind_state_version,
+            trigger_source=episode.trigger.source,
+            observation_ids=episode.trigger.observation_ids,
             completion_proof=_contracts._COMPLETED_COGNITION_PROOF,  # pyright: ignore[reportPrivateUsage]
         )

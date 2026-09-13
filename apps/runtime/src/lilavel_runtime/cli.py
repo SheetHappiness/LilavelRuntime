@@ -17,6 +17,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from .cognition_model import LocalCognitionEngine
 from .contracts import ActionProposalKind
+from .intervention import AmbientSpeechRolloutMode
 from .kernel import LilavelRuntime
 from .mind import MindState
 from .presence import (
@@ -130,6 +131,7 @@ async def run_cli(
             ActionProposalKind.SPEAK: PRESENCE_SAY,
             ActionProposalKind.STAY_SILENT: PRESENCE_STAY_SILENT,
         },
+        ambient_speech_mode=AmbientSpeechRolloutMode.OFF,
     )
     runtime = LilavelRuntime(
         presence=presence,

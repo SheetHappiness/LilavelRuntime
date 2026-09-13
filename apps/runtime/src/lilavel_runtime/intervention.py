@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
+from threading import Lock
 from types import MappingProxyType
 
 from lilavel_core import CognitionReasonCode, InterventionDecision
@@ -26,6 +27,14 @@ class InterventionValue(StrEnum):
     NONE = "none"
     RESPONSE_OBLIGATION = "response_obligation"
     MATERIAL_CONTRIBUTION = "material_contribution"
+
+
+class AmbientSpeechRolloutMode(StrEnum):
+    """Externalization mode for model-backed ambient speaking candidates."""
+
+    OFF = "off"
+    SHADOW = "shadow"
+    LIVE = "live"
 
 
 class SpeakingSurfaceState(StrEnum):
@@ -80,6 +89,73 @@ class InterventionBudgetState(StrEnum):
 
     AVAILABLE = "available"
     EXHAUSTED = "exhausted"
+
+
+DEFAULT_INTERVENTION_BUDGET = 8
+
+
+class SpeechAccounting:
+    """Runtime-owned recent-speech and unsolicited-budget accounting.
+
+    The coordinator calls ``record_confirmed_speech`` only after a real P4
+    SPEAK result is both successful and confirmed.  Shadow decisions and
+    unknown/failed effects do not change these values.
+    """
+
+    def __init__(self, *, intervention_budget: int = DEFAULT_INTERVENTION_BUDGET) -> None:
+        if (
+            isinstance(intervention_budget, bool)
+            or intervention_budget < 0
+            or intervention_budget > 256
+        ):
+            raise ValueError("intervention_budget is outside its bound")
+        self._remaining_budget = intervention_budget
+        self._recent_speech = RecentSpeechState.CLEAR
+        self._confirmed_speech_count = 0
+        self._lock = Lock()
+
+    @property
+    def confirmed_speech_count(self) -> int:
+        with self._lock:
+            return self._confirmed_speech_count
+
+    def snapshot(self) -> tuple[RecentSpeechState, InterventionBudgetState]:
+        """Return current bounded accounting states."""
+
+        with self._lock:
+            return (
+                self._recent_speech,
+                (
+                    InterventionBudgetState.AVAILABLE
+                    if self._remaining_budget > 0
+                    else InterventionBudgetState.EXHAUSTED
+                ),
+            )
+
+    def record_confirmed_speech(self, decision: InterventionDecision) -> None:
+        """Record one confirmed external speech result exactly once per call."""
+
+        if type(decision) is not InterventionDecision:
+            raise TypeError("decision must be an InterventionDecision")
+        with self._lock:
+            self._confirmed_speech_count += 1
+            self._recent_speech = RecentSpeechState.RECENT
+            if decision is InterventionDecision.INTERJECT and self._remaining_budget > 0:
+                self._remaining_budget -= 1
+
+    def clear_recent_speech(self) -> None:
+        """Clear the bounded recent-speech marker after a trusted quiet period."""
+
+        with self._lock:
+            self._recent_speech = RecentSpeechState.CLEAR
+
+    def replenish(self, amount: int = 1) -> None:
+        """Replenish unsolicited budget through a runtime-owned policy hook."""
+
+        if isinstance(amount, bool) or amount < 0 or amount > 256:
+            raise ValueError("replenishment amount is outside its bound")
+        with self._lock:
+            self._remaining_budget = min(256, self._remaining_budget + amount)
 
 
 class HandlingState(StrEnum):
@@ -460,7 +536,9 @@ def _allowed(
 
 __all__ = [
     "ActivityState",
+    "AmbientSpeechRolloutMode",
     "AmbientInterventionExcluded",
+    "DEFAULT_INTERVENTION_BUDGET",
     "DeterministicInterventionPolicy",
     "FloorState",
     "FreshnessBucket",
@@ -477,5 +555,6 @@ __all__ = [
     "SocialPermissionContext",
     "SocialPermissionResult",
     "SocialSensitivity",
+    "SpeechAccounting",
     "SpeakingSurfaceState",
 ]

@@ -13,6 +13,13 @@ from types import MappingProxyType
 from typing import NoReturn, Protocol, cast
 
 from lilavel_contracts import JsonValue, ToolCall, ToolResult, ToolSpec
+from lilavel_core import (
+    MAX_COGNITION_REASON_CODES,
+    CognitionReasonCode,
+    InterventionDecision,
+    ResponseDisposition,
+    WorkingState,
+)
 
 from .mind import MAX_INTENTION_TEXT_BYTES, MindStateSnapshot
 
@@ -20,6 +27,7 @@ __all__ = [
     "ActionExecutor",
     "ActionProposal",
     "ActionProposalKind",
+    "AmbientInterventionMetadata",
     "ApplicationPermit",
     "ApplicationPermitIssuer",
     "CognitionCandidate",
@@ -164,6 +172,53 @@ MAX_COGNITION_REASON_BYTES = 128
 MAX_TEMPORAL_REASON_BYTES = 128
 MAX_TEMPORAL_INTENTION_REF_BYTES = 128
 MAX_COGNITION_SOURCE_REFS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class AmbientInterventionMetadata:
+    """Advisory ambient speaking metadata carried beside inert proposals.
+
+    The utterance remains in the ordinary ``ActionProposal`` content field.
+    This metadata carries only the semantic decision and validated HOW data
+    needed by the effect-time social guard; it contains no destination,
+    executor, permission, or presentation authority.
+    """
+
+    intervention: InterventionDecision
+    reason_codes: tuple[CognitionReasonCode, ...]
+    disposition: ResponseDisposition | None = None
+    working_state: WorkingState | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.intervention) is not InterventionDecision:
+            raise TypeError("intervention must be an InterventionDecision")
+        if type(self.reason_codes) is not tuple or not self.reason_codes:
+            raise ValueError("ambient intervention metadata requires reason codes")
+        if len(self.reason_codes) > MAX_COGNITION_REASON_CODES:
+            raise ValueError("ambient intervention reason-code bound exceeded")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("ambient intervention reason codes must be unique")
+        if not all(type(code) is CognitionReasonCode for code in self.reason_codes):
+            raise TypeError("ambient intervention reason codes must contain CognitionReasonCode")
+        if self.disposition is not None and type(self.disposition) is not ResponseDisposition:
+            raise TypeError("ambient intervention disposition must be a ResponseDisposition")
+        if self.working_state is not None and type(self.working_state) is not WorkingState:
+            raise TypeError("ambient intervention working_state must be a WorkingState")
+        if self.intervention is InterventionDecision.NONE and (
+            self.disposition is not None or self.working_state is not None
+        ):
+            raise ValueError("NONE ambient intervention cannot carry disposition data")
+        if self.intervention is not InterventionDecision.NONE and (
+            self.disposition is None or self.working_state is None
+        ):
+            raise ValueError("speaking ambient intervention requires disposition data")
+
+    @property
+    def decision(self) -> InterventionDecision:
+        """Compatibility spelling for policy callers that use ``decision``."""
+
+        return self.intervention
+
 
 # This sentinel is intentionally private.  A CognitionOutcome constructed by
 # an arbitrary caller is inert data; only CognitionEpisodeRunner can mark the
@@ -454,11 +509,13 @@ class CognitionCandidate:
     state_proposals: tuple[StateProposal, ...] = ()
     action_proposals: tuple[ActionProposal, ...] = ()
     temporal_proposals: tuple[TemporalProposal, ...] = ()
+    ambient_intervention: AmbientInterventionMetadata | None = None
 
     def __post_init__(self) -> None:
         _validate_proposals(self.state_proposals, StateProposal, "state_proposals")
         _validate_proposals(self.action_proposals, ActionProposal, "action_proposals")
         _validate_proposals(self.temporal_proposals, TemporalProposal, "temporal_proposals")
+        _validate_ambient_intervention_binding(self.ambient_intervention, self.action_proposals)
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,6 +534,9 @@ class CognitionOutcome:
     completion_proof: object | None = field(default=None, repr=False, compare=False)
     temporal_proposals: tuple[TemporalProposal, ...] = ()
     application_permit: ApplicationPermit | None = field(default=None, repr=False, compare=False)
+    ambient_intervention: AmbientInterventionMetadata | None = None
+    trigger_source: CognitionTriggerSource | None = None
+    observation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_text(self.episode_id, "episode_id")
@@ -484,6 +544,7 @@ class CognitionOutcome:
         _validate_proposals(self.state_proposals, StateProposal, "state_proposals")
         _validate_proposals(self.action_proposals, ActionProposal, "action_proposals")
         _validate_proposals(self.temporal_proposals, TemporalProposal, "temporal_proposals")
+        _validate_ambient_intervention_binding(self.ambient_intervention, self.action_proposals)
         if self.scope_id:
             _require_text(self.scope_id, "scope_id")
         if self.based_on_state_version is not None and (
@@ -500,6 +561,19 @@ class CognitionOutcome:
             and type(self.application_permit) is not ApplicationPermit
         ):
             raise TypeError("application_permit is runtime-owned")
+        if (
+            self.trigger_source is not None
+            and type(self.trigger_source) is not CognitionTriggerSource
+        ):
+            raise TypeError("trigger_source must be a CognitionTriggerSource")
+        if type(self.observation_ids) is not tuple:
+            raise TypeError("observation_ids must be a tuple")
+        if len(self.observation_ids) > MAX_COGNITION_TRIGGER_OBSERVATIONS:
+            raise ValueError("outcome observation bound exceeded")
+        if len(set(self.observation_ids)) != len(self.observation_ids):
+            raise ValueError("outcome observation IDs must be unique")
+        for observation_id in self.observation_ids:
+            _require_text(observation_id, "observation_id")
 
     @property
     def is_completed(self) -> bool:
@@ -701,6 +775,22 @@ def _validate_proposals(
         raise ValueError(f"{name} bound exceeded")
     if not all(type(proposal) is expected_type for proposal in proposals):
         raise TypeError(f"{name} must contain only {expected_type.__name__} values")
+
+
+def _validate_ambient_intervention_binding(
+    metadata: AmbientInterventionMetadata | None,
+    action_proposals: tuple[ActionProposal, ...],
+) -> None:
+    if metadata is None:
+        return
+    if type(metadata) is not AmbientInterventionMetadata:
+        raise TypeError("ambient_intervention must be AmbientInterventionMetadata")
+    speech_count = sum(proposal.kind is ActionProposalKind.SPEAK for proposal in action_proposals)
+    if metadata.intervention is InterventionDecision.NONE:
+        if speech_count:
+            raise ValueError("NONE ambient intervention cannot produce a SPEAK proposal")
+    elif speech_count != 1:
+        raise ValueError("speaking ambient intervention must produce exactly one SPEAK proposal")
 
 
 def _freeze_mapping(value: Mapping[str, object], name: str) -> Mapping[str, JsonValue]:

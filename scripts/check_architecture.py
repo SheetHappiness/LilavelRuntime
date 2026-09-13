@@ -68,6 +68,26 @@ E1_INTERVENTION_FORBIDDEN_CALLS = {
     "route",
     "submit_cognition",
 }
+E2_COGNITION_FILES = {
+    "cognition_model.py",
+    "cognition_episode.py",
+    "intervention.py",
+}
+E2_COGNITION_FORBIDDEN_IMPORTS = (
+    "discord",
+    "lilavel_discord_edge",
+    "lilavel_discord_adapter",
+    "aiohttp",
+    "httpx",
+    "requests",
+    "socket",
+)
+E2_COGNITION_FORBIDDEN_CALLS = {
+    "send",
+    "send_message",
+    "dispatch",
+    "execute_batch",
+}
 
 
 def _module_name(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
@@ -334,12 +354,87 @@ def _e1_intervention_violations() -> list[str]:
     return violations
 
 
+def _e2_ambient_violations() -> list[str]:
+    """Keep ambient cognition advisory and route SPEAK through application."""
+
+    violations: list[str] = []
+    cognition_paths = sorted(
+        path
+        for path in (RUNTIME_SOURCE / "lilavel_runtime").glob("*.py")
+        if path.name in E2_COGNITION_FILES
+    )
+    for path in cognition_paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for module in _module_name(node):
+                    if _matches(module, E2_COGNITION_FORBIDDEN_IMPORTS):
+                        violations.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: cognition imports {module}"
+                        )
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in E2_COGNITION_FORBIDDEN_CALLS:
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: cognition calls "
+                        f"effect/transport method {node.func.attr}"
+                    )
+
+    application_path = RUNTIME_SOURCE / "lilavel_runtime" / "proposal_application.py"
+    if not application_path.exists():
+        return ["apps/runtime: proposal application boundary is missing"]
+    tree = ast.parse(application_path.read_text(encoding="utf-8"), filename=str(application_path))
+    coordinator = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "ProposalApplicationCoordinator"
+        ),
+        None,
+    )
+    if coordinator is None:
+        return ["apps/runtime: ProposalApplicationCoordinator is missing"]
+    methods = {
+        node.name: node
+        for node in coordinator.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    execute_actions = methods.get("_execute_actions")
+    revalidate_speak = methods.get("_revalidate_speak")
+    if execute_actions is None or not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_revalidate_speak"
+        for node in ast.walk(execute_actions)
+    ):
+        violations.append(
+            "apps/runtime: ProposalApplicationCoordinator does not guard SPEAK before P4"
+        )
+    if revalidate_speak is None or not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "revalidate"
+        for node in ast.walk(revalidate_speak)
+    ):
+        violations.append(
+            "apps/runtime: SPEAK guard does not invoke current social revalidation"
+        )
+    if not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "execute_batch"
+        for node in ast.walk(tree)
+    ):
+        violations.append("apps/runtime: SPEAK has no existing P4 batch application route")
+    return violations
+
+
 def main() -> int:
     violations = [
         *_core_violations(),
         *_runtime_violations(),
         *_semantic_entrypoint_violations(),
         *_e1_intervention_violations(),
+        *_e2_ambient_violations(),
         *_adapter_violations(),
         *_discord_environment_violations(),
     ]

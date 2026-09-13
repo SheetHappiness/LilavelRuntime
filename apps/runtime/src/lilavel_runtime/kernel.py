@@ -29,9 +29,13 @@ from .contracts import (
     WorldEvent,
 )
 from .conversation_adapter import ConversationExecutionAdapter
+from .intervention import AmbientSpeechRolloutMode
 from .mind import MindState
 from .mind_convergence import MindExecutionAdapter
-from .proposal_application import ProposalApplicationCoordinator
+from .proposal_application import (
+    ProposalApplicationCoordinator,
+    SpeechPermissionContextResolver,
+)
 from .semantic_actor import (
     SemanticActor,
     SemanticActorState,
@@ -164,6 +168,8 @@ class LilavelRuntime:
         proposal_application_coordinator: ProposalApplicationCoordinator | None = None,
         temporal_coordinator: TemporalCoordinator | None = None,
         shutdown_timeout: float = 5.0,
+        ambient_speech_mode: AmbientSpeechRolloutMode | None = None,
+        speech_context_resolver: SpeechPermissionContextResolver | None = None,
     ) -> None:
         if event_queue_size <= 0:
             raise ValueError("event_queue_size must be positive")
@@ -216,6 +222,19 @@ class LilavelRuntime:
             )
         if temporal_coordinator is not None and mind_executor is None:
             raise ValueError("temporal_coordinator requires a configured Mind executor")
+        if (ambient_speech_mode is not None or speech_context_resolver is not None) and (
+            proposal_application_coordinator is None
+        ):
+            raise ValueError(
+                "ambient speech configuration requires a proposal application coordinator"
+            )
+        if proposal_application_coordinator is not None and (
+            ambient_speech_mode is not None or speech_context_resolver is not None
+        ):
+            proposal_application_coordinator.configure_speech_guard(
+                ambient_speech_mode=ambient_speech_mode,
+                speech_context_resolver=speech_context_resolver,
+            )
         self._mind_executor = mind_executor
         self._temporal_coordinator = temporal_coordinator
         self._temporal_host = (
@@ -297,6 +316,15 @@ class LilavelRuntime:
         """Return the optional runtime-owned temporal coordinator."""
 
         return self._temporal_coordinator
+
+    @property
+    def ambient_speech_mode(self) -> AmbientSpeechRolloutMode:
+        """Return the configured ambient speech rollout mode."""
+
+        application = self._mind_executor.application if self._mind_executor is not None else None
+        return (
+            AmbientSpeechRolloutMode.OFF if application is None else application.ambient_speech_mode
+        )
 
     async def submit_cognition(self, trigger: CognitionTrigger) -> SemanticAdmission:
         """Admit non-user cognition through the one semantic actor."""
