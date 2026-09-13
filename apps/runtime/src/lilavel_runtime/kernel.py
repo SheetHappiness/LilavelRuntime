@@ -10,6 +10,7 @@ from typing import Protocol, cast
 from uuid import uuid4
 
 from .attention import DeterministicAttentionCognitionGate
+from .awareness import PeripheralAwarenessBuffer
 from .cognition_episode import CognitionEpisodeRunner
 from .context_builder import (
     ContextFrameBuilder,
@@ -176,6 +177,7 @@ class LilavelRuntime:
         ambient_speech_mode: AmbientSpeechRolloutMode | None = None,
         speech_context_resolver: SpeechPermissionContextResolver | None = None,
         context_builder: ContextFrameBuilder | None = None,
+        awareness_buffer: PeripheralAwarenessBuffer | None = None,
     ) -> None:
         if event_queue_size <= 0:
             raise ValueError("event_queue_size must be positive")
@@ -190,11 +192,27 @@ class LilavelRuntime:
         self._observation_window = ObservationWindow(observation_window_size)
         self._event_router = event_router
         self._conversation_executor = ConversationExecutionAdapter(event_router)
-        self._cognition_gate = (
-            DeterministicAttentionCognitionGate() if cognition_gate is None else cognition_gate
-        )
         self._presence = presence
         self._semantic_actor = semantic_actor or SemanticActor(scope_id="runtime")
+        configured_gate = (
+            DeterministicAttentionCognitionGate() if cognition_gate is None else cognition_gate
+        )
+        if (
+            awareness_buffer is None
+            and type(configured_gate) is DeterministicAttentionCognitionGate
+        ):
+            existing_buffer = configured_gate.awareness_buffer
+            if type(existing_buffer) is PeripheralAwarenessBuffer:
+                awareness_buffer = existing_buffer
+        self._awareness_buffer = awareness_buffer or PeripheralAwarenessBuffer()
+        if type(self._awareness_buffer) is not PeripheralAwarenessBuffer:
+            raise TypeError("awareness_buffer must be a PeripheralAwarenessBuffer")
+        self._cognition_gate = configured_gate
+        if type(self._cognition_gate) is DeterministicAttentionCognitionGate:
+            self._cognition_gate.bind_awareness_buffer(
+                self._awareness_buffer,
+                scope_id=self._semantic_actor.scope_id,
+            )
         if context_builder is not None and type(context_builder) is not ContextFrameBuilder:
             raise TypeError("context_builder must be a ContextFrameBuilder")
         if mind_executor is not None and (
@@ -341,6 +359,12 @@ class LilavelRuntime:
         """Return the inert runtime-owned context assembly seam."""
 
         return self._context_builder
+
+    @property
+    def awareness_buffer(self) -> PeripheralAwarenessBuffer:
+        """Return the bounded process-local peripheral NOTE owner."""
+
+        return self._awareness_buffer
 
     @property
     def ambient_speech_mode(self) -> AmbientSpeechRolloutMode:

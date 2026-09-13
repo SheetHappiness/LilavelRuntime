@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Protocol
 
 from lilavel_core import (
     MAX_COGNITION_REASON_CODES,
@@ -25,6 +26,9 @@ from .contracts import (
     CognitionTrigger,
     Observation,
 )
+
+if TYPE_CHECKING:
+    from .awareness import PeripheralAwarenessBuffer
 
 __all__ = [
     "AttentionEvidence",
@@ -251,6 +255,16 @@ class DeterministicAttentionPolicy:
         return AttentionVerdict(evidence.observation_id, decision, reasons)
 
 
+class _AwarenessAdmitter(Protocol):
+    def admit(
+        self,
+        observation: Observation,
+        verdict: AttentionVerdict,
+        *,
+        scope_id: str,
+    ) -> object: ...
+
+
 class DeterministicAttentionCognitionGate:
     """Bridge per-observation attention verdicts to the existing cognition seam."""
 
@@ -260,6 +274,8 @@ class DeterministicAttentionCognitionGate:
         extractor: AttentionEvidenceExtractor | None = None,
         policy: DeterministicAttentionPolicy | None = None,
         max_observations: int = MAX_COGNITION_TRIGGER_OBSERVATIONS,
+        awareness_buffer: PeripheralAwarenessBuffer | None = None,
+        scope_id: str = "runtime",
     ) -> None:
         if (
             isinstance(max_observations, bool)
@@ -269,6 +285,33 @@ class DeterministicAttentionCognitionGate:
         self._extractor = extractor or AttentionEvidenceExtractor()
         self._policy = policy or DeterministicAttentionPolicy()
         self._max_observations = max_observations
+        if type(scope_id) is not str or not scope_id.strip():
+            raise ValueError("scope_id must be non-empty text")
+        self._awareness_buffer: _AwarenessAdmitter | None = awareness_buffer
+        self._awareness_scope_id = scope_id
+
+    @property
+    def awareness_buffer(self) -> _AwarenessAdmitter | None:
+        """Return the optional runtime-owned NOTE admission dependency."""
+
+        return self._awareness_buffer
+
+    def bind_awareness_buffer(
+        self,
+        awareness_buffer: PeripheralAwarenessBuffer,
+        *,
+        scope_id: str,
+    ) -> None:
+        """Bind the runtime-owned NOTE owner without changing policy semantics."""
+
+        if not callable(getattr(awareness_buffer, "admit", None)):
+            raise TypeError("awareness_buffer must provide admit()")
+        if type(scope_id) is not str or not scope_id.strip():
+            raise ValueError("scope_id must be non-empty text")
+        if self._awareness_buffer is not None and self._awareness_buffer is not awareness_buffer:
+            raise ValueError("attention gate is already bound to another awareness buffer")
+        self._awareness_buffer = awareness_buffer
+        self._awareness_scope_id = scope_id
 
     def evaluate(self, observations: Sequence[Observation]) -> tuple[AttentionVerdict, ...]:
         """Return one independent verdict per unique observation in input order."""
@@ -286,6 +329,7 @@ class DeterministicAttentionCognitionGate:
 
     def decide(self, observations: Sequence[Observation]) -> CognitionDecision | CognitionTrigger:
         verdicts = self.evaluate(observations)
+        self._admit_notes(observations, verdicts)
         thinking_ids = [
             verdict.observation_id
             for verdict in verdicts
@@ -324,6 +368,31 @@ class DeterministicAttentionCognitionGate:
             tuple(selected_ids),
             reason="attention:" + ",".join(reason_codes[:MAX_ATTENTION_REASON_CODES]),
         )
+
+    def _admit_notes(
+        self,
+        observations: Sequence[Observation],
+        verdicts: Sequence[AttentionVerdict],
+    ) -> None:
+        """Admit NOTE verdicts only; buffer failures fail closed to no retention."""
+
+        buffer = self._awareness_buffer
+        if buffer is None:
+            return
+        by_id: dict[str, Observation] = {}
+        for observation in observations:
+            by_id.setdefault(observation.observation_id, observation)
+        for verdict in verdicts:
+            if verdict.decision is not AttentionDecision.NOTE:
+                continue
+            observation = by_id[verdict.observation_id]
+            try:
+                buffer.admit(observation, verdict, scope_id=self._awareness_scope_id)
+            except Exception:
+                # Awareness is optional peripheral state.  A malformed or
+                # unavailable buffer must never turn NOTE into cognition or
+                # break an existing THINK/USER route.
+                continue
 
 
 def _reason_codes(evidence: AttentionEvidence) -> tuple[CognitionReasonCode, ...]:
