@@ -120,6 +120,13 @@ serialization, isolated `local-cli` Core history, runtime-owned submission
 replay fencing, cancellation/settlement, legacy Presence exclusion, and clean
 CLI composition shutdown.
 
+On the current Linux host, the complete runtime pytest command has a known
+pre-existing timing-sensitive failure in
+`test_temporal_non_user_work_waits_behind_active_user_conversation`. If that
+test does not settle, report the full runtime check as `FAIL`; the remaining
+runtime tests may be run with that exact test deselected and reported
+separately.
+
 The focused D2 proofs can be rerun from `apps/runtime` with:
 
 ```powershell
