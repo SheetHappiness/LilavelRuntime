@@ -3,7 +3,7 @@
 `apps/runtime` is the top-level process owner for Lilavel. It can start and
 remain healthy with no environments, conversations, model runtime, sidecar, or
 provider. It owns bounded observation admission, a recent observation window,
-a deterministic observation-to-cognition gate, registered environment tasks,
+a deterministic attention/cognition gate, registered environment tasks,
 the character-wide semantic actor, actor-owned CLI and reactive conversation
 admission, Core conversation sessions, and the destination choice for typed
 environment presentation actions. MIND-1D adds the separate runtime-owned
@@ -30,11 +30,13 @@ scheduler or recurring autonomy.
 
 MIND-1B establishes both `observation != cognition` and the compatibility path
 for the existing DM experience. Admission is a complete operation; it does not
-invoke the cognition gate, Core, a model, tools, or a scheduler. The DM adapter
-calls `reactive_step()` explicitly after it receives an admission receipt;
-that compatibility alias runs the deterministic gate first. Only a positive
-`CognitionTrigger` reaches the character-wide `SemanticActor` at `USER`
-priority. Its conversation execution adapter invokes `CoreConversationRouter`,
+invoke attention, the cognition gate, Core, a model, tools, or a scheduler. The
+DM adapter calls `reactive_step()` explicitly after it receives an admission receipt;
+that compatibility alias runs the deterministic attention gate first. Only a
+positive `CognitionTrigger` reaches the existing semantic route: direct
+messages reach the character-wide actor at `USER` priority, while ambient
+`THINK` reaches the existing `NON_USER` MIND route. Its conversation
+execution adapter invokes `CoreConversationRouter`,
 which owns session/runtime creation and relays semantic Core events as
 runtime-generated, trusted `ToolCall` presentation actions to the source
 environment. These are application actions, not model-selected tools.

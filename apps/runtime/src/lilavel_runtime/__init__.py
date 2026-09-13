@@ -2,6 +2,19 @@
 
 from lilavel_contracts import ToolCall, ToolEffect, ToolResult, ToolResultStatus, ToolSpec
 
+from .attention import (
+    MAX_ATTENTION_EVENT_PROFILES,
+    MAX_ATTENTION_REASON_CODES,
+    AttentionEvidence,
+    AttentionEvidenceExtractor,
+    AttentionInterestAffinity,
+    AttentionNovelty,
+    AttentionRelevance,
+    AttentionSignalProfile,
+    AttentionVerdict,
+    DeterministicAttentionCognitionGate,
+    DeterministicAttentionPolicy,
+)
 from .cognition_episode import CognitionEpisodeRunner
 from .cognition_model import LocalCognitionEngine
 from .contracts import (
@@ -224,6 +237,13 @@ __all__ = [
     "ActionProposalKind",
     "ApplicationPermit",
     "ApplicationPermitIssuer",
+    "AttentionEvidence",
+    "AttentionEvidenceExtractor",
+    "AttentionInterestAffinity",
+    "AttentionNovelty",
+    "AttentionRelevance",
+    "AttentionSignalProfile",
+    "AttentionVerdict",
     "ApplicationToolRegistry",
     "AutonomousCognitionRunner",
     "AutonomousOutcome",
@@ -244,6 +264,8 @@ __all__ = [
     "ConversationExecutionResult",
     "DirectMessageCognitionGate",
     "DirectMessageWakePolicy",
+    "DeterministicAttentionCognitionGate",
+    "DeterministicAttentionPolicy",
     "DeterministicToolSession",
     "DeterministicToolSessionFactory",
     "DuplicateToolBinding",
@@ -271,6 +293,8 @@ __all__ = [
     "MAX_EXPOSED_TOOL_BYTES",
     "MAX_EXPOSED_TOOLS",
     "MAX_ACTION_PROPOSAL_CONTENT_BYTES",
+    "MAX_ATTENTION_EVENT_PROFILES",
+    "MAX_ATTENTION_REASON_CODES",
     "MAX_COGNITION_PROPOSALS",
     "MAX_COGNITION_REASON_BYTES",
     "MAX_COGNITION_TRIGGER_OBSERVATIONS",

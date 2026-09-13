@@ -126,6 +126,18 @@ The focused D2 proofs can be rerun from `apps/runtime` with:
 uv run --locked pytest tests/test_conversation_actor_d2.py
 ```
 
+The focused COG-V1-B deterministic attention proofs can be rerun from
+`apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_attention.py
+```
+
+This focused suite proves the bounded evidence extractor, ordered
+`DROP`/`NOTE`/`THINK` policy, payload trust boundary, interest-affinity
+anti-keyword behavior, per-observation batch selection, and zero cognition
+calls for `NOTE`/`DROP`.
+
 The RUNTIME-H1 bounded replay/liveness proofs can be rerun from `apps/runtime`
 with:
 

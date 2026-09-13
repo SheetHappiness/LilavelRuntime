@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Protocol, cast
 from uuid import uuid4
 
+from .attention import DeterministicAttentionCognitionGate
 from .cognition_episode import CognitionEpisodeRunner
 from .contracts import (
     NO_COGNITION,
@@ -17,7 +18,6 @@ from .contracts import (
     CognitionGate,
     CognitionTrigger,
     CognitionTriggerSource,
-    DirectMessageCognitionGate,
     EnvironmentAdapter,
     EventRouter,
     Observation,
@@ -179,7 +179,7 @@ class LilavelRuntime:
         self._event_router = event_router
         self._conversation_executor = ConversationExecutionAdapter(event_router)
         self._cognition_gate = (
-            DirectMessageCognitionGate() if cognition_gate is None else cognition_gate
+            DeterministicAttentionCognitionGate() if cognition_gate is None else cognition_gate
         )
         self._presence = presence
         self._semantic_actor = semantic_actor or SemanticActor(scope_id="runtime")
@@ -463,6 +463,30 @@ class LilavelRuntime:
                 observation.observation_id,
             ):
                 raise RuntimeFailed("cognition gate returned an invalid single-observation trigger")
+
+            if observation.event.kind != "direct_message":
+                mind_executor = self._mind_executor
+                if mind_executor is None:
+                    raise MindCompositionUnavailable(
+                        "ambient THINK requires the existing MIND cognition composition"
+                    )
+
+                async def execute_ambient(
+                    episode: SemanticEpisode, cancellation: SemanticCancellationToken
+                ) -> object:
+                    del episode
+                    return await mind_executor.execute(decision, cancellation)
+
+                request = self._semantic_actor.create_request(
+                    decision.trigger_id,
+                    source_kind=SemanticSourceKind.EXTERNAL,
+                    priority=SemanticPriority.NON_USER,
+                    executor=execute_ambient,
+                )
+                await self._semantic_actor.submit(request)
+                self._cognition_triggers += 1
+                return decision
+
             conversation_executor = self._conversation_executor
             if self._event_router is None:
                 raise ReactiveStepUnavailable("runtime has no explicit reactive response route")

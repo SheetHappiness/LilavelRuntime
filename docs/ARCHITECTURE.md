@@ -4,7 +4,8 @@ This document records the current ownership boundaries of the canonical
 `LilavelRuntime` repository. Lilavel has a minimal persistent-agent kernel plus
 the proven conversational foundation, a replaceable Discord environment
 adapter, the bounded P5-B1/MIND-0 local presence slice, and the MIND-1A/MIND-1B
-observation-admission and observation-to-cognition boundaries. MIND-1C adds a
+observation-admission and observation-to-cognition boundaries. COG-V1-B adds
+the deterministic attention evidence/policy layer behind MIND-1B. MIND-1C adds a
 bounded, effect-free cognition episode that ends at inert proposals; MIND-1D
 adds the separate trusted application boundary; MIND-1E adds one-shot temporal
 intention admission and time-to-cognition dispatch; MIND-1F-B adds one
@@ -20,7 +21,7 @@ are not implied by these slices.
 
 The `LilavelRuntime` kernel owns the top-level process lifecycle, one
 character-wide `SemanticActor`, bounded world event admission, a recent
-in-memory observation window, a deterministic observation-to-cognition gate,
+in-memory observation window, a deterministic attention/cognition gate,
 registered environment tasks, actor-owned CLI and reactive conversation admission, the
 optional local presence component, Core/ModelRuntime session lifecycle,
 selection of the source environment for typed presentation actions, and the
@@ -116,6 +117,36 @@ This episode path is intentionally effect-free and does not apply proposals.
 The positive Discord DM route now enters the same actor through a separate
 conversation execution adapter; the actor owns admission/serialization and
 the router/Core path retains conversation semantics.
+
+## COG-V1-B deterministic attention
+
+Attention is evidence selection, not social permission. The runtime keeps
+attention, intervention, and disposition separate:
+
+```text
+admitted Observation
+  → AttentionEvidenceExtractor
+  → AttentionEvidence
+  → DeterministicAttentionPolicy
+  → DROP | NOTE | THINK
+```
+
+The extractor uses exact runtime-owned event-route profiles and ignores
+external payload text/fields and `EventTrust` when minting hard signals. The
+policy is ordered and boolean: direct address, critical events, and trusted
+continuity think first; high relevance plus high novelty thinks next; low
+relevance or repetition with no new value drops; everything else is noted.
+There is no weighted salience score, hidden threshold, RNG, model call,
+cooldown, quiet-hours, conversation-floor, or interruption rule. Interest
+affinity is an optional evidence seam, never a keyword rule, and never thinks
+by itself.
+
+`DeterministicAttentionCognitionGate` preserves the MIND-1B result shape. Only
+observations with their own `THINK` verdict become bounded
+`CognitionTrigger` evidence; `NOTE` and `DROP` become `NO_COGNITION`. Direct
+messages retain the existing USER/Core route. Ambient `THINK` uses the
+existing NON_USER/MIND route, and no new semantic/model or effect lane is
+introduced. `NOTE` is transient awareness, not memory or deferred work.
 
 ## MIND-1F-B semantic admission actor
 
