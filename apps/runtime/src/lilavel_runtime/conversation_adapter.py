@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import cast
 
 from lilavel_core import (
@@ -76,8 +76,7 @@ async def _await_blocking[BlockingResult](
 ) -> BlockingResult:
     """Run one bounded Core bridge without borrowing the loop executor."""
 
-    loop = asyncio.get_running_loop()
-    completed = asyncio.Event()
+    completed = Event()
     outcome: list[tuple[BlockingResult | None, BaseException | None]] = []
 
     def invoke() -> None:
@@ -88,7 +87,7 @@ async def _await_blocking[BlockingResult](
         else:
             outcome.append((result, None))
         finally:
-            loop.call_soon_threadsafe(completed.set)
+            completed.set()
 
     # Keep the bridge daemon-owned so an uncontainable provider cannot strand
     # the asyncio default executor or the process shutdown path.
@@ -97,7 +96,8 @@ async def _await_blocking[BlockingResult](
         name="lilavel-runtime-core-bridge",
         daemon=True,
     ).start()
-    await completed.wait()
+    while not completed.is_set():
+        await asyncio.sleep(0)
     result, error = outcome[0]
     if error is not None:
         raise error

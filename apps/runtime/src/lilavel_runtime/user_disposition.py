@@ -1,4 +1,4 @@
-"""Run-bound direct USER disposition resolution for COG-V1-D1."""
+"""Run-bound direct USER disposition resolution for COG-V1-D1/D2."""
 
 from __future__ import annotations
 
@@ -7,9 +7,13 @@ from enum import StrEnum
 from time import monotonic_ns
 
 from lilavel_core import (
+    MAX_DELIBERATION_CONTEXT_MESSAGES,
     CognitionPolicyDecision,
     ConversationCore,
     ConversationRun,
+    DeliberationContext,
+    DeliberationDecision,
+    DeliberationPolicy,
     DispositionCandidate,
     TurnBehavior,
     TurnBehaviorResolution,
@@ -23,10 +27,11 @@ from .semantic_actor import SemanticCancellationToken
 
 
 class DeliberationMode(StrEnum):
-    """D1 seam for later selective routing; D1 has no heuristic router."""
+    """The explicit production routing modes for direct USER turns."""
 
     DEFAULT_ONLY = "default_only"
     ALWAYS_PLAN = "always_plan"
+    SELECTIVE = "selective"
 
 
 class PlannerFallbackReason(StrEnum):
@@ -39,6 +44,12 @@ class PlannerFallbackReason(StrEnum):
     UNEXPECTED = "planner_unexpected_error"
 
 
+class DeliberationFallbackReason(StrEnum):
+    """Bounded reasons for the optional router's safe FAST fallback."""
+
+    POLICY_FAILURE = "deliberation_policy_failed"
+
+
 class UserDispositionResolver:
     """Resolve one accepted USER run without owning admission or history."""
 
@@ -47,13 +58,21 @@ class UserDispositionResolver:
         *,
         mode: DeliberationMode = DeliberationMode.DEFAULT_ONLY,
         planner: DispositionPlanner | None = None,
+        policy: DeliberationPolicy | None = None,
     ) -> None:
         if type(mode) is not DeliberationMode:
             raise TypeError("mode must be a DeliberationMode")
         if mode is DeliberationMode.ALWAYS_PLAN and planner is None:
             raise ValueError("ALWAYS_PLAN requires a DispositionPlanner")
+        if mode is DeliberationMode.SELECTIVE and planner is None:
+            raise ValueError("SELECTIVE requires a DispositionPlanner")
+        if mode is DeliberationMode.SELECTIVE and policy is None:
+            raise ValueError("SELECTIVE requires an injected DeliberationPolicy")
+        if policy is not None and not callable(getattr(policy, "decide", None)):
+            raise TypeError("policy must provide decide")
         self._mode = mode
         self._planner = planner
+        self._policy = policy
 
     @property
     def mode(self) -> DeliberationMode:
@@ -73,12 +92,55 @@ class UserDispositionResolver:
                 behavior=default,
                 planner_invoked=False,
                 outcome=TurnBehaviorResolutionOutcome.NOT_INVOKED,
+                deliberation_decision=DeliberationDecision.FAST,
+                deliberation_mode=self._mode.value,
             )
             core.record_turn_behavior_resolution(run, resolution)
             return resolution
 
         if cancellation is not None and cancellation.is_requested:
             raise asyncio.CancelledError
+
+        policy_name: str | None = None
+        if self._mode is DeliberationMode.SELECTIVE:
+            policy = self._policy
+            assert policy is not None
+            policy_name = _policy_identity(policy)
+            try:
+                decision = policy.decide(_deliberation_context(core))
+                if type(decision) is not DeliberationDecision:
+                    raise TypeError("deliberation policy returned an invalid decision")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                resolution = TurnBehaviorResolution(
+                    behavior=default,
+                    planner_invoked=False,
+                    outcome=TurnBehaviorResolutionOutcome.NOT_INVOKED,
+                    deliberation_decision=DeliberationDecision.FAST,
+                    deliberation_mode=self._mode.value,
+                    deliberation_policy=policy_name,
+                    deliberation_fallback_reason=DeliberationFallbackReason.POLICY_FAILURE.value,
+                )
+                core.record_turn_behavior_resolution(run, resolution)
+                return resolution
+            if cancellation is not None and cancellation.is_requested:
+                raise asyncio.CancelledError
+        else:
+            decision = DeliberationDecision.PLAN
+            policy_name = self._mode.value
+
+        if decision is DeliberationDecision.FAST:
+            resolution = TurnBehaviorResolution(
+                behavior=default,
+                planner_invoked=False,
+                outcome=TurnBehaviorResolutionOutcome.NOT_INVOKED,
+                deliberation_decision=decision,
+                deliberation_mode=self._mode.value,
+                deliberation_policy=policy_name,
+            )
+            core.record_turn_behavior_resolution(run, resolution)
+            return resolution
 
         planner = self._planner
         assert planner is not None
@@ -101,6 +163,8 @@ class UserDispositionResolver:
                 default,
                 PlannerFallbackReason.CANCELLED,
                 started_ns,
+                decision=decision,
+                policy_name=policy_name,
             )
         except TimeoutError:
             return self._fallback(
@@ -109,6 +173,8 @@ class UserDispositionResolver:
                 default,
                 PlannerFallbackReason.TIMEOUT,
                 started_ns,
+                decision=decision,
+                policy_name=policy_name,
             )
         except Exception as error:
             if getattr(error, "semantic_uncontained", False) is True:
@@ -118,7 +184,15 @@ class UserDispositionResolver:
                 if isinstance(error, RuntimeError)
                 else PlannerFallbackReason.UNEXPECTED
             )
-            return self._fallback(core, run, default, reason, started_ns)
+            return self._fallback(
+                core,
+                run,
+                default,
+                reason,
+                started_ns,
+                decision=decision,
+                policy_name=policy_name,
+            )
 
         duration_ms = _duration_ms(started_ns)
         if candidate is None:
@@ -128,6 +202,9 @@ class UserDispositionResolver:
                 outcome=TurnBehaviorResolutionOutcome.REJECTED,
                 fallback_reason=PlannerFallbackReason.REJECTED.value,
                 planner_duration_ms=duration_ms,
+                deliberation_decision=decision,
+                deliberation_mode=self._mode.value,
+                deliberation_policy=policy_name,
             )
             core.record_turn_behavior_resolution(run, resolution)
             return resolution
@@ -139,6 +216,9 @@ class UserDispositionResolver:
             outcome=TurnBehaviorResolutionOutcome.ACCEPTED,
             planner_duration_ms=duration_ms,
             materially_differs_from_default=behavior.materially_differs_from(default),
+            deliberation_decision=decision,
+            deliberation_mode=self._mode.value,
+            deliberation_policy=policy_name,
         )
         core.record_turn_behavior_resolution(run, resolution)
         return resolution
@@ -150,6 +230,9 @@ class UserDispositionResolver:
         default: TurnBehavior,
         reason: PlannerFallbackReason,
         started_ns: int,
+        *,
+        decision: DeliberationDecision,
+        policy_name: str | None,
     ) -> TurnBehaviorResolution:
         resolution = TurnBehaviorResolution(
             behavior=default,
@@ -157,6 +240,9 @@ class UserDispositionResolver:
             outcome=TurnBehaviorResolutionOutcome.FALLBACK,
             fallback_reason=reason.value,
             planner_duration_ms=_duration_ms(started_ns),
+            deliberation_decision=decision,
+            deliberation_mode=self._mode.value,
+            deliberation_policy=policy_name,
         )
         core.record_turn_behavior_resolution(run, resolution)
         return resolution
@@ -183,8 +269,27 @@ def _task_is_being_cancelled() -> bool:
     return task is not None and getattr(task, "cancelling", lambda: 0)() > 0
 
 
+def _deliberation_context(core: ConversationCore) -> DeliberationContext:
+    history = core.history
+    if not history:
+        raise RuntimeError("accepted USER turn has no canonical context")
+    return DeliberationContext(
+        current_user_turn=history[-1],
+        recent_canonical_context=history[-MAX_DELIBERATION_CONTEXT_MESSAGES:],
+    )
+
+
+def _policy_identity(policy: DeliberationPolicy) -> str:
+    candidate = getattr(policy, "policy_id", None)
+    value = candidate if type(candidate) is str and candidate.strip() else type(policy).__name__
+    if not value.strip() or len(value.encode("utf-8")) > 128:
+        raise ValueError("deliberation policy identity is invalid")
+    return value
+
+
 __all__ = [
     "DeliberationMode",
+    "DeliberationFallbackReason",
     "PlannerFallbackReason",
     "UserDispositionResolver",
 ]

@@ -164,6 +164,10 @@ class RuntimeEvidenceRecord:
     planner_duration_ms: int | None = None
     disposition_changed_default: bool | None = None
     duration_ms: int | None = None
+    deliberation_decision: Literal["fast", "plan"] | None = None
+    deliberation_mode: str | None = None
+    deliberation_policy: str | None = None
+    deliberation_fallback_reason: str | None = None
 
 
 class _RuntimeEvidenceTrace:
@@ -196,6 +200,10 @@ class _RuntimeEvidenceTrace:
         planner_duration_ms: int | None = None,
         disposition_changed_default: bool | None = None,
         duration_ms: int | None = None,
+        deliberation_decision: Literal["fast", "plan"] | None = None,
+        deliberation_mode: str | None = None,
+        deliberation_policy: str | None = None,
+        deliberation_fallback_reason: str | None = None,
     ) -> None:
         record = RuntimeEvidenceRecord(
             sequence=self._next_sequence,
@@ -216,6 +224,10 @@ class _RuntimeEvidenceTrace:
             planner_duration_ms=planner_duration_ms,
             disposition_changed_default=disposition_changed_default,
             duration_ms=duration_ms,
+            deliberation_decision=deliberation_decision,
+            deliberation_mode=deliberation_mode,
+            deliberation_policy=deliberation_policy,
+            deliberation_fallback_reason=deliberation_fallback_reason,
         )
         self._next_sequence += 1
         self._append_record(record)
@@ -894,6 +906,10 @@ class ConversationCore:
                 planner_fallback_reason=resolution.fallback_reason,
                 planner_duration_ms=resolution.planner_duration_ms,
                 disposition_changed_default=resolution.materially_differs_from_default,
+                deliberation_decision=resolution.deliberation_decision.value,
+                deliberation_mode=resolution.deliberation_mode,
+                deliberation_policy=resolution.deliberation_policy,
+                deliberation_fallback_reason=resolution.deliberation_fallback_reason,
             )
 
     def record_response_generation_started(self, run: ConversationRun) -> None:

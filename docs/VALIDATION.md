@@ -201,6 +201,23 @@ cancellation containment, raw-output exclusion from trusted guidance, and
 bounded D1 evidence. It does not establish the final D2 selective routing
 policy or live-provider behavior.
 
+The focused COG-V1-D2 selective-deliberation proofs can be rerun from
+`apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_cog_v1_d2.py
+```
+
+This suite proves the provider-neutral FAST/PLAN contract, zero-versus-one
+planner calls, D1 fallback and per-run binding, injected-policy failure fallback,
+content-free deliberation telemetry, quality-derived oracle labels, the
+`ALWAYS_FAST`, `ALWAYS_PLAN`, and deterministic-rule baselines, confusion-matrix
+metrics, counterfactual routing, deep technical FAST behavior, socially nuanced
+PLAN behavior, irrelevant tailoring FAST behavior, and bounded delayed context.
+The corpus benchmark is deterministic and small; live planner quality and live
+latency remain `UNVERIFIED`. A learned semantic classifier is deferred because
+the repository has no justified dependency or corpus size for one.
+
 ### Core
 
 ```powershell

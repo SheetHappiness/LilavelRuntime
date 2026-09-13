@@ -19,6 +19,7 @@ from lilavel_core import (
     ConversationRun,
     ConversationRuntime,
     ConversationTextDelta,
+    DeliberationPolicy,
     ModelRuntime,
     RunAwareConversationRuntime,
 )
@@ -26,6 +27,7 @@ from lilavel_core.production_cognition import create_conversation
 
 from .cognition_model import DispositionPlanner
 from .contracts import ActionExecutor, Observation, ToolCall, ToolResult
+from .deliberation_policy import DeterministicDeliberationPolicy
 from .user_disposition import DeliberationMode, UserDispositionResolver
 
 PRESENTATION_OPEN = "conversation.presentation.open"
@@ -43,12 +45,18 @@ RouteRuntimeFactory = Callable[[tuple[str, str]], ConversationRuntime]
 CoreFactory = Callable[[ConversationRuntime], ConversationCore]
 SessionConfigurator = Callable[[ConversationRuntime, ConversationCore, tuple[str, str]], None]
 PlannerFactory = Callable[[ConversationRuntime], DispositionPlanner]
+DeliberationPolicyFactory = Callable[[ConversationRuntime], DeliberationPolicy]
 
 
 def _default_planner_factory(runtime: ConversationRuntime) -> DispositionPlanner:
     if not isinstance(runtime, RunAwareConversationRuntime):
         raise TypeError("ALWAYS_PLAN requires a run-aware ConversationRuntime")
     return DispositionPlanner(runtime)
+
+
+def _default_deliberation_policy_factory(runtime: ConversationRuntime) -> DeliberationPolicy:
+    del runtime
+    return DeterministicDeliberationPolicy()
 
 
 @dataclass(slots=True)
@@ -140,6 +148,7 @@ class CoreConversationRouter:
         session_configurator: SessionConfigurator | None = None,
         deliberation_mode: DeliberationMode = DeliberationMode.DEFAULT_ONLY,
         planner_factory: PlannerFactory | None = None,
+        deliberation_policy_factory: DeliberationPolicyFactory | None = None,
         close_timeout_s: float = 15.0,
     ) -> None:
         if close_timeout_s <= 0:
@@ -152,6 +161,9 @@ class CoreConversationRouter:
             raise TypeError("deliberation_mode must be a DeliberationMode")
         self._deliberation_mode = deliberation_mode
         self._planner_factory = planner_factory or _default_planner_factory
+        self._deliberation_policy_factory = (
+            deliberation_policy_factory or _default_deliberation_policy_factory
+        )
         self._close_timeout_s = close_timeout_s
         self._sessions: dict[tuple[str, str], _ConversationSession] = {}
         self._session_lock = asyncio.Lock()
@@ -357,17 +369,22 @@ class CoreConversationRouter:
             core = self._core_factory(runtime)
             if self._session_configurator is not None:
                 self._session_configurator(runtime, core, key)
-            planner = (
-                self._planner_factory(runtime)
-                if self._deliberation_mode is DeliberationMode.ALWAYS_PLAN
-                else None
-            )
+            planner = None
+            policy = None
+            if self._deliberation_mode in {
+                DeliberationMode.ALWAYS_PLAN,
+                DeliberationMode.SELECTIVE,
+            }:
+                planner = self._planner_factory(runtime)
+            if self._deliberation_mode is DeliberationMode.SELECTIVE:
+                policy = self._deliberation_policy_factory(runtime)
             session = _ConversationSession(
                 runtime=runtime,
                 core=core,
                 disposition_resolver=UserDispositionResolver(
                     mode=self._deliberation_mode,
                     planner=planner,
+                    policy=policy,
                 ),
             )
             self._sessions[key] = session

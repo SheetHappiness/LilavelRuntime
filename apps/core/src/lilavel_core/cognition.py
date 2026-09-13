@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from .deliberation import DeliberationDecision
 from .sidecar_protocol import MAX_GUIDANCE_BLOCKS, MAX_GUIDANCE_BYTES, ProtocolError
 
 Aim = Literal[
@@ -222,6 +223,10 @@ class TurnBehaviorResolution:
     fallback_reason: str | None = None
     planner_duration_ms: int | None = None
     materially_differs_from_default: bool = False
+    deliberation_decision: DeliberationDecision = DeliberationDecision.FAST
+    deliberation_mode: str = "default_only"
+    deliberation_policy: str | None = None
+    deliberation_fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.behavior) is not TurnBehavior:
@@ -241,6 +246,25 @@ class TurnBehaviorResolution:
             raise ValueError("planner_duration_ms must be non-negative")
         if type(self.materially_differs_from_default) is not bool:
             raise TypeError("materially_differs_from_default must be a bool")
+        if type(self.deliberation_decision) is not DeliberationDecision:
+            raise TypeError("deliberation_decision must be a DeliberationDecision")
+        if type(self.deliberation_mode) is not str or not self.deliberation_mode.strip():
+            raise ValueError("deliberation_mode must be non-empty")
+        if len(self.deliberation_mode.encode("utf-8")) > 64:
+            raise ValueError("deliberation_mode is too long")
+        if self.deliberation_policy is not None:
+            if type(self.deliberation_policy) is not str or not self.deliberation_policy.strip():
+                raise ValueError("deliberation_policy must be non-empty when supplied")
+            if len(self.deliberation_policy.encode("utf-8")) > 128:
+                raise ValueError("deliberation_policy is too long")
+        if self.deliberation_fallback_reason is not None:
+            if (
+                type(self.deliberation_fallback_reason) is not str
+                or not self.deliberation_fallback_reason.strip()
+            ):
+                raise ValueError("deliberation_fallback_reason must be non-empty when supplied")
+            if len(self.deliberation_fallback_reason.encode("utf-8")) > 128:
+                raise ValueError("deliberation_fallback_reason is too long")
         if (
             not self.planner_invoked
             and self.outcome is not TurnBehaviorResolutionOutcome.NOT_INVOKED

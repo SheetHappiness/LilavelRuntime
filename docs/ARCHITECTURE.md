@@ -223,6 +223,51 @@ rejected / fallback reason, monotonic planner duration, structural difference
 from default, response-generation start, and first-delta timing evidence. It
 stores no user content or raw planner output.
 
+## COG-V1-D2 evidence-backed selective deliberation
+
+COG-V1-D2 adds an explicit provider-neutral `DeliberationDecision` contract:
+`FAST` or `PLAN`. `DeliberationContext` contains only the current accepted user
+turn and a bounded four-message suffix of canonical context. An injected
+`DeliberationPolicy` decides whether the existing `DispositionPlanner` should be
+called; it never selects disposition fields and it is synchronous/non-generative.
+
+The run-bound lifecycle is therefore:
+
+```text
+prepared USER run
+  → DeliberationPolicy.decide(DeliberationContext)
+      ├── FAST → default TurnBehavior, zero planner calls
+      └── PLAN → existing DispositionPlanner exactly once
+  → D1 validation/fallback semantics
+  → immutable run-bound TurnBehavior
+  → normal response generation
+```
+
+`DEFAULT_ONLY`, `ALWAYS_PLAN`, and opt-in `SELECTIVE` modes remain explicit.
+`SELECTIVE` uses the injected deterministic rule policy in the repository's
+router composition, while the production default remains `DEFAULT_ONLY`.
+The rule policy routes on a small set of reviewable multi-token posture signals
+(contradiction/evidence pressure, material ambiguity, social or tone ambiguity,
+bounded delayed context, and contextual choice). It is not a complexity
+classifier, a keyword-only personality trigger, or an LLM router. A policy
+failure fails closed to FAST/default so USER availability does not depend on an
+optional classifier.
+
+The D2 corpus derives `FAST_SAFE`, `PLAN_HELPFUL`, `PLAN_HARMFUL`, and
+`UNRESOLVED` labels from human-authored disposition constraints. Structural
+difference from the default is telemetry only; it is not the routing oracle.
+The deterministic rule benchmark reached 100% PLAN precision and recall on the
+21-case corpus with a 42.9% planner-call rate, compared with 0% recall for
+`ALWAYS_FAST` and 100% planner calls for `ALWAYS_PLAN`. This is a small,
+repository-local provisional result, so it justifies an explicit opt-in
+`SELECTIVE` mode but not a production-default change. Implicit social nuance and
+context outside the bounded suffix remain known false-negative domains.
+
+`d1_evidence()` now also records the bounded deliberation decision, mode,
+policy identity, and router fallback reason alongside planner invocation,
+selected behavior source, planner outcome/duration, structural difference, and
+generation timing. No user text or raw planner output is stored.
+
 ## MIND-1F-B semantic admission actor
 
 Each `LilavelRuntime` instance composes exactly one provider-neutral

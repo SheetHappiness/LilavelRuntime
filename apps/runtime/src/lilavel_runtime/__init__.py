@@ -83,6 +83,18 @@ from .conversation_router import (
     PRESENTATION_WATCH,
     CoreConversationRouter,
 )
+from .deliberation_eval import (
+    COG_V1_D2_SCENARIOS,
+    DeliberationBenchmarkResult,
+    DeliberationOracleLabel,
+    DeliberationScenario,
+    evaluate_deliberation_policy,
+)
+from .deliberation_policy import (
+    AlwaysFastDeliberationPolicy,
+    AlwaysPlanDeliberationPolicy,
+    DeterministicDeliberationPolicy,
+)
 from .disposition_eval import (
     COG_V1_C_SCENARIOS,
     DispositionPlannerEvalResult,
@@ -244,7 +256,12 @@ from .tool_session import (
     FakeToolExecutor,
     ToolSessionEvidence,
 )
-from .user_disposition import DeliberationMode, PlannerFallbackReason, UserDispositionResolver
+from .user_disposition import (
+    DeliberationFallbackReason,
+    DeliberationMode,
+    PlannerFallbackReason,
+    UserDispositionResolver,
+)
 
 __version__ = "0.1.0"
 
@@ -277,6 +294,15 @@ __all__ = [
     "CognitionTrigger",
     "CognitionTriggerSource",
     "DispositionPlanner",
+    "DeliberationBenchmarkResult",
+    "DeliberationFallbackReason",
+    "DeliberationOracleLabel",
+    "DeliberationScenario",
+    "DeterministicDeliberationPolicy",
+    "AlwaysFastDeliberationPolicy",
+    "AlwaysPlanDeliberationPolicy",
+    "COG_V1_D2_SCENARIOS",
+    "evaluate_deliberation_policy",
     "DispositionPlannerEvalResult",
     "COG_V1_C_SCENARIOS",
     "MAX_DISPOSITION_CONTEXT_MESSAGES",

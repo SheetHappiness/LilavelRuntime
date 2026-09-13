@@ -42,6 +42,12 @@ from .conversation import (
     RuntimeEvidenceRecord,
     RuntimeGeneration,
 )
+from .deliberation import (
+    MAX_DELIBERATION_CONTEXT_MESSAGES,
+    DeliberationContext,
+    DeliberationDecision,
+    DeliberationPolicy,
+)
 from .persistence import (
     SCHEMA_VERSION,
     CanonicalMessage,
@@ -133,6 +139,9 @@ __all__ = [
     "CanonicalMessage",
     "CognitionPolicyDecision",
     "CognitionReasonCode",
+    "DeliberationContext",
+    "DeliberationDecision",
+    "DeliberationPolicy",
     "DispositionCandidate",
     "ConversationStore",
     "EvidenceRecord",
@@ -203,6 +212,7 @@ __all__ = [
     "IdentityCanon",
     "InterventionDecision",
     "MAX_COGNITION_REASON_CODES",
+    "MAX_DELIBERATION_CONTEXT_MESSAGES",
     "SelfConcept",
     "TemperamentTrait",
     "BehavioralAnchor",
