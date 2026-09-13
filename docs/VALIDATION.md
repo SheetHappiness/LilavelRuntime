@@ -218,6 +218,22 @@ The corpus benchmark is deterministic and small; live planner quality and live
 latency remain `UNVERIFIED`. A learned semantic classifier is deferred because
 the repository has no justified dependency or corpus size for one.
 
+The focused COG-V1-E1 ambient intervention and social-permission proofs can be
+rerun from `apps/runtime` with:
+
+```powershell
+uv run --locked pytest tests/test_intervention.py
+```
+
+This suite proves the bounded `NONE`/`RESPOND`/`INTERJECT` candidate and
+context contracts, direct USER exclusion, deterministic hard denials,
+per-class freshness/revalidation, recent-speech/backoff and budget placement,
+trusted response obligation, strict unsolicited initiative, interest/joke and
+handled-state traps, the absence of model/effect/presentation paths, the
+human-authored counterfactual corpus, intervention-specific confusion and
+precision/recall metrics, and the explicit `ALWAYS_NONE` silence baseline. It
+does not establish production ambient speech; E1 does not wire such a path.
+
 ### Core
 
 ```powershell

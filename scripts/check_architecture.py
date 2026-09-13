@@ -43,6 +43,31 @@ SCOPED_COGNITION_ENGINE_CLASSES = {
     "LocalCognitionEngine",
 }
 CANONICAL_COMPOSITION_FILES = {"cli.py", "kernel.py"}
+E1_INTERVENTION_FORBIDDEN_MODULES = {
+    "cognition_model",
+    "conversation_adapter",
+    "conversation_router",
+    "kernel",
+    "presence",
+    "proposal_application",
+    "tool_registry",
+    "tool_session",
+}
+E1_INTERVENTION_FORBIDDEN_NAMES = {
+    "ActionProposal",
+    "ModelRuntime",
+    "PresentationAction",
+    "ProposalApplicationCoordinator",
+    "ToolCall",
+}
+E1_INTERVENTION_FORBIDDEN_CALLS = {
+    "apply",
+    "execute",
+    "generate",
+    "generate_for_run",
+    "route",
+    "submit_cognition",
+}
 
 
 def _module_name(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
@@ -261,11 +286,60 @@ def _semantic_entrypoint_violations() -> list[str]:
     return violations
 
 
+def _e1_intervention_violations() -> list[str]:
+    """Keep the inert E1 policy from acquiring a model or effect capability."""
+
+    path = RUNTIME_SOURCE / "lilavel_runtime" / "intervention.py"
+    if not path.exists():
+        return []
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level and module in E1_INTERVENTION_FORBIDDEN_MODULES:
+                violations.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: E1 intervention imports .{module}"
+                )
+            for alias in node.names:
+                if alias.name in E1_INTERVENTION_FORBIDDEN_NAMES:
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: E1 intervention imports "
+                        f"{alias.name}"
+                    )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in E1_INTERVENTION_FORBIDDEN_MODULES:
+                    violations.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: E1 intervention imports "
+                        f"{alias.name}"
+                    )
+        elif isinstance(node, ast.Name) and node.id in E1_INTERVENTION_FORBIDDEN_NAMES:
+            violations.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}: E1 intervention references {node.id}"
+            )
+        elif isinstance(node, ast.Call):
+            called_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if called_name in E1_INTERVENTION_FORBIDDEN_CALLS:
+                violations.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: E1 intervention calls "
+                    f"{called_name}"
+                )
+    return violations
+
+
 def main() -> int:
     violations = [
         *_core_violations(),
         *_runtime_violations(),
         *_semantic_entrypoint_violations(),
+        *_e1_intervention_violations(),
         *_adapter_violations(),
         *_discord_environment_violations(),
     ]

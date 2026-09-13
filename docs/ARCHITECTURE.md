@@ -268,6 +268,60 @@ policy identity, and router fallback reason alongside planner invocation,
 selected behavior source, planner outcome/duration, structural difference, and
 generation timing. No user text or raw planner output is stored.
 
+## COG-V1-E1 ambient intervention contracts
+
+COG-V1-E1 adds a runtime-owned, effect-free boundary after ambient cognition:
+
+```text
+ambient THINK cognition
+        │
+        ▼
+InterventionCandidate (advisory semantic value)
+        │
+        ▼
+SocialPermissionContext (trusted current state)
+        │
+        ▼
+DeterministicInterventionPolicy.revalidate()
+        │
+        ▼
+allowed RESPOND/INTERJECT candidate or NONE
+```
+
+`Attention` remains only `DROP | NOTE | THINK`; it does not own social timing,
+recent-speech backoff, floor state, freshness, or intervention budgets.
+`Intervention` answers whether cognition may become external speech now and
+reuses Core's `InterventionDecision` values `NONE | RESPOND | INTERJECT`.
+`Disposition` remains the separate HOW layer. `NONE` is valid after `THINK`,
+and internal state/intention/temporal proposals remain independent of that
+silence decision.
+
+The immutable `InterventionCandidate` contains no raw text, prompt, prose,
+provider handle, action, or presentation authority. `SocialPermissionContext`
+contains only bounded runtime-owned signals: non-user semantic priority/source,
+surface availability, current activity, per-class freshness bucket, optional
+trusted floor state, recent speech, intervention budget, handled state, social
+sensitivity, and independently established response obligation/continuity.
+Direct `USER` work is rejected from this ambient policy; the direct route keeps
+its fixed `THINK + RESPOND` invariant and its D2 FAST/PLAN behavior.
+
+The policy is ordered and deterministic: hard current-state denials first,
+trusted `RESPOND` obligation second, strict material-value `INTERJECT` last,
+then `NONE`. `INTERJECT` requires fresh/current/unresolved context, no recent
+speech backoff, and explicit supporting evidence such as contradiction,
+forgotten constraint, stuck discussion, or unique information. Interest
+affinity, a witty thought, and high relevance alone are insufficient. Freshness
+uses a reviewable per-event-class `FRESH | AGING | STALE` mapping rather than a
+universal timeout; continuity/temporal response may survive `AGING`, while
+unsolicited interjection remains `FRESH`-only. Revalidation is a future E2
+effect-time seam and currently emits no speech.
+
+There is no ambient `INTERRUPT` value. Voice/VAD/barge-in timing is a separate
+future domain. E1 adds no model call, generation, proposal application, or
+presentation wiring, and production autonomous ambient speech remains
+disabled. The human-authored E1 corpus and silence-first metrics live in
+`apps/runtime/src/lilavel_runtime/intervention_eval.py`.
+
 ## MIND-1F-B semantic admission actor
 
 Each `LilavelRuntime` instance composes exactly one provider-neutral
@@ -536,7 +590,7 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity and disposition value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |

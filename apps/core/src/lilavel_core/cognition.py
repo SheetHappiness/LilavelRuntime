@@ -33,7 +33,7 @@ class AttentionDecision(StrEnum):
 
 
 class InterventionDecision(StrEnum):
-    """Whether cognition should remain silent, answer, or interrupt."""
+    """Whether cognition should remain silent, answer, or enter ambient talk."""
 
     NONE = "none"
     RESPOND = "respond"
@@ -62,6 +62,17 @@ class CognitionReasonCode(StrEnum):
     AMBIENT_CONTEXT = "ambient_context"
     NOT_ADDRESSED = "not_addressed"
     LOW_RELEVANCE = "low_relevance"
+    RESPONSE_OBLIGATION = "response_obligation"
+    NO_RESPONSE_OBLIGATION = "no_response_obligation"
+    STALE_CONTEXT = "stale_context"
+    SOCIAL_BACKOFF = "social_backoff"
+    FLOOR_BUSY = "floor_busy"
+    NO_SPEAKING_SURFACE = "no_speaking_surface"
+    INTERVENTION_BUDGET_EXHAUSTED = "intervention_budget_exhausted"
+    ALREADY_HANDLED = "already_handled"
+    CONSTRAINT_FORGOTTEN = "constraint_forgotten"
+    DISCUSSION_STUCK = "discussion_stuck"
+    UNIQUE_INFORMATION = "unique_information"
 
 
 MAX_COGNITION_REASON_CODES = 8
