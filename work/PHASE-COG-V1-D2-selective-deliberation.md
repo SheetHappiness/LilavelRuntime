@@ -1,12 +1,12 @@
 # PHASE COG-V1-D2 — Evidence-Backed Selective Deliberation
 
-Status: `IN PROGRESS`
+Status: `PASS`
 
 Baseline SHA: `13ec681945c0444954202d3f3793b4a14a1d8dd7`
 
 Parent implementation SHA: `d39081916cb3abecd3bb8bb54e6d6a97a3790275`
 
-Implementation SHA: `PENDING`
+Implementation SHA: `c34743b0141cc12f35997c5214fc0c7344ff6c93`
 
 ## Goal
 
@@ -82,10 +82,10 @@ accuracy as a substitute for that asymmetry.
 
 ## Production choice and latency evidence
 
-`SELECTIVE` is implemented and available only through explicit injected D1
-composition. The production default remains `DEFAULT_ONLY`; no default latency
-or planner-call increase is claimed. `ALWAYS_PLAN` remains an explicit
-validation mode.
+`SELECTIVE` is implemented and available only through explicit D1 composition.
+The production default remains `DEFAULT_ONLY`; no default latency or
+planner-call increase is claimed. `ALWAYS_PLAN` remains an explicit validation
+mode.
 
 D1 planner duration, response-generation start, and first-delta timing remain
 available through the bounded evidence seam. Offline routing reports planner
@@ -98,10 +98,21 @@ was used in this phase.
 - Preflight exact baseline and clean worktree: `PASS`.
 - Core focused conversation/cognition tests: `PASS` — 26 passed.
 - Runtime focused D2 tests: `PASS` — 9 passed.
+- Runtime inherited D1 subset excluding the host teardown cases: `PASS` — 7
+  passed, 2 deselected.
 - Runtime Ruff check and format check: `PASS`.
 - Runtime strict Pyright: `PASS`.
-- Architecture guard, docs integrity, and `git diff --check`: `PENDING`.
-- Full Core and Runtime suites: `PENDING`.
+- Core full suite: `PASS` — 195 passed, 4 skipped.
+- Shared Contracts suite: `PASS` — 7 passed; Discord adapter suite: `PASS` —
+  95 passed.
+- Architecture guard, docs integrity, lock checks, and `git diff --check`:
+  `PASS`.
+- Full Runtime suite: `FAIL` — under Python 3.14.7 it hangs during async
+  teardown immediately after the inherited D1
+  `test_superseded_prepared_run_cannot_start_stale_generation`; the D2 tests
+  are not reached. A minimal standalone `asyncio.to_thread` reproduction also
+  hangs on this host, so this is recorded as an environment/runtime validation
+  limitation rather than a D2 routing failure.
 - Live provider, live Discord, Windows, restart, and live latency: `UNVERIFIED`.
 
 ## Exit gate review
