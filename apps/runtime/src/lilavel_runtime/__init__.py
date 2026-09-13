@@ -244,6 +244,7 @@ from .tool_session import (
     FakeToolExecutor,
     ToolSessionEvidence,
 )
+from .user_disposition import DeliberationMode, PlannerFallbackReason, UserDispositionResolver
 
 __version__ = "0.1.0"
 
@@ -281,6 +282,7 @@ __all__ = [
     "MAX_DISPOSITION_CONTEXT_MESSAGES",
     "MAX_DISPOSITION_PLANNER_RESULT_BYTES",
     "CoreConversationRouter",
+    "DeliberationMode",
     "ConversationExecutionAdapter",
     "ConversationExecutionResult",
     "DirectMessageCognitionGate",
@@ -306,6 +308,7 @@ __all__ = [
     "LilavelRuntime",
     "LocalCognitionEngine",
     "ModelBackedDispositionPlanner",
+    "PlannerFallbackReason",
     "LilavelRuntimeError",
     "LilavelRuntimeHealth",
     "MindCompositionUnavailable",
@@ -456,6 +459,7 @@ __all__ = [
     "ToolResultStatus",
     "ToolSpec",
     "ToolSessionEvidence",
+    "UserDispositionResolver",
     "ToolExposureError",
     "ToolExposureSnapshot",
     "ToolExecutor",

@@ -13,10 +13,12 @@ from lilavel_core import (
     ConversationEvent,
     ConversationOutcome,
     ConversationRun,
+    TurnBehavior,
 )
 
 from .contracts import ActionExecutor, EventRouter, Observation
 from .semantic_actor import SemanticCancellationToken, SemanticEpisodeStatus
+from .user_disposition import UserDispositionResolver
 
 
 class _ConversationExecutionUncontained(RuntimeError):
@@ -127,6 +129,50 @@ def _consume_core_turn(
         raise
 
 
+def _prepare_core_turn(
+    core: ConversationCore,
+    text: str,
+    holder: _CoreRunHolder,
+) -> ConversationRun:
+    run = core.prepare_turn(text, supersede=True)
+    holder.bind(run)
+    return run
+
+
+def _start_and_consume_prepared(
+    core: ConversationCore,
+    run: ConversationRun,
+    behavior: TurnBehavior,
+    present: ConversationPresenter,
+) -> ConversationExecutionResult:
+    core.start_prepared_run(run, behavior)
+    try:
+        for event in run.events():
+            present(event)
+        return ConversationExecutionResult(run, run.wait(0))
+    except BaseException:
+        if not run.settled:
+            run.cancel()
+            run.wait()
+        raise
+
+
+async def _await_prepared_result(
+    prepare_task: asyncio.Task[ConversationRun],
+    holder: _CoreRunHolder,
+) -> ConversationExecutionResult:
+    del holder
+    run = await prepare_task
+    return ConversationExecutionResult(run, await _await_blocking(run.wait))
+
+
+async def _join_resolution(resolution_task: asyncio.Task[object]) -> None:
+    result = await asyncio.gather(resolution_task, return_exceptions=True)
+    error = result[0]
+    if isinstance(error, BaseException) and getattr(error, "semantic_uncontained", False):
+        raise _ConversationExecutionUncontained from error
+
+
 class ConversationExecutionAdapter:
     """Contain one router/presentation run beneath ``SemanticActor``.
 
@@ -137,10 +183,16 @@ class ConversationExecutionAdapter:
     of the existing router task and joins that task before returning.
     """
 
-    def __init__(self, router: EventRouter | None = None) -> None:
+    def __init__(
+        self,
+        router: EventRouter | None = None,
+        *,
+        disposition_resolver: UserDispositionResolver | None = None,
+    ) -> None:
         if router is not None and not callable(getattr(router, "route", None)):
             raise TypeError("router must provide route")
         self._router = router
+        self._disposition_resolver = disposition_resolver or UserDispositionResolver()
 
     @property
     def router(self) -> EventRouter | None:
@@ -201,14 +253,53 @@ class ConversationExecutionAdapter:
         if not callable(present):
             raise TypeError("present must be callable")
         holder = _CoreRunHolder()
-        turn_task = asyncio.create_task(
-            _await_blocking(lambda: _consume_core_turn(core, text, present, holder)),
-            name=f"lilavel-local-core-turn-{core.scope_id}",
+        prepare_task = asyncio.create_task(
+            _await_blocking(
+                lambda: _prepare_core_turn(core, text, holder),
+            ),
+            name=f"lilavel-local-core-prepare-{core.scope_id}",
         )
         cancellation_task = asyncio.create_task(
             cancellation.wait(), name=f"lilavel-local-core-cancel-{core.scope_id}"
         )
+        run: ConversationRun | None = None
         try:
+            done, _ = await asyncio.wait(
+                (prepare_task, cancellation_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if prepare_task in done:
+                run = prepare_task.result()
+            else:
+                holder.cancel()
+                return await _await_prepared_result(prepare_task, holder)
+
+            if cancellation.is_requested:
+                holder.cancel()
+                return ConversationExecutionResult(run, await _await_blocking(run.wait))
+
+            resolution_task = asyncio.create_task(
+                self._disposition_resolver.resolve(core, run, cancellation),
+                name=f"lilavel-local-disposition-{run.run_id}",
+            )
+            done, _ = await asyncio.wait(
+                (resolution_task, cancellation_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancellation_task in done:
+                resolution_task.cancel()
+                await _join_resolution(resolution_task)
+                holder.cancel()
+                return ConversationExecutionResult(run, await _await_blocking(run.wait))
+            resolution = resolution_task.result()
+            if cancellation.is_requested:
+                holder.cancel()
+                return ConversationExecutionResult(run, await _await_blocking(run.wait))
+
+            turn_task = asyncio.create_task(
+                _await_blocking(
+                    lambda: _start_and_consume_prepared(core, run, resolution.behavior, present)
+                ),
+                name=f"lilavel-local-core-turn-{core.scope_id}",
+            )
             done, _ = await asyncio.wait(
                 (turn_task, cancellation_task), return_when=asyncio.FIRST_COMPLETED
             )
@@ -219,7 +310,15 @@ class ConversationExecutionAdapter:
         except asyncio.CancelledError:
             cancellation.request()
             holder.cancel()
-            await asyncio.gather(turn_task, return_exceptions=True)
+            await asyncio.gather(prepare_task, return_exceptions=True)
+            if run is not None:
+                await _await_blocking(run.wait)
+            raise
+        except BaseException:
+            holder.cancel()
+            await asyncio.gather(prepare_task, return_exceptions=True)
+            if run is not None and not run.settled:
+                await _await_blocking(run.wait)
             raise
         finally:
             cancellation_task.cancel()

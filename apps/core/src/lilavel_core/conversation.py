@@ -7,9 +7,16 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from queue import Queue
 from threading import Event, Lock, RLock, Thread
+from time import monotonic_ns
 from typing import Final, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
+from .cognition import (
+    TurnBehavior,
+    TurnBehaviorResolution,
+    TurnBehaviorResolutionOutcome,
+    default_turn_behavior,
+)
 from .persistence import (
     CanonicalMessage,
     ConversationStore,
@@ -99,6 +106,9 @@ type RuntimeEvidenceKind = Literal[
     "generation_terminal",
     "assistant_commit",
     "run_terminal",
+    "disposition_resolved",
+    "response_generation_started",
+    "response_first_delta",
 ]
 type RuntimeEvidenceResult = Literal[
     "completed",
@@ -106,6 +116,9 @@ type RuntimeEvidenceResult = Literal[
     "superseded",
     "failed",
     "committed",
+    "accepted",
+    "rejected",
+    "fallback",
 ]
 type RuntimeEvidenceReason = Literal[
     "cancelled",
@@ -144,6 +157,13 @@ class RuntimeEvidenceRecord:
     failure_code: str | None = None
     discarded_count: int = 0
     discarded_bytes: int = 0
+    disposition_source: Literal["default", "planner"] | None = None
+    planner_invoked: bool | None = None
+    planner_outcome: str | None = None
+    planner_fallback_reason: str | None = None
+    planner_duration_ms: int | None = None
+    disposition_changed_default: bool | None = None
+    duration_ms: int | None = None
 
 
 class _RuntimeEvidenceTrace:
@@ -169,6 +189,13 @@ class _RuntimeEvidenceTrace:
         result: RuntimeEvidenceResult | None = None,
         reason: RuntimeEvidenceReason | None = None,
         failure_code: str | None = None,
+        disposition_source: Literal["default", "planner"] | None = None,
+        planner_invoked: bool | None = None,
+        planner_outcome: str | None = None,
+        planner_fallback_reason: str | None = None,
+        planner_duration_ms: int | None = None,
+        disposition_changed_default: bool | None = None,
+        duration_ms: int | None = None,
     ) -> None:
         record = RuntimeEvidenceRecord(
             sequence=self._next_sequence,
@@ -182,6 +209,13 @@ class _RuntimeEvidenceTrace:
             result=result,
             reason=reason,
             failure_code=failure_code,
+            disposition_source=disposition_source,
+            planner_invoked=planner_invoked,
+            planner_outcome=planner_outcome,
+            planner_fallback_reason=planner_fallback_reason,
+            planner_duration_ms=planner_duration_ms,
+            disposition_changed_default=disposition_changed_default,
+            duration_ms=duration_ms,
         )
         self._next_sequence += 1
         self._append_record(record)
@@ -331,6 +365,8 @@ class ConversationRun:
         self._cancel_reason: ConversationCancellationReason = "cancelled"
         self._runtime_generation: RuntimeGeneration | None = None
         self._cancel_sent = False
+        self._behavior: TurnBehavior | None = None
+        self._started = False
         self._assistant_committed = False
         self._assistant_commit_reserved = False
         self._consumer_active = False
@@ -341,7 +377,36 @@ class ConversationRun:
         )
 
     def start(self) -> None:
+        with self._lock:
+            if self._outcome is not None:
+                return
+            if self._behavior is None:
+                raise ConversationError("conversation run behavior was not bound")
+            if self._started:
+                raise ConversationError("conversation run already started")
+            self._started = True
         self._worker.start()
+
+    @property
+    def behavior(self) -> TurnBehavior | None:
+        """Return the immutable behavior bound to this run, if prepared."""
+
+        with self._lock:
+            return self._behavior
+
+    def bind_behavior(self, behavior: TurnBehavior) -> None:
+        if type(behavior) is not TurnBehavior:
+            raise TypeError("behavior must be a TurnBehavior")
+        with self._lock:
+            if self._outcome is not None:
+                return
+            if self._started:
+                raise ConversationError("conversation run behavior cannot change after start")
+            if self._behavior is not None:
+                if self._behavior != behavior:
+                    raise ConversationError("conversation run behavior was already bound")
+                return
+            self._behavior = behavior
 
     def events(self) -> Iterator[ConversationEvent]:
         """Yield semantic deltas followed by exactly one terminal event."""
@@ -403,6 +468,7 @@ class ConversationRun:
 
     def request_cancel(self, reason: ConversationCancellationReason) -> bool:
         generation: RuntimeGeneration | None = None
+        settle_before_start = False
         with self._lock:
             if self._outcome is not None:
                 return False
@@ -412,8 +478,12 @@ class ConversationRun:
             if self._runtime_generation is not None and not self._cancel_sent:
                 self._cancel_sent = True
                 generation = self._runtime_generation
+            elif not self._started:
+                settle_before_start = True
         if generation is not None:
             self._send_runtime_cancel(generation)
+        elif settle_before_start:
+            self._settle_cancelled(reason)
         return True
 
     def _send_runtime_cancel(self, generation: RuntimeGeneration) -> None:
@@ -453,7 +523,7 @@ class ConversationRun:
                 return
 
             try:
-                request = self._core.build_model_request()
+                request = self._core.build_model_request(self)
             except Exception:
                 # This includes the existing structured-context validation
                 # boundary.  The accepted user remains canonical.
@@ -465,6 +535,7 @@ class ConversationRun:
                 return
 
             try:
+                self._core.record_response_generation_started(self)
                 generation = self._core.runtime_generate(self, request)
             except Exception:
                 self._settle_failed(reason="runtime")
@@ -638,6 +709,7 @@ class ConversationCore:
         *,
         composer: ConversationContextComposer | None = None,
         trusted_guidance: Sequence[str] | Callable[[], Sequence[str]] = (),
+        turn_guidance: Callable[[TurnBehavior], Sequence[str]] | None = None,
         scope_id: str | None = None,
         store: ConversationStore | None = None,
         runtime_evidence_capacity: int = RUNTIME_EVIDENCE_CAPACITY,
@@ -647,14 +719,17 @@ class ConversationCore:
         self._trusted_guidance = (
             trusted_guidance if callable(trusted_guidance) else tuple(trusted_guidance)
         )
+        self._turn_guidance = turn_guidance
         self._lock = RLock()
         self._runtime_evidence = _RuntimeEvidenceTrace(runtime_evidence_capacity)
+        self._d1_evidence = _RuntimeEvidenceTrace(runtime_evidence_capacity)
         self._store = store or SQLiteConversationStore(":memory:")
         self._scope_id = validate_scope_id(scope_id if scope_id is not None else str(uuid4()))
         self._canonical_messages: list[CanonicalMessage] = list(
             self._store.load_canonical_messages(self._scope_id)
         )
         self._active: ConversationRun | None = None
+        self._generation_started_ns: dict[str, int] = {}
 
     @property
     def scope_id(self) -> str:
@@ -695,6 +770,12 @@ class ConversationCore:
         with self._lock:
             return self._runtime_evidence.snapshot()
 
+    def d1_evidence(self) -> tuple[RuntimeEvidenceRecord, ...]:
+        """Return bounded run-bound disposition/generation evidence."""
+
+        with self._lock:
+            return self._d1_evidence.snapshot()
+
     @property
     def active_run(self) -> ConversationRun | None:
         with self._lock:
@@ -703,13 +784,19 @@ class ConversationCore:
             return self._active
 
     def start_turn(self, text: str, *, supersede: bool = True) -> ConversationRun:
-        """Accept one user message and start its assistant run.
+        """Accept one user message and start its default-behavior run.
 
-        The user message is appended before any model call.  If another run is
-        active, the new run becomes the logical active run immediately and the
-        previous physical generation is cancelled before the new run asks the
-        single-generation runtime to start work.
+        This compatibility entry point is the production DEFAULT_ONLY path.
+        Planner-enabled callers use ``prepare_turn`` followed by
+        ``start_prepared_run`` so the behavior is resolved after acceptance and
+        before response generation.
         """
+
+        run = self.prepare_turn(text, supersede=supersede)
+        return self.start_prepared_run(run, default_turn_behavior())
+
+    def prepare_turn(self, text: str, *, supersede: bool = True) -> ConversationRun:
+        """Accept and persist a user turn without starting response generation."""
 
         user_message = ContextMessage("user", text)
         user_message_id = str(uuid4())
@@ -744,10 +831,25 @@ class ConversationCore:
 
         if previous is not None:
             previous.request_cancel("superseded")
+        return run
+
+    def start_prepared_run(self, run: ConversationRun, behavior: TurnBehavior) -> ConversationRun:
+        """Bind immutable behavior to one accepted run, then start generation."""
+
+        if type(run) is not ConversationRun:
+            raise TypeError("run must be a ConversationRun")
+        if type(behavior) is not TurnBehavior:
+            raise TypeError("behavior must be a TurnBehavior")
+        with self._lock:
+            if self._active is not run:
+                if run.settled:
+                    return run
+                raise ConversationError("prepared run is no longer the active run")
+            run.bind_behavior(behavior)
         run.start()
         return run
 
-    def build_model_request(self) -> ModelRequest:
+    def build_model_request(self, run: ConversationRun | None = None) -> ModelRequest:
         with self._lock:
             history = tuple(
                 ContextMessage(message.role, message.text) for message in self._canonical_messages
@@ -755,7 +857,58 @@ class ConversationCore:
         composed = tuple(self._composer.compose(history))
         guidance = self._trusted_guidance
         blocks = tuple(guidance()) if callable(guidance) else guidance
+        if run is not None and self._turn_guidance is not None:
+            behavior = run.behavior
+            if behavior is None:
+                raise ConversationError("conversation run behavior was not bound")
+            blocks = (*blocks, *tuple(self._turn_guidance(behavior)))
         return ModelRequest(messages=composed, system_prompt=blocks)
+
+    def record_turn_behavior_resolution(
+        self, run: ConversationRun, resolution: TurnBehaviorResolution
+    ) -> None:
+        """Record bounded behavior-resolution evidence without semantic content."""
+
+        if type(run) is not ConversationRun:
+            raise TypeError("run must be a ConversationRun")
+        if type(resolution) is not TurnBehaviorResolution:
+            raise TypeError("resolution must be a TurnBehaviorResolution")
+        with self._lock:
+            self._d1_evidence.append(
+                kind="disposition_resolved",
+                scope_id=self._scope_id,
+                run_id=run.run_id,
+                user_message_id=run.user_message_id,
+                result=(
+                    "accepted"
+                    if resolution.outcome is TurnBehaviorResolutionOutcome.ACCEPTED
+                    else "rejected"
+                    if resolution.outcome is TurnBehaviorResolutionOutcome.REJECTED
+                    else "fallback"
+                    if resolution.outcome is TurnBehaviorResolutionOutcome.FALLBACK
+                    else None
+                ),
+                disposition_source=resolution.behavior.source.value,
+                planner_invoked=resolution.planner_invoked,
+                planner_outcome=resolution.outcome.value,
+                planner_fallback_reason=resolution.fallback_reason,
+                planner_duration_ms=resolution.planner_duration_ms,
+                disposition_changed_default=resolution.materially_differs_from_default,
+            )
+
+    def record_response_generation_started(self, run: ConversationRun) -> None:
+        """Record the response-generation boundary for one accepted run."""
+
+        with self._lock:
+            if self._d1_evidence.contains(kind="response_generation_started", run_id=run.run_id):
+                return
+            self._generation_started_ns[run.run_id] = monotonic_ns()
+            self._d1_evidence.append(
+                kind="response_generation_started",
+                scope_id=self._scope_id,
+                run_id=run.run_id,
+                user_message_id=run.user_message_id,
+            )
 
     def publish_delta(
         self,
@@ -787,6 +940,20 @@ class ConversationCore:
                     epoch=epoch,
                     reason=result,
                     delta_bytes=len(delta.encode("utf-8")),
+                )
+            elif not self._d1_evidence.contains(kind="response_first_delta", run_id=run.run_id):
+                started_ns = self._generation_started_ns.get(run.run_id)
+                duration_ms = (
+                    max(0, (monotonic_ns() - started_ns) // 1_000_000)
+                    if started_ns is not None
+                    else None
+                )
+                self._d1_evidence.append(
+                    kind="response_first_delta",
+                    scope_id=self._scope_id,
+                    run_id=run.run_id,
+                    user_message_id=run.user_message_id,
+                    duration_ms=duration_ms,
                 )
 
     def record_generation_bound(self, run: ConversationRun, generation: RuntimeGeneration) -> None:
@@ -882,6 +1049,7 @@ class ConversationCore:
 
     def run_settled(self, run: ConversationRun) -> None:
         with self._lock:
+            self._generation_started_ns.pop(run.run_id, None)
             if self._active is run:
                 self._active = None
 

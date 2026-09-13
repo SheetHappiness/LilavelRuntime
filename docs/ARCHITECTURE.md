@@ -150,10 +150,12 @@ introduced. `NOTE` is transient awareness, not memory or deferred work.
 
 ## COG-V1-C model-backed disposition planning
 
-The standalone `DispositionPlanner` is an opt-in model-backed evaluation seam,
-not a production USER-route integration. It answers only how an already direct
-user turn should be approached. The direct-user invariants remain runtime
-owned and fixed: `attention=THINK` and `intervention=RESPOND`.
+The standalone `DispositionPlanner` is a bounded model-backed evaluation seam.
+COG-V1-D1 adds an explicit, opt-in integration seam for the production USER
+route, while the production default remains `DEFAULT_ONLY`. The planner answers
+only how an already direct user turn should be approached. The direct-user
+invariants remain runtime-owned and fixed: `attention=THINK` and
+`intervention=RESPOND`.
 
 ```text
 bounded recent canonical context
@@ -180,8 +182,46 @@ fixed mappings compile it from the validated aim and reason codes before any
 trusted guidance projection. The planner receives at most the last four
 canonical role/text messages, and its character projection is mechanically
 derived from `IdentityCanon` while excluding voice and representative dialogue
-examples. The existing `ConversationCore`, CLI, Discord, and SemanticActor
-production USER paths do not call this planner in COG-V1-C.
+examples. COG-V1-C itself does not call this planner from Core, CLI, Discord,
+or `SemanticActor` production paths; D1 supplies the caller-owned integration
+described below.
+
+## COG-V1-D1 run-bound USER disposition integration
+
+Each accepted USER turn has one immutable `TurnBehavior` owned by its logical
+`ConversationRun`. The behavior contains only validated `WorkingState`,
+`ResponseDisposition`, bounded reason codes, and `DEFAULT` or `PLANNER` source;
+it contains no raw planner text, provider handle, memory, tool, or action
+authority. Shared mutable `current_disposition`-style state is forbidden: a
+superseded planner result must never be observable by a successor run.
+
+The lifecycle is:
+
+```text
+USER SemanticEpisode
+  → ConversationCore.prepare_turn()       # persist user, create run, supersede predecessor
+  → UserDispositionResolver                 # DEFAULT_ONLY or explicit ALWAYS_PLAN
+  → validated immutable TurnBehavior bound to that run
+  → ConversationCore.start_prepared_run()
+  → response generation, streaming, and normal commit semantics
+```
+
+Planner resolution occurs after canonical user acceptance and before response
+generation. Invalid output, provider failure, timeout, or contained planner
+cancellation records bounded fallback evidence and uses the deterministic
+default behavior. If cancellation containment is uncertain, the existing
+fail-closed actor/Core semantics apply and no successor response is started.
+The actor's USER cancellation token settles planner work before the USER
+episode returns; no USER-to-USER preemption policy is added here.
+
+Both CLI and Discord use this prepared-run seam through their existing
+`ConversationExecutionAdapter`/`CoreConversationRouter` USER spine. Production
+composition uses `DEFAULT_ONLY`; `ALWAYS_PLAN` is an explicit injected seam for
+D1 validation and later D2 routing work. D1 does not claim a selective policy.
+`ConversationCore.d1_evidence()` exposes bounded source, invocation, accepted /
+rejected / fallback reason, monotonic planner duration, structural difference
+from default, response-generation start, and first-delta timing evidence. It
+stores no user content or raw planner output.
 
 ## MIND-1F-B semantic admission actor
 
@@ -293,7 +333,9 @@ Discord DM
   → SemanticActor (USER)
   → ConversationExecutionAdapter
   → CoreConversationRouter
-  → ConversationCore.start_turn()
+  → ConversationCore.prepare_turn()
+  → run-bound disposition resolution
+  → ConversationCore.start_prepared_run()
   → ModelRuntime
   → typed presentation actions
   → Discord adapter

@@ -20,10 +20,13 @@ from lilavel_core import (
     ConversationRuntime,
     ConversationTextDelta,
     ModelRuntime,
+    RunAwareConversationRuntime,
 )
 from lilavel_core.production_cognition import create_conversation
 
+from .cognition_model import DispositionPlanner
 from .contracts import ActionExecutor, Observation, ToolCall, ToolResult
+from .user_disposition import DeliberationMode, UserDispositionResolver
 
 PRESENTATION_OPEN = "conversation.presentation.open"
 PRESENTATION_BIND = "conversation.presentation.bind"
@@ -39,12 +42,20 @@ RuntimeFactory = Callable[[], ConversationRuntime]
 RouteRuntimeFactory = Callable[[tuple[str, str]], ConversationRuntime]
 CoreFactory = Callable[[ConversationRuntime], ConversationCore]
 SessionConfigurator = Callable[[ConversationRuntime, ConversationCore, tuple[str, str]], None]
+PlannerFactory = Callable[[ConversationRuntime], DispositionPlanner]
+
+
+def _default_planner_factory(runtime: ConversationRuntime) -> DispositionPlanner:
+    if not isinstance(runtime, RunAwareConversationRuntime):
+        raise TypeError("ALWAYS_PLAN requires a run-aware ConversationRuntime")
+    return DispositionPlanner(runtime)
 
 
 @dataclass(slots=True)
 class _ConversationSession:
     runtime: ConversationRuntime
     core: ConversationCore
+    disposition_resolver: UserDispositionResolver
     startup_task: asyncio.Task[None] | None = None
 
 
@@ -127,6 +138,8 @@ class CoreConversationRouter:
         route_runtime_factory: RouteRuntimeFactory | None = None,
         core_factory: CoreFactory = create_conversation,
         session_configurator: SessionConfigurator | None = None,
+        deliberation_mode: DeliberationMode = DeliberationMode.DEFAULT_ONLY,
+        planner_factory: PlannerFactory | None = None,
         close_timeout_s: float = 15.0,
     ) -> None:
         if close_timeout_s <= 0:
@@ -135,6 +148,10 @@ class CoreConversationRouter:
         self._route_runtime_factory = route_runtime_factory
         self._core_factory = core_factory
         self._session_configurator = session_configurator
+        if type(deliberation_mode) is not DeliberationMode:
+            raise TypeError("deliberation_mode must be a DeliberationMode")
+        self._deliberation_mode = deliberation_mode
+        self._planner_factory = planner_factory or _default_planner_factory
         self._close_timeout_s = close_timeout_s
         self._sessions: dict[tuple[str, str], _ConversationSession] = {}
         self._session_lock = asyncio.Lock()
@@ -177,7 +194,8 @@ class CoreConversationRouter:
                 await self._execute(execute, PRESENTATION_OPEN, event.event_id)
                 presentation_open = True
                 session = await self._session_for(route_key)
-                run = session.core.start_turn(text, supersede=True)
+                run = session.core.prepare_turn(text, supersede=True)
+                resolution = await session.disposition_resolver.resolve(session.core, run)
                 self._active_runs.add(run)
                 await self._execute(
                     execute,
@@ -186,6 +204,7 @@ class CoreConversationRouter:
                     run_id=run.run_id,
                 )
                 presentation_bound = True
+                session.core.start_prepared_run(run, resolution.behavior)
 
             bridge = _ConversationEventBridge(run, asyncio.get_running_loop())
             bridge.start()
@@ -338,7 +357,19 @@ class CoreConversationRouter:
             core = self._core_factory(runtime)
             if self._session_configurator is not None:
                 self._session_configurator(runtime, core, key)
-            session = _ConversationSession(runtime=runtime, core=core)
+            planner = (
+                self._planner_factory(runtime)
+                if self._deliberation_mode is DeliberationMode.ALWAYS_PLAN
+                else None
+            )
+            session = _ConversationSession(
+                runtime=runtime,
+                core=core,
+                disposition_resolver=UserDispositionResolver(
+                    mode=self._deliberation_mode,
+                    planner=planner,
+                ),
+            )
             self._sessions[key] = session
             start = getattr(runtime, "start", None)
             if callable(start):

@@ -187,6 +187,20 @@ direct-user subset of the COG-V1-A policy corpus. It uses a deterministic fake
 generation and does not establish live provider behavior or production
 USER-route integration.
 
+The focused COG-V1-D1 run-bound USER proofs can be rerun from `apps/runtime`
+with:
+
+```powershell
+uv run --locked pytest tests/test_cog_v1_d1.py
+```
+
+This suite proves post-acceptance planner ordering, immutable per-run behavior
+binding, sequential-run isolation, supersession containment, default-only and
+explicit planner modes, strict fallback/no-retry behavior, actor-token planner
+cancellation containment, raw-output exclusion from trusted guidance, and
+bounded D1 evidence. It does not establish the final D2 selective routing
+policy or live-provider behavior.
+
 ### Core
 
 ```powershell

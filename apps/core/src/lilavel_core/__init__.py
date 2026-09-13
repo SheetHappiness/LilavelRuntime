@@ -14,9 +14,14 @@ from .cognition import (
     ResponseDisposition,
     SelfConcept,
     TemperamentTrait,
+    TurnBehavior,
+    TurnBehaviorResolution,
+    TurnBehaviorResolutionOutcome,
+    TurnBehaviorSource,
     WorkingState,
     compile_guidance,
     compile_planner_guidance,
+    default_turn_behavior,
 )
 from .conversation import (
     RUNTIME_EVIDENCE_CAPACITY,
@@ -204,7 +209,12 @@ __all__ = [
     "DialogueExample",
     "WorkingState",
     "ResponseDisposition",
+    "TurnBehavior",
+    "TurnBehaviorResolution",
+    "TurnBehaviorResolutionOutcome",
+    "TurnBehaviorSource",
     "compile_guidance",
     "compile_planner_guidance",
+    "default_turn_behavior",
     "LILAVEL_CHARACTER_V0",
 ]

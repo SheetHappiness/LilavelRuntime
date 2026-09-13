@@ -5,10 +5,10 @@ from collections.abc import Sequence
 from .character import LILAVEL_CHARACTER_V0
 from .cognition import (
     IdentityCanon,
-    ResponseDisposition,
-    WorkingState,
+    TurnBehavior,
     compile_guidance,
     compile_planner_guidance,
+    default_turn_behavior,
 )
 from .conversation import ConversationCore, ConversationRuntime
 
@@ -40,18 +40,47 @@ def build_disposition_planner_guidance() -> tuple[str, ...]:
     return compile_planner_guidance(LILAVEL_CHARACTER_V0)
 
 
-def build_turn_guidance(mind_guidance: Sequence[str] = ()) -> tuple[str, ...]:
+def build_turn_guidance(
+    mind_guidance: Sequence[str] = (),
+    *,
+    behavior: TurnBehavior | None = None,
+) -> tuple[str, ...]:
     """Build fresh normal-turn behavior over immutable Character v0 guidance.
 
     ``mind_guidance`` is an optional application-composed, read-only projection.
     It is kept outside the character canon and outside Core canonical history.
     """
-    state = WorkingState("respond to the current user turn")
-    disposition = ResponseDisposition()
-    behavior = compile_guidance(LILAVEL_CHARACTER_V0, state=state, disposition=disposition)[-1]
-    return (*build_character_guidance(), behavior, *tuple(mind_guidance))
+    selected = behavior or default_turn_behavior()
+    behavior_block = compile_guidance(
+        LILAVEL_CHARACTER_V0,
+        state=selected.working_state,
+        disposition=selected.response_disposition,
+    )[-1]
+    return (*build_character_guidance(), behavior_block, *tuple(mind_guidance))
+
+
+def build_turn_behavior_guidance(
+    behavior: TurnBehavior,
+    mind_guidance: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Build only the run-local guidance appended after Character v0."""
+
+    if type(behavior) is not TurnBehavior:
+        raise TypeError("behavior must be a TurnBehavior")
+    return (
+        compile_guidance(
+            LILAVEL_CHARACTER_V0,
+            state=behavior.working_state,
+            disposition=behavior.response_disposition,
+        )[-1],
+        *tuple(mind_guidance),
+    )
 
 
 def create_conversation(runtime: ConversationRuntime) -> ConversationCore:
     """Compose the production Core without accepting transport metadata."""
-    return ConversationCore(runtime, trusted_guidance=build_turn_guidance)
+    return ConversationCore(
+        runtime,
+        trusted_guidance=build_character_guidance(),
+        turn_guidance=build_turn_behavior_guidance,
+    )

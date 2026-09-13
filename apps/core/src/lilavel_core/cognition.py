@@ -156,6 +156,124 @@ class ResponseDisposition:
     initiative: Level = "normal"
 
 
+class TurnBehaviorSource(StrEnum):
+    """The bounded authority that produced one run's behavior."""
+
+    DEFAULT = "default"
+    PLANNER = "planner"
+
+
+class TurnBehaviorResolutionOutcome(StrEnum):
+    """The safe, bounded result of resolving one run's behavior."""
+
+    NOT_INVOKED = "not_invoked"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    FALLBACK = "fallback"
+
+
+@dataclass(frozen=True, slots=True)
+class TurnBehavior:
+    """Immutable behavior attached to exactly one prepared conversation run.
+
+    This contract contains only validated response behavior. It has no model
+    text, provider handle, memory authority, tool authority, or action data.
+    """
+
+    working_state: WorkingState
+    response_disposition: ResponseDisposition
+    reason_codes: tuple[CognitionReasonCode, ...] = ()
+    source: TurnBehaviorSource = TurnBehaviorSource.DEFAULT
+
+    def __post_init__(self) -> None:
+        if type(self.working_state) is not WorkingState:
+            raise TypeError("working_state must be a WorkingState")
+        if type(self.response_disposition) is not ResponseDisposition:
+            raise TypeError("response_disposition must be a ResponseDisposition")
+        if type(self.reason_codes) is not tuple:
+            raise TypeError("reason_codes must be a tuple")
+        if len(self.reason_codes) > MAX_COGNITION_REASON_CODES:
+            raise ValueError("turn behavior reason-code bound exceeded")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("turn behavior reason codes must be unique")
+        if not all(type(code) is CognitionReasonCode for code in self.reason_codes):
+            raise TypeError("turn behavior reason_codes must contain CognitionReasonCode")
+        if type(self.source) is not TurnBehaviorSource:
+            raise TypeError("source must be a TurnBehaviorSource")
+
+    def materially_differs_from(self, other: "TurnBehavior") -> bool:
+        """Compare only behavior fields that can change response guidance."""
+
+        if type(other) is not TurnBehavior:
+            raise TypeError("other must be a TurnBehavior")
+        return (
+            self.working_state != other.working_state
+            or self.response_disposition != other.response_disposition
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnBehaviorResolution:
+    """Bounded resolution evidence produced before a run starts generation."""
+
+    behavior: TurnBehavior
+    planner_invoked: bool
+    outcome: TurnBehaviorResolutionOutcome
+    fallback_reason: str | None = None
+    planner_duration_ms: int | None = None
+    materially_differs_from_default: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.behavior) is not TurnBehavior:
+            raise TypeError("behavior must be a TurnBehavior")
+        if type(self.planner_invoked) is not bool:
+            raise TypeError("planner_invoked must be a bool")
+        if type(self.outcome) is not TurnBehaviorResolutionOutcome:
+            raise TypeError("outcome must be a TurnBehaviorResolutionOutcome")
+        if self.fallback_reason is not None:
+            if type(self.fallback_reason) is not str or not self.fallback_reason.strip():
+                raise ValueError("fallback_reason must be non-empty when supplied")
+            if len(self.fallback_reason.encode("utf-8")) > 128:
+                raise ValueError("fallback_reason is too long")
+        if self.planner_duration_ms is not None and (
+            isinstance(self.planner_duration_ms, bool) or self.planner_duration_ms < 0
+        ):
+            raise ValueError("planner_duration_ms must be non-negative")
+        if type(self.materially_differs_from_default) is not bool:
+            raise TypeError("materially_differs_from_default must be a bool")
+        if (
+            not self.planner_invoked
+            and self.outcome is not TurnBehaviorResolutionOutcome.NOT_INVOKED
+        ):
+            raise ValueError("a non-invoked planner must use NOT_INVOKED outcome")
+        if self.outcome is TurnBehaviorResolutionOutcome.ACCEPTED:
+            if self.behavior.source is not TurnBehaviorSource.PLANNER:
+                raise ValueError("accepted planner behavior must be planner-sourced")
+            if self.fallback_reason is not None:
+                raise ValueError("accepted planner behavior cannot have fallback reason")
+        elif self.outcome in {
+            TurnBehaviorResolutionOutcome.NOT_INVOKED,
+            TurnBehaviorResolutionOutcome.REJECTED,
+            TurnBehaviorResolutionOutcome.FALLBACK,
+        }:
+            if self.behavior.source is not TurnBehaviorSource.DEFAULT:
+                raise ValueError("non-accepted behavior must be default-sourced")
+        if (
+            self.outcome is TurnBehaviorResolutionOutcome.NOT_INVOKED
+            and self.fallback_reason is not None
+        ):
+            raise ValueError("not-invoked resolution cannot have fallback reason")
+
+
+def default_turn_behavior() -> TurnBehavior:
+    """Return the deterministic behavior used by the existing USER path."""
+
+    return TurnBehavior(
+        working_state=WorkingState("respond to the current user turn"),
+        response_disposition=ResponseDisposition(),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DispositionCandidate:
     """A bounded model result containing only response-behavior selections.
@@ -282,10 +400,15 @@ __all__ = [
     "ResponseDisposition",
     "SelfConcept",
     "Stance",
+    "TurnBehavior",
+    "TurnBehaviorResolution",
+    "TurnBehaviorResolutionOutcome",
+    "TurnBehaviorSource",
     "TemperamentTrait",
     "WorkingState",
     "compile_guidance",
     "compile_planner_guidance",
+    "default_turn_behavior",
 ]
 
 

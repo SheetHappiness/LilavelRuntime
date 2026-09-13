@@ -8,7 +8,10 @@ import sys
 from dataclasses import dataclass, field
 
 from lilavel_core import ConversationCore, ModelRuntimeV3
-from lilavel_core.production_cognition import build_turn_guidance
+from lilavel_core.production_cognition import (
+    build_character_guidance,
+    build_turn_behavior_guidance,
+)
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
 
@@ -96,7 +99,11 @@ async def run_cli(
     mind_state = MindState()
     core = ConversationCore(
         model,
-        trusted_guidance=lambda: build_turn_guidance(mind_state.projection().guidance_blocks()),
+        trusted_guidance=build_character_guidance(),
+        turn_guidance=lambda behavior: build_turn_behavior_guidance(
+            behavior,
+            mind_state.projection().guidance_blocks(),
+        ),
         scope_id="local-cli",
     )
     wake_policy = (
