@@ -18,7 +18,10 @@ same actor as `INTERNAL` `NON_USER` cognition. COG-V1-E2 completes the
 cognition track by wiring model-backed ambient intervention candidates through
 the existing inert outcome and application boundaries, with current-state
 social revalidation immediately before every external `SPEAK` effect. Broader
-autonomous capabilities are not implied by these slices.
+autonomous capabilities are not implied by these slices. CTX-V1-A adds a
+stable Core-owned `OperatingCanon` and inert, runtime-owned `ContextFrame`
+contracts/projections; it does not inject a context frame into any production
+`ModelRequest`.
 
 ## Top-level product boundary
 
@@ -414,6 +417,61 @@ Direct `USER` work and ambient `NON_USER` work remain distinct paths beneath
 one character-wide `SemanticActor`. Direct USER disposition defaults and D2
 selective behavior are unchanged.
 
+## CTX-V1-A operating canon and context contracts
+
+CTX-V1-A keeps four ownership domains separate:
+
+```text
+CharacterCanon  = who Lilavel is
+OperatingCanon  = how existing inside LilavelRuntime works
+ContextFrame    = what current situation is relevant now
+ConversationCore = canonical conversational evidence and history
+MindState       = runtime-owned working commitments and intentions
+Memory          = future durable learned knowledge
+Attention/COG   = whether and how to think or speak
+```
+
+`OperatingCanon` lives in Core at
+`apps/core/src/lilavel_core/operating.py`, alongside the identity and guidance
+contracts but not inside `CharacterCanon`. Its immutable, bounded laws describe
+one persistent character across interfaces, presented-information limits,
+cognition/expression separation, advisory proposals, valid silence, temporal
+reconsideration, runtime-surfaced capabilities, and purpose-specific views.
+It contains no personality, current time, current surface, current capability,
+intention, memory, relationship, provider, or model facts. Its compiler emits
+stable text only.
+
+`ContextFrame` lives in Runtime at `apps/runtime/src/lilavel_runtime/context.py`.
+It is an immutable, bounded, provider-neutral view for exactly one
+`ContextPurpose`, not a store or transcript. Its typed subcontracts cover
+environment/surface, current interaction and participants, narrow intention
+references, runtime-declared capability availability, advisory social state,
+optional temporal facts, and bounded trusted source references. It does not own
+or copy `ConversationCore` messages, `MindState`, `ObservationWindow`, memory,
+or E1/E2 effect permission.
+
+Context values distinguish `KNOWN`, `KNOWN_EMPTY`, `UNKNOWN`, and
+`UNAVAILABLE`. Collection contracts require `KNOWN_EMPTY` for a known empty
+collection and require a bounded reason for unknown or unavailable data.
+Capability items accept only runtime-declared or validated-adapter provenance;
+external payload provenance cannot enter a frame. Future adapter contributions
+must pass through runtime trust validation and a runtime-owned builder.
+
+The purpose taxonomy is deliberately small: `USER_RESPONSE`,
+`AMBIENT_COGNITION`, `INTERNAL_APPRAISAL`, and `TEMPORAL_WAKE`. Deterministic
+projections omit irrelevant domains by purpose. In particular, user-response
+views omit ambient-only other-surface and social state, internal appraisal does
+not imply expression, and temporal wake may include current time only when its
+purpose requires it. Social context is advisory and cannot authorize an
+effect; E2 effect-time revalidation remains authoritative.
+
+Frame IDs, scope IDs, capture timestamps, and provenance references are
+volatile/runtime metadata and are excluded from the stable OperatingCanon
+output. ContextFrame has no canonical messages, summaries, or memory records.
+CTX-V1-A leaves production request composition unchanged. CTX-V1-B can add a
+runtime-owned builder and purpose-specific projections from authoritative
+state; CTX-V1-C can make any deliberate production request integration.
+
 ## MIND-1F-B semantic admission actor
 
 Each `LilavelRuntime` instance composes exactly one provider-neutral
@@ -682,8 +740,8 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
-| `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity and disposition value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, inert bounded `ContextFrame` contracts and deterministic purpose projections, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
+| `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity, disposition, and stable `OperatingCanon` value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
 | `apps/discord-adapter` | Discord observations/actions, DM admission, edge-local mapping, typing, sends, edits, continuations, and presentation diagnostics | Lilavel identity, canonical history, memory, provider state, scheduling, or agent lifecycle |

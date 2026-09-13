@@ -48,6 +48,16 @@ from .deliberation import (
     DeliberationDecision,
     DeliberationPolicy,
 )
+from .operating import (
+    LILAVEL_OPERATING_CANON_V1,
+    MAX_OPERATING_CANON_BYTES,
+    MAX_OPERATING_CANON_LAWS,
+    MAX_OPERATING_LAW_BYTES,
+    OperatingCanon,
+    OperatingLaw,
+    OperatingPrinciple,
+    compile_operating_canon,
+)
 from .persistence import (
     SCHEMA_VERSION,
     CanonicalMessage,
@@ -227,4 +237,12 @@ __all__ = [
     "compile_planner_guidance",
     "default_turn_behavior",
     "LILAVEL_CHARACTER_V0",
+    "LILAVEL_OPERATING_CANON_V1",
+    "MAX_OPERATING_CANON_BYTES",
+    "MAX_OPERATING_CANON_LAWS",
+    "MAX_OPERATING_LAW_BYTES",
+    "OperatingCanon",
+    "OperatingLaw",
+    "OperatingPrinciple",
+    "compile_operating_canon",
 ]
