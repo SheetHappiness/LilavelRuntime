@@ -120,12 +120,17 @@ serialization, isolated `local-cli` Core history, runtime-owned submission
 replay fencing, cancellation/settlement, legacy Presence exclusion, and clean
 CLI composition shutdown.
 
-On the current Linux host, the complete runtime pytest command has a known
-pre-existing timing-sensitive failure in
-`test_temporal_non_user_work_waits_behind_active_user_conversation`. If that
-test does not settle, report the full runtime check as `FAIL`; the remaining
-runtime tests may be run with that exact test deselected and reported
-separately.
+On the current Linux/Python 3.14 host, the complete runtime pytest command has
+pre-existing timing-sensitive async-teardown failures. The current recheck
+first stalls after
+`test_superseded_prepared_run_cannot_start_stale_generation`; after that test
+is deselected, the same teardown behavior is observed after
+`test_actor_cancellation_contains_planner_and_starts_no_response`; after both
+are deselected, the known
+`test_temporal_non_user_work_waits_behind_active_user_conversation` also does
+not settle. Report the full runtime check as `FAIL`; a residual run with those
+three exact tests deselected may be run and reported separately. This is host
+behavior, not evidence that the focused E1 policy fails.
 
 The focused D2 proofs can be rerun from `apps/runtime` with:
 
