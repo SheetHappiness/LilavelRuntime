@@ -155,6 +155,43 @@ messages retain the existing USER/Core route. Ambient `THINK` uses the
 existing NON_USER/MIND route, and no new semantic/model or effect lane is
 introduced. `NOTE` is transient awareness, not memory or deferred work.
 
+## AWARE-V1-A peripheral awareness
+
+`PeripheralAwarenessBuffer` in `apps/runtime/src/lilavel_runtime/awareness.py`
+is the runtime-owned, process-local owner for trusted `NOTE` outcomes. The
+deterministic attention policy remains pure; the deterministic attention gate
+admission seam synchronously passes each `NOTE` verdict to the buffer. `DROP`
+does not retain anything. `THINK` remains on the existing cognition path and
+does not dual-write awareness. A NOTE admission creates no cognition trigger,
+model call, action proposal, tool call, response disposition, or temporal wake.
+
+Each immutable `AwarenessNote` contains a runtime-local note ID, exact
+`(semantic scope, environment, source subject)` key, bounded observation/event
+references, admitted/observed timestamps, a five-minute expiry, and the exact
+bounded deterministic attention reason codes. It deliberately contains no raw
+WorldEvent payload, message text, transcript, model confidence, or mutable
+status. The source path is therefore `WorldEvent → admitted Observation →
+AttentionVerdict(NOTE) → PeripheralAwarenessBuffer`; arbitrary external text
+cannot call the typed admission seam.
+
+The buffer retains at most 16 notes per exact scope and 64 notes across the
+runtime owner, evicting oldest-first FIFO notes deterministically at either
+bound. Source references and reason codes are capped at two and eight items,
+respectively, with 128 UTF-8 bytes per reference. Snapshots are immutable
+oldest-to-newest tuples and expire notes deterministically using an injected
+timezone-aware clock. No timer is scheduled per note; expiry is enforced on
+admission and read. The owner is intentionally non-durable and has no restart
+recovery, ConversationStore/evidence persistence, memory consolidation, or
+retrieval semantics.
+
+`PeripheralAwarenessBuffer` is distinct from `ObservationWindow`, which is the
+transient perception window used to assemble cognition episodes. AWARE-V1-A
+also does not mutate MindState, social permission, effect authority, or
+ContextFrame and does not project awareness into production model requests.
+Deterministic deduplication, supersession, handled state, and retention quality
+belong to AWARE-V1-B; model-facing `WHILE YOU WERE BUSY` projection belongs to
+AWARE-V1-C.
+
 ## COG-V1-C model-backed disposition planning
 
 The standalone `DispositionPlanner` is a bounded model-backed evaluation seam.
@@ -866,7 +903,7 @@ store.
 
 | Boundary | Owns | Does not own |
 | --- | --- | --- |
-| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, inert bounded `ContextFrame` contracts, the deterministic runtime-owned `ContextFrameBuilder` and purpose projections, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, or arbitrary model-selected tools |
+| `LilavelRuntime` in `apps/runtime` | Persistent process lifecycle, one character-wide `SemanticActor`, optional `MindExecutionAdapter`, runtime-owned conversation execution adapter, deadline-driven `TemporalHost`, bounded `WorldEvent` admission, recent in-memory `ObservationWindow`, deterministic cognition gate, bounded process-local `PeripheralAwarenessBuffer` for NOTE outcomes, runtime-owned ambient intervention/social-permission contracts and E1 evaluation, inert bounded `ContextFrame` contracts, the deterministic runtime-owned `ContextFrameBuilder` and purpose projections, environment task ownership, actor-owned CLI and reactive response admission, optional local presence lifecycle, local-CLI-only bounded MIND-0 intentions/self-actions, Core session lifecycle, action destination selection, the explicit application-owned tool registration/exposure/authorization/executor seam, MIND-1D proposal application, the bounded MIND-1E temporal coordinator, and the opt-in COG-V1-C disposition-planner/evaluation seam | Canonical history semantics, Discord transport identity, model-based attention, recurring/general scheduling, durable memory or wake records, provider sessions, autonomous ambient speech, arbitrary model-selected tools, or durable memory semantics for peripheral awareness |
 | `ConversationCore` | Canonical conversation history, context composition, turn admission, conversation runs, assistant commit semantics, and conversation-level cancellation/supersession; the immutable identity, disposition, and stable `OperatingCanon` value contracts remain Core-owned | Whole-agent scheduling, world state, provider continuation, Discord identity, or tools |
 | `ModelRuntime` in Core | Local physical generation admission, generation IDs/epochs, event delivery, cancellation, shutdown, fail-closed runtime state, and the explicit opt-in V3 tool-wait/continuation lifecycle | Canonical agent memory, application tool authorization/execution, provider authentication, or Discord behavior |
 | `apps/model-sidecar` | Provider/process transport, supported auth discovery, provider mapping, streaming, cleanup, default version-two JSONL behavior, and bounded active-generation V3 replay/correlation state | Semantic conversation history, agent identity, application tool execution/policy, MCP, or the top-level runtime |
