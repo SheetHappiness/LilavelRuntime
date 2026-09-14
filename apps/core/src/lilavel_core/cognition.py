@@ -61,6 +61,11 @@ class CognitionReasonCode(StrEnum):
     AMBIENT_CONTEXT = "ambient_context"
     NOT_ADDRESSED = "not_addressed"
     LOW_RELEVANCE = "low_relevance"
+    SIMPLE_REQUEST = "simple_request"
+    HIGH_SOCIAL_STAKES = "high_social_stakes"
+    MULTIPLE_PLAUSIBLE_MOVES = "multiple_plausible_moves"
+    INTERVENTION_UNCERTAIN = "intervention_uncertain"
+    REVERSIBLE_ASSUMPTION = "reversible_assumption"
 
 
 MAX_COGNITION_REASON_CODES = 8
