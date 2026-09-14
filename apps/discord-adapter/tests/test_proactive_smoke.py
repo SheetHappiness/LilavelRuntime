@@ -369,6 +369,8 @@ def test_smoke_off_preserves_reactive_behavior_and_creates_no_idle_timer(
             FakeInboundMessage("off-message", channel, FakeUser("human"), "hi")
         )
         await _wait_until(lambda: len(user.generations) == 1)
+        user_context = "\n".join(user.requests[0].system_prompt).casefold()
+        assert "one-shot idle reconsideration is available" not in user_context
         _finish(user.generations[0], "reactive")
         await edge.wait_idle()
         await asyncio.sleep(0.02)
@@ -393,8 +395,19 @@ def test_successful_turn_reuses_appraisal_idle_actor_and_trusted_dm(
             FakeInboundMessage("inbound-1", channel, FakeUser("human"), "unfinished matter")
         )
         await _wait_until(lambda: len(user.generations) == 1)
+        user_context = "\n".join(user.requests[0].system_prompt).casefold()
+        assert "one-shot idle reconsideration is available" in user_context
+        assert "1 seconds" in user_context
+        assert "discord" not in user_context.casefold()
+        assert "channel" not in user_context.casefold()
+        assert "guarantee" not in user_context.casefold()
         _finish(user.generations[0], "acknowledged")
         await _wait_until(lambda: len(cognition.generations) == 1)
+        appraisal_context = "\n".join(cognition.requests[0].system_prompt).casefold()
+        assert "one-shot idle reconsideration is available" in appraisal_context
+        assert appraisal_context.count("one-shot idle reconsideration is available") == 1
+        assert "discord" not in appraisal_context.casefold()
+        assert "channel" not in appraisal_context.casefold()
         _finish(cognition.generations[0], '{"action":"create_intention","text":"check later"}')
         await _wait_until(
             lambda: any(item.kind == "idle_armed" for item in edge.proactive_evidence())
@@ -418,6 +431,53 @@ def test_successful_turn_reuses_appraisal_idle_actor_and_trusted_dm(
         assert not edge.proactive_target_disabled
         assert [item.kind for item in edge.proactive_evidence()].count("idle_armed") == 1
         assert len(cognition.generations) == 2
+        await edge.close()
+
+    asyncio.run(scenario())
+
+
+def test_same_subject_rebinding_refreshes_channel_without_disabling_proactive_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_enabled(monkeypatch)
+    cognition = _CognitionRuntime()
+    user = _UserRuntime()
+    edge = _edge(cognition, user)
+
+    async def scenario() -> None:
+        first = FakeChannel("stable-target")
+        replacement = FakeChannel("stable-target")
+        await edge.handle_message(FakeInboundMessage("first", first, FakeUser("human"), "one"))
+        await _wait_until(lambda: len(user.generations) == 1)
+        _finish(user.generations[0], "reply-one")
+        await _wait_until(lambda: len(cognition.generations) == 1)
+        _finish(cognition.generations[0], '{"action":"create_intention","text":"later"}')
+        await _wait_until(lambda: edge.proactive_timer_active)
+
+        await edge.handle_message(
+            FakeInboundMessage("replacement", replacement, FakeUser("human"), "two")
+        )
+        await _wait_until(lambda: len(user.generations) == 2)
+        _finish(user.generations[1], "reply-two")
+        await _wait_until(lambda: len(replacement.sends) == 1)
+        await _wait_until(lambda: len(cognition.generations) == 2)
+        _finish(cognition.generations[1], '{"action":"create_intention","text":"later again"}')
+        await _wait_until(
+            lambda: [item.kind for item in edge.proactive_evidence()].count("idle_armed") == 2
+        )
+        await _wait_until(lambda: len(cognition.generations) == 3, timeout=2.5)
+        _finish(cognition.generations[2], '{"action":"speak","text":"follow-up"}')
+        await _wait_until(
+            lambda: [item.kind for item in edge.proactive_evidence()].count("send_confirmed") == 1
+        )
+
+        assert [item["content"] for item in first.sends] == ["reply-one"]
+        assert [item["content"] for item in replacement.sends] == ["reply-two", "follow-up"]
+        assert edge.proactive_target_bound
+        assert not edge.proactive_target_disabled
+        assert not any(
+            item.kind == "target_disabled_multiple_subjects" for item in edge.proactive_evidence()
+        )
         await edge.close()
 
     asyncio.run(scenario())
@@ -516,6 +576,7 @@ def test_user_message_cancels_one_shot_opportunity(monkeypatch: pytest.MonkeyPat
         )
         assert len(cognition.generations) == 3
         assert [item["content"] for item in channel.sends] == ["reply-one", "reply-two"]
+        assert not edge.proactive_target_disabled
         await edge.close()
 
     asyncio.run(scenario())

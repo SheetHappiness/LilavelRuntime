@@ -9,11 +9,12 @@ conversation history, memory, a scheduler, a model, or an effect.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Protocol
+from typing import Final, Protocol
 
 from .awareness import (
     AwarenessNote,
@@ -28,6 +29,7 @@ from .context import (
     MAX_AWARENESS_SOURCE_TEXT_CHARS,
     MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS,
     MAX_CONTEXT_CAPABILITIES,
+    MAX_CONTEXT_CAPABILITY_DETAIL_BYTES,
     MAX_CONTEXT_INTENTIONS,
     MAX_CONTEXT_LABEL_BYTES,
     MAX_CONTEXT_OPAQUE_REF_BYTES,
@@ -250,6 +252,84 @@ class CapabilityResolver(Protocol):
     def resolve(
         self, purpose: ContextPurpose, request: ContextBuildRequest
     ) -> CapabilityResolution: ...
+
+
+MAX_PROACTIVE_IDLE_INTERVAL_S: Final = 600.0
+
+
+@dataclass(frozen=True, slots=True)
+class ProactiveCapabilityState:
+    """Current bounded state for one runtime-owned proactive opportunity."""
+
+    enabled: bool
+    target_bound: bool
+    idle_interval_s: float
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise TypeError("enabled must be a bool")
+        if type(self.target_bound) is not bool:
+            raise TypeError("target_bound must be a bool")
+        if isinstance(self.idle_interval_s, bool) or not math.isfinite(self.idle_interval_s):
+            raise ValueError("idle_interval_s must be finite")
+        if not 1.0 <= self.idle_interval_s <= MAX_PROACTIVE_IDLE_INTERVAL_S:
+            raise ValueError("idle_interval_s is outside its bound")
+
+
+class ProactiveCapabilityResolver:
+    """Project one trusted, provider-neutral proactive capability when valid.
+
+    The state callback is a runtime composition seam. It returns a snapshot of
+    opt-in state and target validity; it is never populated from event payload,
+    model output, installed tools, or destination metadata.
+    """
+
+    def __init__(self, state: Callable[[], ProactiveCapabilityState]) -> None:
+        if not callable(state):
+            raise TypeError("state must be callable")
+        self._state = state
+
+    def resolve(
+        self, purpose: ContextPurpose, request: ContextBuildRequest
+    ) -> CapabilityResolution:
+        del request
+        if purpose not in {
+            ContextPurpose.USER_RESPONSE,
+            ContextPurpose.INTERNAL_APPRAISAL,
+        }:
+            return CapabilityResolution(ContextAvailability.KNOWN_EMPTY)
+        try:
+            state = self._state()
+        except Exception:
+            return CapabilityResolution(
+                ContextAvailability.UNAVAILABLE,
+                reason="proactive_capability_state_unavailable",
+            )
+        if type(state) is not ProactiveCapabilityState:
+            raise ContextProviderError("proactive capability state is not typed")
+        if not state.enabled or not state.target_bound:
+            return CapabilityResolution(ContextAvailability.KNOWN_EMPTY)
+        interval = _format_idle_interval(state.idle_interval_s)
+        detail = (
+            "One-shot idle reconsideration is available. A successful USER interaction may "
+            "leave one current runtime-owned intention. After the configured idle interval "
+            f"({interval} seconds), the runtime may reconsider it. Silence remains valid. "
+            "Any eventual external speech is subject to runtime validation. The model does "
+            "not control destination or permission."
+        )
+        if len(detail.encode("utf-8")) > MAX_CONTEXT_CAPABILITY_DETAIL_BYTES:
+            raise ContextProviderError("proactive capability detail exceeded its bound")
+        return CapabilityResolution(
+            ContextAvailability.KNOWN,
+            runtime_declared=(
+                CapabilityProjection(
+                    CapabilityId.TEMPORAL_RECONSIDERATION,
+                    ContextAvailability.KNOWN,
+                    ContextProvenance.RUNTIME_DECLARED,
+                    detail=detail,
+                ),
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,7 +666,12 @@ class DeclaredCapabilityResolver:
     def resolve(
         self, purpose: ContextPurpose, request: ContextBuildRequest
     ) -> CapabilityResolution:
-        del purpose, request
+        del request
+        if purpose is ContextPurpose.INTERNAL_APPRAISAL:
+            return CapabilityResolution(
+                ContextAvailability.UNKNOWN,
+                reason="capabilities_not_selected_for_internal_appraisal",
+            )
         return self._resolution
 
 
@@ -695,9 +780,24 @@ class ContextFrameBuilder:
         if purpose in {
             ContextPurpose.USER_RESPONSE,
             ContextPurpose.AMBIENT_COGNITION,
+            ContextPurpose.INTERNAL_APPRAISAL,
             ContextPurpose.TEMPORAL_WAKE,
         }:
             capabilities = self._resolve_capabilities(purpose, request)
+
+        if purpose is ContextPurpose.INTERNAL_APPRAISAL and not any(
+            item.capability is CapabilityId.TEMPORAL_RECONSIDERATION
+            and item.availability is ContextAvailability.KNOWN
+            and item.detail is not None
+            for item in capabilities.capabilities
+        ):
+            # Internal appraisal receives only an explicitly relevant
+            # capability contribution. Generic declarations remain scoped to
+            # their existing USER/ambient/temporal purposes.
+            capabilities = CapabilityContext(
+                ContextAvailability.UNKNOWN,
+                reason="capabilities_not_selected_for_internal_appraisal",
+            )
 
         if purpose is ContextPurpose.AMBIENT_COGNITION:
             social = self._resolve_social(purpose, request)
@@ -742,6 +842,17 @@ class ContextFrameBuilder:
         if self._awareness is not None and self._awareness is not resolver:
             raise ValueError("context builder is already bound to another awareness resolver")
         self._awareness = resolver
+
+    def bind_capability_resolver(self, resolver: CapabilityResolver) -> None:
+        """Bind one runtime-owned capability resolver before request execution."""
+
+        if not callable(getattr(resolver, "resolve", None)):
+            raise TypeError("capability_resolver must provide resolve")
+        if self._capabilities is not resolver and not isinstance(
+            self._capabilities, _UnknownCapabilityResolver
+        ):
+            raise ValueError("context builder is already bound to another capability resolver")
+        self._capabilities = resolver
 
     def bind_awareness_source_resolver(self, resolver: AwarenessSourceResolver) -> None:
         """Attach an explicit-reference source resolver to the bound buffer view."""
@@ -1037,6 +1148,13 @@ def _merge_adapter_capability_group(
     return {key: value.projection for key, value in merged.items()}
 
 
+def _format_idle_interval(value: float) -> str:
+    """Render the configured interval without exposing unrelated runtime data."""
+
+    rendered = f"{value:.3f}".rstrip("0").rstrip(".")
+    return rendered or "0"
+
+
 def _unknown_environment(reason: str) -> EnvironmentContext:
     return EnvironmentContext(ContextAvailability.UNKNOWN, reason=reason)
 
@@ -1149,6 +1267,7 @@ def _validate_resolution_status(
 __all__ = [
     "CapabilityResolution",
     "CapabilityResolver",
+    "MAX_PROACTIVE_IDLE_INTERVAL_S",
     "AwarenessContextResolver",
     "ContextBuildRequest",
     "ContextBuilderError",
@@ -1163,6 +1282,8 @@ __all__ = [
     "InteractionResolver",
     "MindStateIntentionResolver",
     "PeripheralAwarenessContextResolver",
+    "ProactiveCapabilityResolver",
+    "ProactiveCapabilityState",
     "SocialResolution",
     "SocialResolver",
     "SourceRefResolver",

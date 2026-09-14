@@ -40,6 +40,7 @@ from lilavel_runtime import (
     MindExecutionStatus,
     MindIntention,
     MindState,
+    ProactiveCapabilityState,
     SemanticAdmission,
     SemanticPriority,
     SemanticSourceKind,
@@ -295,6 +296,13 @@ class DiscordProactivePresence:
         with self._lock:
             return self._target_disabled
 
+    def proactive_capability_state(self) -> ProactiveCapabilityState:
+        """Return the current trusted state used by context composition."""
+
+        with self._lock:
+            target_bound = self._target_subject is not None and not self._target_disabled
+        return ProactiveCapabilityState(True, target_bound, self._idle_timeout_s)
+
     @property
     def idle_timer_active(self) -> bool:
         task = self._idle_task
@@ -347,7 +355,8 @@ class DiscordProactivePresence:
                 self._target_channel = channel
                 self._record_locked("target_bound")
                 return
-            if self._target_subject == subject and self._target_channel is channel:
+            if self._target_subject == subject:
+                self._target_channel = channel
                 return
             self._target_disabled = True
             self._target_channel = None

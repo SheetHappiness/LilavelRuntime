@@ -34,6 +34,7 @@ from lilavel_runtime import (
     PRESENTATION_INTERRUPTED,
     PRESENTATION_OPEN,
     PRESENTATION_WATCH,
+    ContextFrameBuilder,
     CoreConversationRouter,
     EventSource,
     EventSubmitter,
@@ -41,6 +42,7 @@ from lilavel_runtime import (
     LocalCognitionEngine,
     MindState,
     ObservationReceipt,
+    ProactiveCapabilityResolver,
     RuntimeState,
     ToolCall,
     ToolResult,
@@ -538,6 +540,7 @@ class DiscordTextEdge:
         proactive_application = None
         proactive_factory: DiscordToolSessionFactory | None = None
         proactive_engine = None
+        production_context_composer = context_composer
         if proactive_enabled:
             if proactive_runtime_factory is None:
                 proactive_model = cast(
@@ -559,9 +562,19 @@ class DiscordTextEdge:
                 proactive,
             )
             proactive.bind_application(proactive_application)
+            proactive_capabilities = ProactiveCapabilityResolver(
+                proactive.proactive_capability_state
+            )
+            if production_context_composer is None:
+                production_context_composer = ProductionContextComposer(
+                    ContextFrameBuilder(capability_resolver=proactive_capabilities)
+                )
+            else:
+                production_context_composer.bind_capability_resolver(proactive_capabilities)
             proactive_engine = LocalCognitionEngine(
                 proactive_model,
                 proactive.history_for_trigger,
+                context_composer=production_context_composer,
                 evidence_sink=proactive.record_cognition_evidence,
             )
         self._proactive = proactive
@@ -615,7 +628,7 @@ class DiscordTextEdge:
             route_runtime_factory=route_runtime_factory if tool_enabled else None,
             core_factory=core_factory,
             session_configurator=configure_tool_runtime if tool_enabled else None,
-            context_composer=context_composer,
+            context_composer=production_context_composer,
             close_timeout_s=close_timeout_s,
             user_turn_completion_hook=(
                 None if proactive is None else proactive.on_user_turn_completed
@@ -628,6 +641,7 @@ class DiscordTextEdge:
             )
         else:
             assert proactive_application is not None
+            assert production_context_composer is not None
             self._runtime = LilavelRuntime(
                 event_router=self._router,
                 presence=proactive,
@@ -636,6 +650,10 @@ class DiscordTextEdge:
                 proposal_application_coordinator=proactive_application,
                 ambient_speech_mode=proactive_application.ambient_speech_mode,
                 speech_context_resolver=proactive.resolve_speech_context,
+                # The same builder is retained by LilavelRuntime so the
+                # runtime-owned context view and production request
+                # composition cannot diverge.
+                context_builder=production_context_composer.builder,
                 shutdown_timeout=close_timeout_s,
             )
             proactive.bind_runtime(

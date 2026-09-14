@@ -32,6 +32,7 @@ MAX_CONTEXT_PARTICIPANTS: Final = 8
 MAX_CONTEXT_SOURCE_REFS: Final = 8
 MAX_CONTEXT_OPAQUE_REF_BYTES: Final = 128
 MAX_CONTEXT_LABEL_BYTES: Final = 256
+MAX_CONTEXT_CAPABILITY_DETAIL_BYTES: Final = 512
 MAX_CONTEXT_REASON_BYTES: Final = 128
 MAX_CONTEXT_PROJECTION_BLOCKS: Final = 8
 MAX_CONTEXT_PROJECTION_BYTES: Final = 8 * 1_024
@@ -392,6 +393,7 @@ class CapabilityProjection:
     availability: ContextAvailability
     provenance: ContextProvenance
     reason: str | None = None
+    detail: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.capability) is not CapabilityId:
@@ -412,8 +414,16 @@ class CapabilityProjection:
             ContextAvailability.UNAVAILABLE,
         }:
             _require_bounded_text(self.reason or "", "capability reason", MAX_CONTEXT_REASON_BYTES)
+            if self.detail is not None:
+                raise ValueError("unknown or unavailable capabilities cannot carry detail")
         elif self.reason is not None:
             raise ValueError("available capabilities cannot carry a reason")
+        if self.detail is not None:
+            _require_bounded_text(
+                self.detail,
+                "capability detail",
+                MAX_CONTEXT_CAPABILITY_DETAIL_BYTES,
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,6 +640,13 @@ def compile_context_projection(frame: ContextFrame) -> ContextProjection:
             )
         )
         blocks.append(_render_intentions(frame.intentions))
+        if any(
+            item.capability is CapabilityId.TEMPORAL_RECONSIDERATION
+            and item.availability is ContextAvailability.KNOWN
+            and item.detail is not None
+            for item in frame.capabilities.capabilities
+        ):
+            blocks.append(_render_capabilities(frame.capabilities))
     else:
         blocks.append(
             _render_interaction(
@@ -707,6 +724,8 @@ def _render_capabilities(capabilities: CapabilityContext) -> str:
         else:
             status = _status_text(item.availability, item.reason)
         lines.append(f"- {item.capability.value}: {status} ({item.provenance.value})")
+        if item.detail is not None:
+            lines.append(f"  detail: {item.detail}")
     return "\n".join(lines)
 
 
@@ -861,6 +880,7 @@ __all__ = [
     "IntentionContext",
     "IntentionRef",
     "InteractionContext",
+    "MAX_CONTEXT_CAPABILITY_DETAIL_BYTES",
     "MAX_CONTEXT_CAPABILITIES",
     "MAX_CONTEXT_INTENTIONS",
     "MAX_CONTEXT_LABEL_BYTES",
