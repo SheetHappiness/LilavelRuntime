@@ -257,6 +257,39 @@ action, wake, history entry, or model call. The existing Runtime-owned buffer
 is bound into the existing builder/composer path; contentful awareness,
 retrieval, memory, or source-message lookup remain separate future work.
 
+## AWARE-V1-D bounded awareness source resolution
+
+AWARE-V1-D extends the C projection only after the existing exact-scope
+`PeripheralAwarenessBuffer.snapshot_active(scope)` admission seam returns
+active notes. `AwarenessSourceResolver` accepts one explicit source reference
+and returns immutable `AwarenessSourceMaterial` with only `source_ref`,
+`source_kind`, and `text`. The production
+`ObservationWindowAwarenessSourceResolver` supports only the existing
+`observation:<id>` and `event:<id>` references, reading the matching local
+`ObservationWindow` record's existing textual `payload["text"]` value. It
+does not query ConversationStore, adapters, networks, or related content.
+
+Resolution is exact-reference, read-only, deterministic, and fail-soft. A
+missing or unsupported reference contributes no material while preserving the
+known metadata note. A resolver exception skips only the failed reference so a
+successful sibling reference remains available; malformed resolver output or
+a source-identity mismatch fails closed for that note's source material.
+Active-note and source-reference ordering remains unchanged. At most two source
+items are attached to one note, each text value is truncated to 512 characters
+without summarization, and total source text is capped at 2,048 characters
+across one projected awareness context. No timestamp or author is added
+because neither is authoritative in this local source record.
+
+Source excerpts are a separate untrusted contextual-evidence section inside
+the `USER_RESPONSE` peripheral-awareness block. They are explicitly labelled
+non-authoritative and never instructions; they are not `ContextSourceRef`
+authority and do not enter CharacterCanon, OperatingCanon, or trusted
+guidance. Awareness source material is omitted from ambient cognition,
+internal appraisal, and temporal wake projections. Existing whole-block
+budget omission remains in force. Source resolution does not alter note
+lifecycle, canonical history, memory/evidence claims, cognition, actions,
+wakes, or model/provider invocation topology.
+
 ## COG-V1-C model-backed disposition planning
 
 The standalone `DispositionPlanner` is a bounded model-backed evaluation seam.

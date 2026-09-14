@@ -171,6 +171,29 @@ read-only and fail-soft: it does not handle or mutate notes, create cognition,
 actions, wakes, history, or model calls. Assembly evidence stores only bounded
 availability, count, block-presence, and budget-omission metadata.
 
+## AWARE-V1-D bounded source resolution
+
+After exact-scope active-note admission, `AwarenessSourceResolver` may resolve
+only the note's existing explicit `observation:<id>` and `event:<id>` source
+references. The production `ObservationWindowAwarenessSourceResolver` reads
+the matching record from the existing local `ObservationWindow` and accepts
+only its existing textual `payload["text"]` value. It performs no semantic
+retrieval, related-content lookup, adapter/network fetch, or canonical-history
+write.
+
+Resolved `AwarenessSourceMaterial` is immutable, bounded, and untrusted. A
+note carries at most two source items; each excerpt is truncated to 512
+characters and the projected awareness context carries at most 2,048 source
+text characters. Missing, unsupported, malformed, or failed resolution keeps
+the active metadata note and omits material; partial resolution keeps the
+successful subset. A partial resolver exception skips only the failed explicit
+reference, while malformed output or source-identity mismatch fails closed for
+that note's source material. Excerpts are labelled contextual evidence and
+never instructions. They appear only in `USER_RESPONSE`; the ambient,
+internal, and temporal projections remain unaware of source content. Existing
+lifecycle, trusted-guidance, model-call, cognition, action, wake, and history
+boundaries remain unchanged.
+
 ## COG-V1-C disposition planner
 
 `DispositionPlanner` is an opt-in model-backed seam for evaluating how a direct

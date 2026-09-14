@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 
@@ -12,6 +13,7 @@ from lilavel_runtime import (
     MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE,
     MAX_AWARENESS_SOURCE_TEXT_CHARS,
     MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS,
+    NO_COGNITION,
     AttentionEvidence,
     AwarenessContextNote,
     AwarenessKey,
@@ -160,8 +162,14 @@ def test_runtime_wires_the_observation_window_source_resolver() -> None:
     buffer = PeripheralAwarenessBuffer()
     runtime = LilavelRuntime(awareness_buffer=buffer)
     observation = _observation(2, "runtime-local source")
-    runtime.observation_window.admit(observation)
-    _admit(buffer, observation)
+
+    async def run() -> None:
+        await runtime.start()
+        receipt = await runtime.admit_observation(observation.event)
+        assert await runtime.cognition_step(receipt) is NO_COGNITION
+        await runtime.stop()
+
+    asyncio.run(run())
 
     frame = runtime.context_builder.build(
         ContextPurpose.USER_RESPONSE,
@@ -225,16 +233,54 @@ def test_missing_source_and_unsupported_kind_preserve_metadata_only_awareness() 
     observation = _observation(8, "not available")
     _admit(buffer, observation)
 
+    local_resolver = ObservationWindowAwarenessSourceResolver(ObservationWindow(8))
     missing = _frame(buffer, _scope(), source_resolver=_Resolver({}))
-    local_missing = _frame(
-        buffer,
-        _scope(),
-        source_resolver=ObservationWindowAwarenessSourceResolver(ObservationWindow(8)),
-    )
+    local_missing = _frame(buffer, _scope(), source_resolver=local_resolver)
 
     assert missing.awareness.availability is ContextAvailability.KNOWN
     assert missing.awareness.notes[0].source_material == ()
     assert local_missing.awareness.notes[0].source_material == ()
+    assert local_resolver.resolve("unsupported:source-1") is None
+
+
+def test_partial_resolver_exception_preserves_other_successful_source_refs() -> None:
+    buffer = PeripheralAwarenessBuffer()
+    observation = _observation(19, "partial source")
+    _admit(buffer, observation)
+
+    class _PartiallyFailingResolver:
+        def resolve(self, source_ref: str) -> AwarenessSourceMaterial | None:
+            if source_ref == "observation:observation-19":
+                raise RuntimeError("source unavailable")
+            return AwarenessSourceMaterial(source_ref, "event", "successful event source")
+
+    note = _frame(
+        buffer,
+        _scope(),
+        source_resolver=_PartiallyFailingResolver(),
+    ).awareness.notes[0]
+
+    assert tuple(item.source_ref for item in note.source_material) == ("event:event-19",)
+
+
+def test_malformed_or_mismatched_source_material_never_injects_unrelated_text() -> None:
+    buffer = PeripheralAwarenessBuffer()
+    observation = _observation(20, "must not inject")
+    _admit(buffer, observation)
+
+    class _MismatchedResolver:
+        def resolve(self, source_ref: str) -> AwarenessSourceMaterial:
+            del source_ref
+            return AwarenessSourceMaterial("event:unrelated", "event", "unrelated text")
+
+    class _MalformedResolver:
+        def resolve(self, source_ref: str) -> object:
+            del source_ref
+            return object()
+
+    for resolver in (_MismatchedResolver(), _MalformedResolver()):
+        frame = _frame(buffer, _scope(), source_resolver=resolver)
+        assert frame.awareness.notes[0].source_material == ()
 
 
 def test_resolver_exception_preserves_known_metadata_only_note() -> None:

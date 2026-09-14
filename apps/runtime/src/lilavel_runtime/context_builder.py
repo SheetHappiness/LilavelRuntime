@@ -446,15 +446,15 @@ def _resolve_awareness_source_material(
     for source_ref in note.source_refs[:MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE]:
         try:
             material = resolver.resolve(source_ref)
-            if material is None:
-                continue
-            if type(material) is not AwarenessSourceMaterial:
-                return (), 0
-            if material.source_ref != source_ref:
-                return (), 0
-            text = material.text[:MAX_AWARENESS_SOURCE_TEXT_CHARS]
         except Exception:
+            continue
+        if material is None:
+            continue
+        if type(material) is not AwarenessSourceMaterial:
             return (), 0
+        if material.source_ref != source_ref:
+            return (), 0
+        text = material.text[:MAX_AWARENESS_SOURCE_TEXT_CHARS]
         available_chars = remaining_chars - consumed_chars
         if available_chars <= 0:
             break
