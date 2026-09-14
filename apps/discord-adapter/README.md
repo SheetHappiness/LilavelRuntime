@@ -173,6 +173,30 @@ is not part of the deterministic package suite and remains `UNVERIFIED` unless
 the supported provider and Discord credentials are deliberately available for
 one scoped test DM.
 
+## PROACTIVE-V0 opt-in one-shot idle smoke
+
+The bounded proactive smoke experiment is disabled by default. Enable it only
+with `LILAVEL_DISCORD_PROACTIVE_SMOKE=1`; the idle interval is configured with
+`LILAVEL_DISCORD_PROACTIVE_IDLE_S`, defaulting to `30.0` seconds and accepting
+only `1.0` through `600.0`. Invalid values fail before Discord client startup.
+
+When enabled, the first eligible one-to-one DM binds one process-local trusted
+subject and channel. A successful USER turn reuses the existing completion
+`APPRAISAL_REASON` path; only a live runtime-owned intention arms one one-shot
+idle opportunity. Expiry submits the existing `INTERNAL` `IDLE_REASON` through
+the character-wide `SemanticActor` and existing
+`ProposalApplicationCoordinator`. The model can choose silence or speech text,
+but cannot choose a Discord destination. Permitted speech uses the existing
+text-only `discord.send_message` application tool and effect-time intervention
+guard; silence, denial, failure, cancellation, and unknown delivery consume the
+opportunity without retry. A second DM subject disables proactive external
+speech for the process while normal reactive DM routing continues.
+
+There is no recurring loop, guild/group-DM support, persistence, memory write,
+restart recovery, or proactive canonical conversation-history turn. The
+content-free `DiscordTextEdge.proactive_evidence()` surface reports only
+bounded lifecycle/effect categories for deterministic smoke diagnostics.
+
 ## Thin deterministic JSONL scenario runner
 
 The repo-local runner exposes the existing deterministic evidence surfaces in

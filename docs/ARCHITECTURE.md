@@ -1152,6 +1152,21 @@ confirmed/pre-send/ambiguous outcomes to typed status/effect values, and never
 retries `effect=unknown`. This is a deterministic proof seam, not a global
 production activation; ordinary Discord traffic remains V2/no-tool.
 
+PROACTIVE-V0 is a separate explicit opt-in Discord composition. It binds at
+most one one-to-one DM target per process, attaches completion appraisal only
+after a successful USER turn, and arms one bounded idle timer only while a
+runtime-owned `MindState` intention remains active. Timer expiry revalidates
+the target, USER floor, runtime state, generation fence, and intention before
+submitting the existing `INTERNAL` `IDLE_REASON` through the same
+`SemanticActor(NON_USER)`, `CognitionEpisodeRunner`, and
+`ProposalApplicationCoordinator` path. `SPEAK` is resolved against the trusted
+target by the existing text-only application tool and the effect-time social
+guard; `STAY_SILENT` is inert. A second subject disables proactive speech,
+USER routing remains available, and each opportunity is consumed after one
+attempt. The smoke mode has no recurring scheduler, canonical-history write,
+persistence, restart recovery, guild/group-DM behavior, or model-controlled
+destination.
+
 ## Persistence and evidence
 
 The current SQLite substrate keeps canonical messages and raw provenance
