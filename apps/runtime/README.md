@@ -153,6 +153,24 @@ omission count, and outcome. It never records raw user, observation,
 intention, frame, source, or model content. Default ambient speech rollout
 remains `OFF`.
 
+## AWARE-V1-C context projection
+
+The existing runtime-owned `PeripheralAwarenessBuffer` can contribute one
+bounded metadata-only `AwarenessContext` domain to the existing
+`ContextFrame`/`ProductionContextComposer` path. The resolver reads only
+`snapshot_active()` for one exact semantic/environment/source-subject
+`AwarenessScope`, projects at most eight active notes oldest-to-newest, and
+reuses the AWARE source-reference and reason-code bounds. It exposes note ID,
+source references, reason codes, occurrence count, and first/last-seen times;
+raw payload/text, summaries, meaning, memory semantics, and effect authority
+are excluded.
+
+The block is available only to `USER_RESPONSE`. Empty, unknown, or unavailable
+awareness is omitted, and budget pressure drops the whole block. Resolution is
+read-only and fail-soft: it does not handle or mutate notes, create cognition,
+actions, wakes, history, or model calls. Assembly evidence stores only bounded
+availability, count, block-presence, and budget-omission metadata.
+
 ## COG-V1-C disposition planner
 
 `DispositionPlanner` is an opt-in model-backed seam for evaluating how a direct

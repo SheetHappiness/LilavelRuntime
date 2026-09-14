@@ -186,8 +186,9 @@ retrieval semantics.
 
 `PeripheralAwarenessBuffer` is distinct from `ObservationWindow`, which is the
 transient perception window used to assemble cognition episodes. AWARE-V1-A/B
-do not mutate MindState, social permission, effect authority, or ContextFrame
-and do not project awareness into production model requests.
+do not mutate MindState, social permission, effect authority, or ContextFrame.
+The separate AWARE-V1-C projection below is the only production context
+consumer of the buffer.
 
 ## AWARE-V1-B lifecycle quality
 
@@ -219,9 +220,42 @@ oldest-effective-note overflow eviction. Active snapshots are immutable tuples
 ordered oldest-to-newest by `last_seen_at`, then note ID.
 
 AWARE-V1-B adds no model call, cognition trigger, action/effect, wake,
-persistence, memory, canonical-history, or production ContextFrame behavior.
-`snapshot_active(scope, now)` is the read seam reserved for AWARE-V1-C, which
-may later choose a bounded non-obligatory peripheral-awareness projection.
+persistence, memory, canonical-history, or ContextFrame lifecycle behavior.
+`snapshot_active(scope, now)` is the read seam consumed by AWARE-V1-C for its
+bounded, non-obligatory peripheral-awareness projection.
+
+## AWARE-V1-C peripheral awareness context projection
+
+`AwarenessContext` and `AwarenessContextNote` are the metadata-only awareness
+domain on `ContextFrame`. `PeripheralAwarenessContextResolver` accepts one
+runtime-owned, exact `AwarenessScope` and reads only
+`PeripheralAwarenessBuffer.snapshot_active(scope)`. A scope contains the
+semantic scope, environment, and source subject/surface identity; no other
+scope is searched and no cross-surface relevance is inferred.
+
+The projected note contains only the existing bounded `AwarenessNote` metadata:
+note ID, observation/event source references, deterministic reason codes,
+occurrence count, first-seen/admission time, and last-seen time. It contains no
+observation payload, message text, summary, inferred meaning, confidence,
+memory or relationship state, or effect/tool authority. At most eight notes are
+projected, in the buffer's deterministic oldest-to-newest order, reusing the
+existing two-reference and eight-reason bounds.
+
+Awareness is `KNOWN` when the exact buffer scope has active notes,
+`KNOWN_EMPTY` when it has none, `UNKNOWN` when the scope is not established,
+and `UNAVAILABLE` when the resolver/buffer cannot provide the view. Resolver
+failures fail soft for the context contribution. The domain is projected only
+for `USER_RESPONSE`; ambient cognition, internal appraisal, and temporal wake
+frames retain `UNKNOWN` awareness and omit the block. The block is factual and
+non-authoritative and is dropped as a whole under the existing projection
+budget. Context assembly records only availability, selected-note count, block
+presence, and budget omission, without content.
+
+Context projection is read-only: it does not compact, handle, supersede,
+refresh, delete, or otherwise mutate notes, and it creates no cognition,
+action, wake, history entry, or model call. The existing Runtime-owned buffer
+is bound into the existing builder/composer path; contentful awareness,
+retrieval, memory, or source-message lookup remain separate future work.
 
 ## COG-V1-C model-backed disposition planning
 
@@ -515,7 +549,8 @@ It is an immutable, bounded, provider-neutral view for exactly one
 `ContextPurpose`, not a store or transcript. Its typed subcontracts cover
 environment/surface, current interaction and participants, narrow intention
 references, runtime-declared capability availability, advisory social state,
-optional temporal facts, and bounded trusted source references. It does not own
+optional temporal facts, bounded trusted source references, and metadata-only
+peripheral awareness. It does not own
 or copy `ConversationCore` messages, `MindState`, `ObservationWindow`, memory,
 or E1/E2 effect permission.
 
@@ -554,6 +589,7 @@ mutating an owner. The authoritative map is deliberately narrow:
 | social | typed E1/E2 current `SocialPermissionContext` resolver | `UNKNOWN` |
 | temporal | current runtime clock and optional `TemporalCoordinatorResolver` | current time remains current; wake relation is unknown |
 | source refs | trusted runtime provenance references | omitted |
+| awareness | `PeripheralAwarenessContextResolver` over one exact runtime-owned `AwarenessScope` | `UNKNOWN` when no scope is established; `KNOWN_EMPTY` for an empty exact scope |
 
 The builder never reads canonical messages, arbitrary observation payloads,
 installed tool lists, model output, or Discord-specific classes. The kernel
@@ -563,9 +599,10 @@ provenance facts remain unknown until a trusted composition supplies the
 corresponding resolver. No generic runtime-state bag was added.
 
 Selection is deterministic and minimal. `USER_RESPONSE` keeps current
-environment, direct interaction, explicitly linked intentions, and current
-capabilities; it omits other-surface activity, social state, unrelated
-observations, and ordinary temporal data. `AMBIENT_COGNITION` adds current
+environment, direct interaction, explicitly linked intentions, current
+capabilities, and bounded active awareness for one exact scope; it omits
+other-surface activity, social state, unrelated observations, and ordinary
+temporal data. `AMBIENT_COGNITION` adds current
 other-surface activity, advisory social state, and trusted source references,
 but has no direct conversation history. `INTERNAL_APPRAISAL` keeps only current
 activity and explicitly linked intentions; it does not imply speech or tools.
@@ -577,7 +614,9 @@ projection still does not render precise time.
 
 The projection compiler has a stable block order: purpose, environment,
 interaction, relevant intentions, social context when selected, temporal
-context when selected, then capabilities. It renders no frame IDs, timestamps,
+context when selected, capabilities, then the optional peripheral-awareness
+block for `USER_RESPONSE`. Awareness `KNOWN_EMPTY`, `UNKNOWN`, and
+`UNAVAILABLE` states omit that block. It renders no frame IDs, timestamps,
 opaque source refs, or internal provenance tokens by default. Current time is
 rendered only for `TEMPORAL_WAKE`. Resolver exceptions fail closed to bounded
 `UNKNOWN` views; malformed typed results and untrusted references are rejected.
@@ -598,6 +637,14 @@ engine; the composer uses `production_context_request_factory` to translate
 only typed, runtime-owned cognition provenance into builder requests. It never
 accepts raw observation payloads, model output, installed-tool metadata, or
 conversation text as context authority.
+
+For the direct USER route, the existing runtime-owned awareness buffer is
+bound to the existing composer and the router binds each Core session to one
+exact semantic/environment/source-subject `AwarenessScope`. The composer
+resolves awareness through `snapshot_active` only; the same existing model
+request carries the optional metadata block. Non-USER requests never consume
+the awareness domain, and content-free evidence adds only availability,
+selected-note count, block presence, and budget omission.
 
 Provider-neutral requests use this stable-to-volatile order wherever the
 transport supports separate fields:
@@ -647,7 +694,8 @@ canonical evidence. It never mutates unrelated runtime state.
 
 Content-free bounded assembly evidence records purpose, OperatingCanon and
 projection presence, included projection block kinds, projection/history/input
-bytes, total request-context bytes, omission count, and outcome. It does not
+bytes, total request-context bytes, omission count, outcome, and the bounded
+awareness availability/count/presence/omission fields. It does not
 record user text, observation or intention content, frame IDs, source refs,
 raw model JSON, or chain-of-thought. CTX-V1 is complete at this boundary:
 
