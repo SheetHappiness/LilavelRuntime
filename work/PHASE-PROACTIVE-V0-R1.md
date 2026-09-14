@@ -10,7 +10,7 @@ diagnostics evidence. Live provider/Discord verification remains
 
 - Expected baseline: `337148b820470ca3a46b9f512b014876febecfde`
 - Preflight HEAD: `337148b820470ca3a46b9f512b014876febecfde`
-- Implementation SHA: `f0ca68d8f900031a0f8fd98e90b4f2121092c070`
+- Implementation SHA: `f0ca68d83e68dfff9f673f517b54f17ed77b0dfa`
 - Push: not performed
 
 ## Implemented truth
