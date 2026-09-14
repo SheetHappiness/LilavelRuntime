@@ -516,6 +516,7 @@ COG_V1_D2_SCENARIOS: tuple[DeliberationScenario, ...] = (
             ContextMessage("user", "We have been comparing two jacket cuts for a formal event."),
             ContextMessage("assistant", "The choice depends on the event and the fit you want."),
         ),
+        pair="tailoring-context",
     ),
     _scenario(
         "cog-v1-d2-14",
@@ -526,6 +527,7 @@ COG_V1_D2_SCENARIOS: tuple[DeliberationScenario, ...] = (
         ),
         _behavior(aim="acknowledge"),
         DeliberationOracleLabel.FAST_SAFE,
+        pair="tailoring-context",
     ),
     _scenario(
         "cog-v1-d2-15",

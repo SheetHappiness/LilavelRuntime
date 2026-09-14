@@ -320,5 +320,32 @@ def test_rule_policy_distinguishes_counterfactuals_and_bounded_context() -> None
 def test_dataset_has_human_authored_label_distribution_and_counterfactual_pair() -> None:
     labels = {item.label.value for item in COG_V1_D2_SCENARIOS}
     assert labels == {"fast_safe", "plan_helpful", "plan_harmful", "unresolved"}
-    pair = [item for item in COG_V1_D2_SCENARIOS if item.counterfactual_group == "ambiguity-cost"]
-    assert {item.label.value for item in pair} == {"fast_safe", "plan_helpful"}
+    for group in ("ambiguity-cost", "tailoring-context"):
+        pair = [item for item in COG_V1_D2_SCENARIOS if item.counterfactual_group == group]
+        assert pair
+        assert {item.label.value for item in pair} == {"fast_safe", "plan_helpful"}
+
+
+def test_core_has_one_canonical_fast_plan_route_and_bounded_reason_vocabulary() -> None:
+    import lilavel_core
+
+    assert set(DeliberationDecision) == {
+        DeliberationDecision.FAST,
+        DeliberationDecision.PLAN,
+    }
+    assert not any(
+        hasattr(lilavel_core, name)
+        for name in (
+            "DispositionRoute",
+            "SelectiveDispositionPolicy",
+            "DeterministicFastDispositionPolicy",
+            "DeliberativeDispositionPolicy",
+        )
+    )
+    assert {
+        CognitionReasonCode.SIMPLE_REQUEST,
+        CognitionReasonCode.HIGH_SOCIAL_STAKES,
+        CognitionReasonCode.MULTIPLE_PLAUSIBLE_MOVES,
+        CognitionReasonCode.INTERVENTION_UNCERTAIN,
+        CognitionReasonCode.REVERSIBLE_ASSUMPTION,
+    }.issubset(set(CognitionReasonCode))
