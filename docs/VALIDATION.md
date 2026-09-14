@@ -306,8 +306,11 @@ These checks cover the replaceable DM adapter, the complete
 → Core → action` path, deterministic presenter,
 transport, diagnostics, scenario runner, supersession, semantic streaming, and
 the explicit P4-D registry/authorization/one-shot Discord executor proof with
-fake transport. They do not imply live provider selection or live Discord
-delivery.
+fake transport. They also prove the PROACTIVE-V0-R1 production-shaped split:
+the proactive V3 cognition transport receives zero application tools while the
+proposal application coordinator retains the trusted Discord effect factory,
+and opt-in stderr diagnostics remain content-free. They do not imply live
+provider selection or live Discord delivery.
 
 ### Shared protocol boundary
 
@@ -342,6 +345,8 @@ must be reported separately from deterministic checks:
   `uv run --locked python scripts/transport_probe.py`.
 - Discord Stage B Core-backed adapter: from `apps/discord-adapter`,
   `uv run --locked python scripts/run_edge.py`.
+- Discord Stage B proactive terminal trace: from `apps/discord-adapter`,
+  `env LILAVEL_DISCORD_PROACTIVE_SMOKE=1 LILAVEL_DISCORD_PROACTIVE_IDLE_S=30 LILAVEL_DISCORD_PROACTIVE_DIAGNOSTICS=1 uv run --locked python scripts/run_edge.py 2> /tmp/lilavel-proactive-diagnostics.jsonl`.
 - P4-D scoped provider-backed Discord proof: only through an explicitly
   enabled test composition and one admitted test DM; this is not a default
   package command and must be recorded separately from D1 deterministic

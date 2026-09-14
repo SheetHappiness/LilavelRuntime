@@ -197,6 +197,23 @@ restart recovery, or proactive canonical conversation-history turn. The
 content-free `DiscordTextEdge.proactive_evidence()` surface reports only
 bounded lifecycle/effect categories for deterministic smoke diagnostics.
 
+Proactive cognition is effect-free in the production composition. Its
+`ModelRuntimeV3` is created without a `tool_session_factory`, so both
+`APPRAISAL_REASON` and `IDLE_REASON` provider requests expose zero application
+tools. The existing `DiscordToolSessionFactory` is created separately and is
+owned only by `ProposalApplicationCoordinator`; it remains the trusted,
+effect-time path for the text-only `discord.send_message` action.
+
+For a live, content-free terminal-stage trace, set
+`LILAVEL_DISCORD_PROACTIVE_DIAGNOSTICS=1` together with the smoke switch. The
+normal `scripts/run_edge.py` process emits bounded JSONL records to stderr,
+including startup configuration, generation completion/failure, strict
+appraisal (`no_change`/`create_intention`/`invalid`) and idle
+(`speak`/`stay_silent`/`invalid`) parse outcomes, permission, and delivery
+results. The default is `0`; diagnostics contain no user text, model output,
+intention text, Discord identifiers, provider response, credentials, or raw
+exception text. Sink failures are ignored by the runtime.
+
 ## Thin deterministic JSONL scenario runner
 
 The repo-local runner exposes the existing deterministic evidence surfaces in

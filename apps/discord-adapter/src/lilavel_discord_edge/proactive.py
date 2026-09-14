@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+import os
+import sys
 import threading
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -21,6 +25,8 @@ from lilavel_runtime import (
     ActionProposalKind,
     ActivityState,
     AmbientSpeechRolloutMode,
+    CognitionEvidenceStage,
+    CognitionModelEvidence,
     CognitionOutcome,
     CognitionTrigger,
     CognitionTriggerSource,
@@ -54,6 +60,132 @@ from .tool import DISCORD_SEND_MESSAGE_NAME, DiscordToolSessionFactory
 
 MAX_PROACTIVE_EVIDENCE = 256
 MAX_PROACTIVE_HISTORY = 64
+PROACTIVE_DIAGNOSTICS_ENV = "LILAVEL_DISCORD_PROACTIVE_DIAGNOSTICS"
+_SAFE_DIAGNOSTIC_KINDS = frozenset(
+    {
+        "appraisal_completed",
+        "appraisal_generation_completed",
+        "appraisal_generation_failed",
+        "appraisal_parse_create_intention",
+        "appraisal_parse_invalid",
+        "appraisal_parse_no_change",
+        "appraisal_started",
+        "cognition_submitted",
+        "idle_armed",
+        "idle_cancelled_by_user",
+        "idle_expired",
+        "idle_generation_completed",
+        "idle_generation_failed",
+        "idle_ineligible",
+        "idle_parse_invalid",
+        "idle_parse_speak",
+        "idle_parse_stay_silent",
+        "intention_absent",
+        "intention_present",
+        "send_confirmed",
+        "send_failed",
+        "send_unknown",
+        "silence",
+        "speech_allowed",
+        "speech_denied",
+        "target_bound",
+        "target_disabled_multiple_subjects",
+    }
+)
+_SAFE_DIAGNOSTIC_RESULTS = frozenset(
+    {
+        "admission_failed",
+        "application_failed",
+        "application_rejected",
+        "cancelled",
+        "completed_quiet",
+        "completed_with_application",
+        "confirmed",
+        "denied",
+        "failed",
+        "invalid",
+        "no_change",
+        "none",
+        "provider_or_runtime",
+        "settlement_failed",
+        "speech_permission_denied",
+        "stay_silent",
+        "speak",
+        "unknown",
+        "uncontained",
+    }
+)
+
+
+def read_proactive_diagnostics_from_environment(
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Read the explicit opt-in switch for content-free proactive diagnostics."""
+
+    source = os.environ if environ is None else environ
+    raw_value = source.get(PROACTIVE_DIAGNOSTICS_ENV)
+    if raw_value is None or raw_value.strip() == "0":
+        return False
+    if raw_value.strip() == "1":
+        return True
+    raise ValueError(f"{PROACTIVE_DIAGNOSTICS_ENV} must be '0' or '1'")
+
+
+class DiscordProactiveDiagnostics:
+    """Opt-in JSONL stderr sink for bounded proactive evidence."""
+
+    def __init__(
+        self,
+        emit: Callable[[Mapping[str, object]], None] | None = None,
+    ) -> None:
+        self._emit = _emit_proactive_jsonl if emit is None else emit
+        self._sequence = 0
+        self._lock = threading.Lock()
+
+    def emit_startup(self, *, proactive_enabled: bool, idle_timeout_s: float) -> None:
+        self._record(
+            {
+                "kind": "startup",
+                "proactive_enabled": proactive_enabled,
+                "configured_idle_interval_s": idle_timeout_s,
+                "diagnostics_enabled": True,
+                "cognition_tools_exposed": False,
+            }
+        )
+
+    def emit_evidence(self, evidence: DiscordProactiveEvidence) -> None:
+        kind = evidence.kind if evidence.kind in _SAFE_DIAGNOSTIC_KINDS else "unknown"
+        result = evidence.result
+        if result not in _SAFE_DIAGNOSTIC_RESULTS:
+            result = None
+        self._record({"kind": kind, "result": result})
+
+    def _record(self, fields: Mapping[str, object]) -> None:
+        with self._lock:
+            self._sequence += 1
+            event = {
+                "component": "proactive",
+                "sequence": self._sequence,
+                **dict(fields),
+            }
+        with suppress(BaseException):
+            self._emit(event)
+
+
+def proactive_diagnostics_from_environment() -> DiscordProactiveDiagnostics | None:
+    """Create the stderr sink only for an explicit diagnostics opt-in."""
+
+    if not read_proactive_diagnostics_from_environment():
+        return None
+    return DiscordProactiveDiagnostics()
+
+
+def _emit_proactive_jsonl(event: Mapping[str, object]) -> None:
+    print(
+        json.dumps(dict(event), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +238,7 @@ class DiscordProactivePresence:
         mind_state: MindState,
         *,
         idle_timeout_s: float,
+        evidence_sink: Callable[[DiscordProactiveEvidence], None] | None = None,
     ) -> None:
         if not callable(getattr(model_runtime, "generate_for_run", None)):
             raise TypeError("model_runtime must provide generate_for_run")
@@ -139,6 +272,7 @@ class DiscordProactivePresence:
         self._idle_attempt: _IdleAttempt | None = None
         self._appraisal_records: dict[str, _AppraisalRecord] = {}
         self._internal_tasks: set[asyncio.Task[None]] = set()
+        self._evidence_sink = evidence_sink
         self._evidence: deque[DiscordProactiveEvidence] = deque(maxlen=MAX_PROACTIVE_EVIDENCE)
         self._evidence_sequence = 1
         self._lock = threading.RLock()
@@ -267,6 +401,42 @@ class DiscordProactivePresence:
     def history_for_trigger(self, trigger_id: str) -> tuple[ContextMessage, ...] | None:
         record = self._appraisal_records.get(trigger_id)
         return None if record is None else record.history
+
+    def record_cognition_evidence(self, evidence: CognitionModelEvidence) -> None:
+        """Translate runtime cognition evidence into the adapter's safe lifecycle."""
+
+        if type(evidence) is not CognitionModelEvidence:
+            return
+        if evidence.stage is CognitionEvidenceStage.GENERATION_COMPLETED:
+            kind = (
+                "appraisal_generation_completed"
+                if evidence.reason == APPRAISAL_REASON
+                else "idle_generation_completed"
+            )
+            self._record(kind)
+            return
+        if evidence.stage is CognitionEvidenceStage.GENERATION_FAILED:
+            kind = (
+                "appraisal_generation_failed"
+                if evidence.reason == APPRAISAL_REASON
+                else "idle_generation_failed"
+            )
+            self._record(kind, evidence.result)
+            return
+        parse_kind = {
+            (APPRAISAL_REASON, "no_change"): "appraisal_parse_no_change",
+            (APPRAISAL_REASON, "create_intention"): "appraisal_parse_create_intention",
+            (APPRAISAL_REASON, "invalid"): "appraisal_parse_invalid",
+            (IDLE_REASON, "speak"): "idle_parse_speak",
+            (IDLE_REASON, "stay_silent"): "idle_parse_stay_silent",
+            (IDLE_REASON, "invalid"): "idle_parse_invalid",
+        }
+        parse_result = evidence.result
+        if parse_result is None:
+            return
+        parse_kind = parse_kind.get((evidence.reason, parse_result))
+        if parse_kind is not None:
+            self._record(parse_kind)
 
     def resolve_speech_context(
         self,
@@ -422,10 +592,11 @@ class DiscordProactivePresence:
         self._record("appraisal_started")
         try:
             admission = await submitter(trigger)
-        except BaseException as error:
-            self._record("appraisal_completed", type(error).__name__)
+        except BaseException:
+            self._record("appraisal_completed", "admission_failed")
             self._record("intention_absent")
             return
+        self._record("cognition_submitted", admission.status.value)
         self._track_internal(
             self._settle_appraisal(admission, trigger.trigger_id, user_epoch, subject)
         )
@@ -572,10 +743,10 @@ class DiscordProactivePresence:
             )
         try:
             admission = await submitter(trigger)
-        except BaseException as error:
+        except BaseException:
             with self._lock:
                 self._idle_attempt = None
-            self._record("idle_ineligible", type(error).__name__)
+            self._record("idle_ineligible", "admission_failed")
             return
         self._record("cognition_submitted", admission.status.value)
         self._track_internal(self._settle_idle(admission, trigger.trigger_id, generation))
@@ -613,6 +784,14 @@ class DiscordProactivePresence:
             evidence = self._latest_speech_evidence(attempt)
             if evidence is not None and evidence.revalidation is SpeechRevalidationStatus.DENIED:
                 self._record("speech_denied", evidence.denial_reason)
+            elif evidence is not None and evidence.revalidation is SpeechRevalidationStatus.ALLOWED:
+                self._record("speech_allowed")
+                if getattr(evidence.effect, "value", None) == "unknown":
+                    self._record("send_unknown")
+                elif getattr(evidence.effect, "value", None) == "confirmed":
+                    self._record("send_confirmed")
+                else:
+                    self._record("send_failed", getattr(evidence.effect, "value", None))
             elif evidence is not None and getattr(evidence.effect, "value", None) == "unknown":
                 self._record("send_unknown")
             elif evidence is not None and getattr(evidence.effect, "value", None) == "confirmed":
@@ -697,8 +876,13 @@ class DiscordProactivePresence:
             self._record_locked(kind, result)
 
     def _record_locked(self, kind: str, result: str | None = None) -> None:
-        self._evidence.append(DiscordProactiveEvidence(self._evidence_sequence, kind, result))
+        evidence = DiscordProactiveEvidence(self._evidence_sequence, kind, result)
+        self._evidence.append(evidence)
         self._evidence_sequence += 1
+        sink = self._evidence_sink
+        if sink is not None:
+            with suppress(BaseException):
+                sink(evidence)
 
 
 def create_proactive_application(
@@ -737,8 +921,12 @@ def create_proactive_application(
 
 
 __all__ = [
+    "DiscordProactiveDiagnostics",
     "DiscordProactiveEvidence",
     "DiscordProactivePresence",
     "MAX_PROACTIVE_EVIDENCE",
+    "PROACTIVE_DIAGNOSTICS_ENV",
     "create_proactive_application",
+    "proactive_diagnostics_from_environment",
+    "read_proactive_diagnostics_from_environment",
 ]

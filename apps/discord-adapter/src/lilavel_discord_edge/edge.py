@@ -56,6 +56,7 @@ from .diagnostics import (
 )
 from .presenter import DEFAULT_EDIT_INTERVAL_S, ReplyPresenter
 from .proactive import (
+    DiscordProactiveDiagnostics,
     DiscordProactiveEvidence,
     DiscordProactivePresence,
     create_proactive_application,
@@ -500,9 +501,15 @@ class DiscordTextEdge:
         semantic_max_tail_chars: int = DEFAULT_SEMANTIC_MAX_TAIL_CHARS,
         context_composer: ProductionContextComposer | None = None,
         proactive_runtime_factory: RuntimeFactory | None = None,
+        proactive_diagnostics: DiscordProactiveDiagnostics | None = None,
     ) -> None:
         proactive_enabled = read_proactive_smoke_from_environment()
         proactive_idle_s = read_proactive_idle_from_environment()
+        if proactive_diagnostics is not None:
+            proactive_diagnostics.emit_startup(
+                proactive_enabled=proactive_enabled,
+                idle_timeout_s=proactive_idle_s,
+            )
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
         if type(tool_enabled) is not bool:
@@ -532,54 +539,30 @@ class DiscordTextEdge:
         proactive_factory: DiscordToolSessionFactory | None = None
         proactive_engine = None
         if proactive_enabled:
-            proactive_factory_ref: list[DiscordProactivePresence | None] = [None]
             if proactive_runtime_factory is None:
-                prebound_factory = DiscordToolSessionFactory(
-                    None,
-                    channel_resolver=lambda: (
-                        None
-                        if proactive_factory_ref[0] is None
-                        else proactive_factory_ref[0].channel_for_send()
-                    ),
-                    availability=lambda: (
-                        False
-                        if proactive_factory_ref[0] is None
-                        else proactive_factory_ref[0].can_send()
-                    ),
-                    send_authorizer=lambda: (
-                        False
-                        if proactive_factory_ref[0] is None
-                        else proactive_factory_ref[0].claim_send()
-                    ),
-                    loop_resolver=lambda: (
-                        None
-                        if proactive_factory_ref[0] is None
-                        else proactive_factory_ref[0].event_loop()
-                    ),
-                )
-                prebound_factory.bind_scope("runtime")
                 proactive_model = cast(
                     RunAwareConversationRuntime,
-                    ModelRuntimeV3(tool_session_factory=prebound_factory),
+                    ModelRuntimeV3(),
                 )
             else:
-                prebound_factory = None
                 proactive_model = cast(RunAwareConversationRuntime, proactive_runtime_factory())
             proactive_state = MindState()
             proactive = DiscordProactivePresence(
                 proactive_model,
                 proactive_state,
                 idle_timeout_s=proactive_idle_s,
+                evidence_sink=(
+                    None if proactive_diagnostics is None else proactive_diagnostics.emit_evidence
+                ),
             )
-            proactive_factory_ref[0] = proactive
             proactive_application, proactive_factory = create_proactive_application(
                 proactive,
-                factory=prebound_factory,
             )
             proactive.bind_application(proactive_application)
             proactive_engine = LocalCognitionEngine(
                 proactive_model,
                 proactive.history_for_trigger,
+                evidence_sink=proactive.record_cognition_evidence,
             )
         self._proactive = proactive
         self._environment = _DiscordEnvironment(

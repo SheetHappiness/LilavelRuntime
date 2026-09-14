@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
+from pathlib import Path
 from queue import Queue
 from typing import Any, cast
 
@@ -15,14 +18,18 @@ from lilavel_core import (
     GenerationEvent,
     GenerationFailedEvent,
     ModelRequest,
+    ModelRuntimeV3,
     TextDelta,
 )
 
 from lilavel_discord_edge import (
     DEFAULT_PROACTIVE_IDLE_S,
+    PROACTIVE_DIAGNOSTICS_ENV,
     PROACTIVE_IDLE_ENV,
     PROACTIVE_SMOKE_ENV,
+    DiscordProactiveDiagnostics,
     DiscordTextEdge,
+    read_proactive_diagnostics_from_environment,
     read_proactive_idle_from_environment,
     read_proactive_smoke_from_environment,
 )
@@ -101,6 +108,7 @@ async def _wait_until(check: Any, timeout: float = 2.0) -> None:
 def _edge(
     cognition: _CognitionRuntime,
     user: _UserRuntime,
+    diagnostics: DiscordProactiveDiagnostics | None = None,
 ) -> DiscordTextEdge:
     client = FakeClient()
     return DiscordTextEdge(
@@ -111,6 +119,7 @@ def _edge(
         edit_interval_s=0.0,
         semantic_lookahead_s=0.0,
         close_timeout_s=2.0,
+        proactive_diagnostics=diagnostics,
     )
 
 
@@ -120,12 +129,104 @@ def _set_enabled(monkeypatch: pytest.MonkeyPatch, value: str = "1") -> None:
 
 
 def test_proactive_configuration_is_opt_in_and_bounded() -> None:
+    assert read_proactive_diagnostics_from_environment({}) is False
+    assert read_proactive_diagnostics_from_environment({PROACTIVE_DIAGNOSTICS_ENV: "0"}) is False
+    assert read_proactive_diagnostics_from_environment({PROACTIVE_DIAGNOSTICS_ENV: " 1 "}) is True
     assert read_proactive_smoke_from_environment({}) is False
     assert read_proactive_idle_from_environment({}) == DEFAULT_PROACTIVE_IDLE_S
     assert read_proactive_smoke_from_environment({PROACTIVE_SMOKE_ENV: " 1 "}) is True
     assert read_proactive_smoke_from_environment({PROACTIVE_SMOKE_ENV: "0"}) is False
     assert read_proactive_idle_from_environment({PROACTIVE_IDLE_ENV: "1"}) == 1.0
     assert read_proactive_idle_from_environment({PROACTIVE_IDLE_ENV: "600"}) == 600.0
+
+
+def test_invalid_diagnostics_configuration_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        read_proactive_diagnostics_from_environment({PROACTIVE_DIAGNOSTICS_ENV: "true"})
+
+
+def test_diagnostics_are_opt_in_content_free_and_sink_failure_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_enabled(monkeypatch)
+    emitted: list[dict[str, object]] = []
+
+    def emit(event: Any) -> None:
+        emitted.append(dict(event))
+
+    diagnostics = DiscordProactiveDiagnostics(emit=emit)
+    cognition = _CognitionRuntime()
+    user = _UserRuntime()
+    edge = _edge(cognition, user, diagnostics)
+
+    async def scenario() -> None:
+        channel = FakeChannel("diagnostic-target")
+        await edge.handle_message(
+            FakeInboundMessage(
+                "diagnostic-message",
+                channel,
+                FakeUser("human"),
+                "USER_CONTENT_SENTINEL",
+            )
+        )
+        await _wait_until(lambda: len(user.generations) == 1)
+        _finish(user.generations[0], "MODEL_CONTENT_SENTINEL")
+        await _wait_until(lambda: len(cognition.generations) == 1)
+        _finish(
+            cognition.generations[0],
+            '{"action":"create_intention","text":"INTENTION_CONTENT_SENTINEL"}',
+        )
+        await _wait_until(lambda: len(cognition.generations) == 2, timeout=2.5)
+        _finish(cognition.generations[1], '{"action":"speak","text":"SPEECH_CONTENT_SENTINEL"}')
+        await _wait_until(
+            lambda: any(item.kind == "send_confirmed" for item in edge.proactive_evidence())
+        )
+        await edge.close()
+
+    asyncio.run(scenario())
+
+    assert emitted[0] == {
+        "component": "proactive",
+        "sequence": 1,
+        "kind": "startup",
+        "proactive_enabled": True,
+        "configured_idle_interval_s": 1.0,
+        "diagnostics_enabled": True,
+        "cognition_tools_exposed": False,
+    }
+    assert [event["sequence"] for event in emitted] == list(range(1, len(emitted) + 1))
+    rendered = json.dumps(emitted, sort_keys=True)
+    assert all(
+        sentinel not in rendered
+        for sentinel in (
+            "USER_CONTENT_SENTINEL",
+            "MODEL_CONTENT_SENTINEL",
+            "INTENTION_CONTENT_SENTINEL",
+            "SPEECH_CONTENT_SENTINEL",
+        )
+    )
+
+    def fail_emit(event: Any) -> None:
+        del event
+        raise RuntimeError("diagnostics sink failed")
+
+    failing_diagnostics = DiscordProactiveDiagnostics(emit=fail_emit)
+    failing_cognition = _CognitionRuntime()
+    failing_user = _UserRuntime()
+    failing_edge = _edge(failing_cognition, failing_user, failing_diagnostics)
+
+    async def failure_sink_scenario() -> None:
+        channel = FakeChannel("sink-failure-target")
+        await failing_edge.handle_message(
+            FakeInboundMessage("sink-failure", channel, FakeUser("human"), "one")
+        )
+        await _wait_until(lambda: len(failing_user.generations) == 1)
+        _finish(failing_user.generations[0], "reply")
+        await _wait_until(lambda: len(failing_cognition.generations) == 1)
+        _finish(failing_cognition.generations[0], '{"action":"no_change"}')
+        await failing_edge.close()
+
+    asyncio.run(failure_sink_scenario())
 
 
 def test_enabled_default_composes_run_aware_proactive_model(
@@ -141,6 +242,67 @@ def test_enabled_default_composes_run_aware_proactive_model(
 
     async def scenario() -> None:
         assert edge.proactive_smoke_enabled
+        await edge.close()
+
+    asyncio.run(scenario())
+
+
+def test_production_shape_proactive_v3_exposes_no_tools_and_keeps_effect_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_enabled(monkeypatch)
+    fixture = Path(__file__).parent / "fixtures" / "proactive_cognition_v3_sidecar.py"
+    cognition = ModelRuntimeV3(
+        command=(sys.executable, str(fixture)),
+        sidecar_dir=fixture.parent,
+        startup_timeout=2.0,
+        shutdown_timeout=2.0,
+        cancellation_timeout=1.0,
+    )
+    user = _UserRuntime()
+    edge = DiscordTextEdge(
+        client=cast(Any, FakeClient()),
+        runtime_factory=lambda: user,
+        proactive_runtime_factory=lambda: cognition,
+        message_filter=lambda message: bool(message.channel.is_dm),
+        edit_interval_s=0.0,
+        semantic_lookahead_s=0.0,
+        close_timeout_s=2.0,
+    )
+
+    async def scenario() -> None:
+        channel = FakeChannel("production-shape")
+        await edge.handle_message(
+            FakeInboundMessage("production-shape-message", channel, FakeUser("human"), "unfinished")
+        )
+        await _wait_until(lambda: len(user.generations) == 1)
+        _finish(user.generations[0], "reply")
+        await _wait_until(
+            lambda: any(
+                item.kind == "appraisal_parse_create_intention"
+                for item in edge.proactive_evidence()
+            ),
+            timeout=4.0,
+        )
+        await _wait_until(
+            lambda: any(item.kind == "send_confirmed" for item in edge.proactive_evidence()),
+            timeout=4.0,
+        )
+        kinds = [item.kind for item in edge.proactive_evidence()]
+        assert {
+            "appraisal_generation_completed",
+            "appraisal_parse_create_intention",
+            "idle_generation_completed",
+            "idle_parse_speak",
+            "cognition_submitted",
+            "speech_allowed",
+            "send_confirmed",
+        }.issubset(kinds)
+        assert [item["content"] for item in channel.sends] == ["reply", "one follow-up"]
+        effect_snapshots = edge.tool_proof_evidence()
+        assert len(effect_snapshots) == 1
+        assert effect_snapshots[0]["exposed_tools"] == ("discord.send_message",)
+        assert effect_snapshots[0]["send_attempt_count"] == 1
         await edge.close()
 
     asyncio.run(scenario())

@@ -23,7 +23,10 @@ from lilavel_runtime import (
     ActionProposal,
     ActionProposalKind,
     CognitionCandidate,
+    CognitionContext,
     CognitionEpisode,
+    CognitionEvidenceStage,
+    CognitionModelEvidence,
     CognitionTrigger,
     CognitionTriggerSource,
     FixedPresenceWakePolicy,
@@ -251,6 +254,99 @@ async def test_local_cognition_engine_uses_one_actor_owned_model_generation() ->
         ("assistant", "acknowledged"),
     ]
     await runtime.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "raw", "expected_parse"),
+    [
+        (APPRAISAL_REASON, '{"action":"no_change"}', "no_change"),
+        (
+            APPRAISAL_REASON,
+            '{"action":"create_intention","text":"follow up"}',
+            "create_intention",
+        ),
+        (APPRAISAL_REASON, "not-json", "invalid"),
+        (IDLE_REASON, '{"action":"speak","text":"follow up"}', "speak"),
+        (IDLE_REASON, '{"action":"stay_silent"}', "stay_silent"),
+        (IDLE_REASON, "not-json", "invalid"),
+    ],
+)
+async def test_local_cognition_engine_reports_proactive_parse_outcomes(
+    reason: str,
+    raw: str,
+    expected_parse: str,
+) -> None:
+    model = _ConversationModel()
+    evidence: list[CognitionModelEvidence] = []
+    engine = LocalCognitionEngine(model, lambda _: (), evidence_sink=evidence.append)
+    state = MindState()
+    source_refs = (f"fixture:{expected_parse}",)
+    if reason == IDLE_REASON:
+        intention = state.create_intention(
+            "active intention",
+            user_message_id="user:fixture",
+            assistant_message_id="assistant:fixture",
+        )
+        assert intention is not None
+        source_refs = (intention.intention_id,)
+    trigger = CognitionTrigger(
+        (),
+        reason,
+        source=CognitionTriggerSource.INTERNAL,
+        source_refs=source_refs,
+    )
+    episode = CognitionEpisode(
+        "episode:fixture",
+        CognitionContext("episode:fixture", "runtime", trigger, (), state.snapshot()),
+    )
+
+    task = asyncio.create_task(engine.run(episode))
+    await _wait_for(lambda: len(model.generations) == 1)
+    _finish(model.generations[0], raw)
+    candidate = await task
+
+    assert type(candidate) is CognitionCandidate
+    assert [item.stage for item in evidence] == [
+        CognitionEvidenceStage.GENERATION_COMPLETED,
+        CognitionEvidenceStage.PARSE,
+    ]
+    assert evidence[-1].result == expected_parse
+
+
+@pytest.mark.asyncio
+async def test_local_cognition_engine_reports_generation_failure_without_parse() -> None:
+    class FailingModel(_ConversationModel):
+        def generate_for_run(
+            self,
+            request: ModelRequest,
+            *,
+            scope_id: str,
+            logical_run_id: str,
+        ) -> _Generation:
+            del request, scope_id, logical_run_id
+            raise RuntimeError("provider failure")
+
+    model = FailingModel()
+    evidence: list[CognitionModelEvidence] = []
+    engine = LocalCognitionEngine(model, lambda _: (), evidence_sink=evidence.append)
+    trigger = CognitionTrigger(
+        (),
+        APPRAISAL_REASON,
+        source=CognitionTriggerSource.INTERNAL,
+        source_refs=("fixture:failure",),
+    )
+    episode = CognitionEpisode(
+        "episode:failure",
+        CognitionContext("episode:failure", "runtime", trigger, (), MindState().snapshot()),
+    )
+
+    with pytest.raises(RuntimeError):
+        await engine.run(episode)
+
+    assert [(item.stage, item.result) for item in evidence] == [
+        (CognitionEvidenceStage.GENERATION_FAILED, "provider_or_runtime")
+    ]
 
 
 @pytest.mark.asyncio

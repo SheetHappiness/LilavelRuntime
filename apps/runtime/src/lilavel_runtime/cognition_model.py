@@ -12,8 +12,10 @@ import json
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import cast
 
 from lilavel_core import (
@@ -67,6 +69,7 @@ APPRAISAL_REASON = "conversation_completion_appraisal"
 IDLE_REASON = "idle_opportunity"
 MAX_AMBIENT_OBSERVATION_TEXT_BYTES = 16_384
 AMBIENT_EVIDENCE_CAPACITY = 256
+COGNITION_EVIDENCE_CAPACITY = 256
 _REASON_CODE_VALUES = "|".join(code.value for code in CognitionReasonCode)
 
 DISPOSITION_PLANNER_CONTROL_GUIDANCE: tuple[str, ...] = (
@@ -195,6 +198,48 @@ class CognitionGenerationUncontained(RuntimeError):
 
 
 HistoryResolver = Callable[[str], tuple[ContextMessage, ...] | None]
+
+
+class CognitionEvidenceStage(StrEnum):
+    """Bounded lifecycle stages for model-backed internal cognition."""
+
+    GENERATION_COMPLETED = "generation_completed"
+    GENERATION_FAILED = "generation_failed"
+    PARSE = "parse"
+
+
+class CognitionParseOutcome(StrEnum):
+    """Content-free parser outcomes for the two proactive JSON contracts."""
+
+    NO_CHANGE = "no_change"
+    CREATE_INTENTION = "create_intention"
+    SPEAK = "speak"
+    STAY_SILENT = "stay_silent"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class CognitionModelEvidence:
+    """One bounded, content-free internal cognition lifecycle record."""
+
+    trigger_id: str
+    reason: str
+    stage: CognitionEvidenceStage
+    result: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.trigger_id) is not str or not self.trigger_id.strip():
+            raise ValueError("trigger_id must be non-empty text")
+        if self.reason not in {APPRAISAL_REASON, IDLE_REASON}:
+            raise ValueError("reason is not a proactive cognition reason")
+        if type(self.stage) is not CognitionEvidenceStage:
+            raise TypeError("stage must be a CognitionEvidenceStage")
+        if self.result is not None and (
+            type(self.result) is not str
+            or not self.result.strip()
+            or len(self.result.encode("utf-8")) > 64
+        ):
+            raise ValueError("result must be bounded non-empty text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -838,6 +883,8 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
         runtime: RunAwareConversationRuntime,
         history_for_trigger: HistoryResolver,
         context_composer: ProductionContextComposer | None = None,
+        *,
+        evidence_sink: Callable[[CognitionModelEvidence], None] | None = None,
     ) -> None:
         if not callable(getattr(runtime, "generate_for_run", None)):
             raise TypeError("runtime must provide generate_for_run")
@@ -846,9 +893,20 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
         self._runtime = runtime
         self._history_for_trigger = history_for_trigger
         self._context_composer = context_composer
+        self._evidence_sink = evidence_sink
+        self._cognition_evidence: deque[CognitionModelEvidence] = deque(
+            maxlen=COGNITION_EVIDENCE_CAPACITY
+        )
+        self._cognition_evidence_lock = threading.Lock()
         self._ambient_evidence: deque[AmbientCognitionEvidence] = deque(
             maxlen=AMBIENT_EVIDENCE_CAPACITY
         )
+
+    def cognition_evidence(self) -> tuple[CognitionModelEvidence, ...]:
+        """Return bounded, content-free internal cognition evidence."""
+
+        with self._cognition_evidence_lock:
+            return tuple(self._cognition_evidence)
 
     def ambient_evidence(self) -> tuple[AmbientCognitionEvidence, ...]:
         """Return bounded, content-free ambient parse evidence."""
@@ -929,11 +987,54 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             # caller; CTX-C adds no new semantic lane.
             return CognitionCandidate()
 
-        raw = await self._generate(request, episode)
+        is_proactive_reason = trigger.reason in {APPRAISAL_REASON, IDLE_REASON}
+        try:
+            raw = await self._generate(request, episode)
+        except asyncio.CancelledError:
+            if is_proactive_reason:
+                self._record_cognition_evidence(
+                    trigger.trigger_id,
+                    trigger.reason,
+                    CognitionEvidenceStage.GENERATION_FAILED,
+                    "cancelled",
+                )
+            raise
+        except CognitionGenerationUncontained:
+            if is_proactive_reason:
+                self._record_cognition_evidence(
+                    trigger.trigger_id,
+                    trigger.reason,
+                    CognitionEvidenceStage.GENERATION_FAILED,
+                    "uncontained",
+                )
+            raise
+        except Exception:
+            if is_proactive_reason:
+                self._record_cognition_evidence(
+                    trigger.trigger_id,
+                    trigger.reason,
+                    CognitionEvidenceStage.GENERATION_FAILED,
+                    "provider_or_runtime",
+                )
+            raise
+        if is_proactive_reason:
+            self._record_cognition_evidence(
+                trigger.trigger_id,
+                trigger.reason,
+                CognitionEvidenceStage.GENERATION_COMPLETED,
+            )
         if trigger.source is CognitionTriggerSource.TEMPORAL:
             candidate = parse_ambient_intervention_candidate(raw)
             return CognitionCandidate() if candidate is None else candidate.to_cognition_candidate()
-        return _parse_candidate(raw, trigger.reason)
+        candidate, parse_outcome = _parse_candidate_with_outcome(raw, trigger.reason)
+        if is_proactive_reason:
+            self._record_cognition_evidence(
+                trigger.trigger_id,
+                trigger.reason,
+                CognitionEvidenceStage.PARSE,
+                parse_outcome.value,
+            )
+        return candidate
 
     def _ambient_request(self, episode: CognitionEpisode) -> ModelRequest | None:
         observations = episode.context.observations
@@ -1076,6 +1177,21 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             name=f"lilavel-cognition-generation-{episode.episode_id}",
         )
 
+    def _record_cognition_evidence(
+        self,
+        trigger_id: str,
+        reason: str,
+        stage: CognitionEvidenceStage,
+        result: str | None = None,
+    ) -> None:
+        record = CognitionModelEvidence(trigger_id, reason, stage, result)
+        with self._cognition_evidence_lock:
+            self._cognition_evidence.append(record)
+        sink = self._evidence_sink
+        if sink is not None:
+            with suppress(BaseException):
+                sink(record)
+
 
 async def _collect_generation(handle: RuntimeGeneration) -> tuple[object, ...]:
     completed = threading.Event()
@@ -1097,52 +1213,85 @@ async def _collect_generation(handle: RuntimeGeneration) -> tuple[object, ...]:
     return tuple(events)
 
 
-def _parse_candidate(raw: str, reason: str) -> CognitionCandidate:
-    if len(raw.encode("utf-8")) > MAX_COGNITION_RESULT_BYTES:
-        return CognitionCandidate()
+def _parse_candidate_with_outcome(
+    raw: str, reason: str
+) -> tuple[CognitionCandidate, CognitionParseOutcome]:
+    try:
+        if len(raw.encode("utf-8")) > MAX_COGNITION_RESULT_BYTES:
+            return CognitionCandidate(), CognitionParseOutcome.INVALID
+    except (AttributeError, UnicodeEncodeError):
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
     try:
         value = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
-    except (TypeError, ValueError):
-        return CognitionCandidate()
+    except (TypeError, ValueError, RecursionError):
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
     if not isinstance(value, dict):
-        return CognitionCandidate()
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
     parsed = cast(dict[str, object], value)
     action = parsed.get("action")
     if not isinstance(action, str):
-        return CognitionCandidate()
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
 
     if reason == APPRAISAL_REASON:
         if action == "no_change" and set(parsed) == {"action"}:
-            return CognitionCandidate()
+            return CognitionCandidate(), CognitionParseOutcome.NO_CHANGE
         text = parsed.get("text")
         if (
             action == "create_intention"
             and set(parsed) == {"action", "text"}
             and isinstance(text, str)
             and text.strip()
-            and len(text.encode("utf-8")) <= MAX_INTENTION_TEXT_BYTES
+            and _fits_utf8(text, MAX_INTENTION_TEXT_BYTES)
         ):
-            return CognitionCandidate(
-                state_proposals=(StateProposal(StateProposalKind.CREATE_INTENTION, text.strip()),)
-            )
-        return CognitionCandidate()
+            try:
+                return (
+                    CognitionCandidate(
+                        state_proposals=(
+                            StateProposal(StateProposalKind.CREATE_INTENTION, text.strip()),
+                        )
+                    ),
+                    CognitionParseOutcome.CREATE_INTENTION,
+                )
+            except (TypeError, ValueError, UnicodeEncodeError):
+                pass
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
 
     if reason == IDLE_REASON:
         if action == "stay_silent" and set(parsed) == {"action"}:
-            return CognitionCandidate(
-                action_proposals=(ActionProposal(ActionProposalKind.STAY_SILENT),)
-            )
+            try:
+                return (
+                    CognitionCandidate(
+                        action_proposals=(ActionProposal(ActionProposalKind.STAY_SILENT),)
+                    ),
+                    CognitionParseOutcome.STAY_SILENT,
+                )
+            except (TypeError, ValueError):
+                pass
         text = parsed.get("text")
         if (
             action == "speak"
             and set(parsed) == {"action", "text"}
             and isinstance(text, str)
             and text.strip()
+            and _fits_utf8(text, MAX_ACTION_PROPOSAL_CONTENT_BYTES)
         ):
-            return CognitionCandidate(
-                action_proposals=(ActionProposal(ActionProposalKind.SPEAK, text.strip()),)
-            )
-    return CognitionCandidate()
+            try:
+                return (
+                    CognitionCandidate(
+                        action_proposals=(ActionProposal(ActionProposalKind.SPEAK, text.strip()),)
+                    ),
+                    CognitionParseOutcome.SPEAK,
+                )
+            except (TypeError, ValueError, UnicodeEncodeError):
+                pass
+    return CognitionCandidate(), CognitionParseOutcome.INVALID
+
+
+def _parse_candidate(raw: str, reason: str) -> CognitionCandidate:  # pyright: ignore[reportUnusedFunction]
+    """Parse one proactive candidate while retaining the legacy private seam."""
+
+    candidate, _ = _parse_candidate_with_outcome(raw, reason)
+    return candidate
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -1151,11 +1300,21 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return dict(pairs)
 
 
+def _fits_utf8(value: str, limit: int) -> bool:
+    try:
+        return len(value.encode("utf-8")) <= limit
+    except UnicodeEncodeError:
+        return False
+
+
 __all__ = [
     "APPRAISAL_REASON",
     "AMBIENT_INTERVENTION_CONTROL_GUIDANCE",
     "AmbientCognitionEvidence",
     "AmbientInterventionCandidate",
+    "CognitionEvidenceStage",
+    "CognitionModelEvidence",
+    "CognitionParseOutcome",
     "DISPOSITION_PLANNER_CONTROL_GUIDANCE",
     "IDLE_REASON",
     "MAX_DISPOSITION_CONTEXT_MESSAGES",
