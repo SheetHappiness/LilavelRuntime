@@ -897,6 +897,22 @@ class ProposalApplicationCoordinator:
             call_id = self._call_id(application_id, index)
             name = self._action_tool_names.get(proposal.kind)
             if name is None:
+                if proposal.kind is ActionProposalKind.STAY_SILENT:
+                    # Silence is an existing inert action. A composition may
+                    # choose not to register an effectful silence tool; it is
+                    # still a successfully applied terminal outcome.
+                    results.append(
+                        self._action_result(
+                            index,
+                            call_id,
+                            None,
+                            ToolResultStatus.OK,
+                            ToolEffect.NONE,
+                            "silent",
+                            attempted=True,
+                        )
+                    )
+                    continue
                 valid = False
                 first_reason = first_reason or "unsupported_action_proposal"
                 results.append(

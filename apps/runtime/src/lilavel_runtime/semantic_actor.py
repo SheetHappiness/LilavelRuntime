@@ -392,6 +392,15 @@ class SemanticActor:
         return len(self._user_queue) + len(self._non_user_queue)
 
     @property
+    def user_work_active_or_queued(self) -> bool:
+        """Return whether USER semantic work is active or waiting."""
+
+        active_user = self._active is not None and (
+            self._active.request.priority is SemanticPriority.USER
+        )
+        return active_user or bool(self._user_queue)
+
+    @property
     def mailbox_capacity(self) -> int:
         return self._mailbox_capacity
 

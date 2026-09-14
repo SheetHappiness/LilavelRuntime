@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from threading import Event, Thread
@@ -50,6 +50,7 @@ CoreFactory = Callable[[ConversationRuntime], ConversationCore]
 SessionConfigurator = Callable[[ConversationRuntime, ConversationCore, tuple[str, str]], None]
 PlannerFactory = Callable[[ConversationRuntime], DispositionPlanner]
 DeliberationPolicyFactory = Callable[[ConversationRuntime], DeliberationPolicy]
+UserTurnCompletionHook = Callable[[str, ConversationCore, ConversationRun], Awaitable[None]]
 
 
 def _default_planner_factory(
@@ -159,6 +160,7 @@ class CoreConversationRouter:
         deliberation_policy_factory: DeliberationPolicyFactory | None = None,
         context_composer: ProductionContextComposer | None = None,
         close_timeout_s: float = 15.0,
+        user_turn_completion_hook: UserTurnCompletionHook | None = None,
     ) -> None:
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
@@ -188,6 +190,7 @@ class CoreConversationRouter:
             deliberation_policy_factory or _default_deliberation_policy_factory
         )
         self._close_timeout_s = close_timeout_s
+        self._user_turn_completion_hook = user_turn_completion_hook
         self._sessions: dict[tuple[str, str], _ConversationSession] = {}
         self._session_lock = asyncio.Lock()
         self._admission_locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -318,6 +321,7 @@ class CoreConversationRouter:
                         run_id=run.run_id,
                         text=item.text,
                     )
+                    await self._notify_user_turn_completed(route_key, session.core, run)
                     return
                 elif isinstance(item, ConversationCancelled):
                     await self._execute(
@@ -403,6 +407,24 @@ class CoreConversationRouter:
             if isinstance(error, Exception):
                 raise error
             raise RuntimeError("conversation router shutdown failed") from error
+
+    async def _notify_user_turn_completed(
+        self,
+        route_key: tuple[str, str],
+        core: ConversationCore,
+        run: ConversationRun,
+    ) -> None:
+        hook = self._user_turn_completion_hook
+        if hook is None:
+            return
+        try:
+            await hook(route_key[1], core, run)
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            # A proactive experiment cannot make an otherwise completed USER
+            # turn fail. The hook owns its bounded evidence for this failure.
+            return
 
     async def _session_for(self, key: tuple[str, str]) -> _ConversationSession:
         async with self._session_lock:

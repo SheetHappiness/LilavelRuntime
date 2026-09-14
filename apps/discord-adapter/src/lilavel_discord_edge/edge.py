@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 import weakref
@@ -21,6 +22,7 @@ from lilavel_core import (
     ConversationRuntime,
     ModelRuntime,
     ModelRuntimeV3,
+    RunAwareConversationRuntime,
 )
 from lilavel_core.production_cognition import create_conversation
 from lilavel_runtime import (
@@ -36,6 +38,8 @@ from lilavel_runtime import (
     EventSource,
     EventSubmitter,
     LilavelRuntime,
+    LocalCognitionEngine,
+    MindState,
     ObservationReceipt,
     RuntimeState,
     ToolCall,
@@ -51,6 +55,11 @@ from .diagnostics import (
     attach_http_trace,
 )
 from .presenter import DEFAULT_EDIT_INTERVAL_S, ReplyPresenter
+from .proactive import (
+    DiscordProactiveEvidence,
+    DiscordProactivePresence,
+    create_proactive_application,
+)
 from .semantic import DEFAULT_SEMANTIC_LOOKAHEAD_S, DEFAULT_SEMANTIC_MAX_TAIL_CHARS
 from .tool import DiscordToolSessionFactory
 from .transport import DiscordMessageSink, TransportMetrics, validate_edit_interval
@@ -58,6 +67,11 @@ from .transport import DiscordMessageSink, TransportMetrics, validate_edit_inter
 DISCORD_TOKEN_ENV: Final = "LILAVEL_DISCORD_BOT_TOKEN"
 EDIT_INTERVAL_ENV: Final = "LILAVEL_DISCORD_EDIT_INTERVAL_S"
 SEMANTIC_STREAMING_ENV: Final = "LILAVEL_DISCORD_SEMANTIC_STREAMING"
+PROACTIVE_SMOKE_ENV: Final = "LILAVEL_DISCORD_PROACTIVE_SMOKE"
+PROACTIVE_IDLE_ENV: Final = "LILAVEL_DISCORD_PROACTIVE_IDLE_S"
+DEFAULT_PROACTIVE_IDLE_S: Final = 30.0
+MIN_PROACTIVE_IDLE_S: Final = 1.0
+MAX_PROACTIVE_IDLE_S: Final = 600.0
 DEFAULT_CLOSE_TIMEOUT_S: Final = 15.0
 DEFAULT_DEDUPE_CAPACITY: Final = 4096
 DISCORD_ENVIRONMENT_ID: Final = "discord"
@@ -103,6 +117,40 @@ def read_semantic_streaming_from_environment(
     raise ValueError(f"{SEMANTIC_STREAMING_ENV} must be '0' or '1'")
 
 
+def read_proactive_smoke_from_environment(
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    source = os.environ if environ is None else environ
+    raw_value = source.get(PROACTIVE_SMOKE_ENV)
+    if raw_value is None or raw_value.strip() == "0":
+        return False
+    if raw_value.strip() == "1":
+        return True
+    raise ValueError(f"{PROACTIVE_SMOKE_ENV} must be '0' or '1'")
+
+
+def read_proactive_idle_from_environment(
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    source = os.environ if environ is None else environ
+    raw_value = source.get(PROACTIVE_IDLE_ENV)
+    if raw_value is None:
+        return DEFAULT_PROACTIVE_IDLE_S
+    try:
+        value = float(raw_value.strip())
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{PROACTIVE_IDLE_ENV} must be between {MIN_PROACTIVE_IDLE_S} and "
+            f"{MAX_PROACTIVE_IDLE_S} seconds"
+        ) from error
+    if not math.isfinite(value) or not MIN_PROACTIVE_IDLE_S <= value <= MAX_PROACTIVE_IDLE_S:
+        raise ValueError(
+            f"{PROACTIVE_IDLE_ENV} must be between {MIN_PROACTIVE_IDLE_S} and "
+            f"{MAX_PROACTIVE_IDLE_S} seconds"
+        )
+    return value
+
+
 def make_dm_intents() -> discord.Intents:
     intents = discord.Intents.none()
     intents.dm_messages = True
@@ -111,6 +159,12 @@ def make_dm_intents() -> discord.Intents:
 
 def is_direct_message(message: Any) -> bool:
     return isinstance(getattr(message, "channel", None), discord.DMChannel)
+
+
+def is_one_to_one_dm_channel(channel: Any) -> bool:
+    """Recognize only Discord DM channels (plus the deterministic fake seam)."""
+
+    return isinstance(channel, discord.DMChannel) or getattr(channel, "is_dm", False) is True
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +218,7 @@ class _DiscordEnvironment:
         semantic_streaming: bool,
         semantic_lookahead_s: float,
         semantic_max_tail_chars: int,
+        proactive_target_binder: Callable[[str, Any], None] | None,
     ) -> None:
         self._client = client
         self._message_filter = message_filter
@@ -174,6 +229,7 @@ class _DiscordEnvironment:
         self._semantic_streaming = semantic_streaming
         self._semantic_lookahead_s = semantic_lookahead_s
         self._semantic_max_tail_chars = semantic_max_tail_chars
+        self._proactive_target_binder = proactive_target_binder
         self._dedupe = _MessageIdDeduplicator(dedupe_capacity)
         self._subjects: dict[str, _OpaqueConversationIdentity] = {}
         self._subject_channels: dict[str, Any] = {}
@@ -249,6 +305,8 @@ class _DiscordEnvironment:
         channel_key = str(channel.id)
         subject = self._subjects.setdefault(channel_key, _OpaqueConversationIdentity())
         self._subject_channels[subject.value] = channel
+        if self._proactive_target_binder is not None and is_one_to_one_dm_channel(channel):
+            self._proactive_target_binder(subject.value, channel)
         event_id = str(uuid4())
         self._routes[event_id] = channel
         try:
@@ -441,7 +499,10 @@ class DiscordTextEdge:
         semantic_lookahead_s: float = DEFAULT_SEMANTIC_LOOKAHEAD_S,
         semantic_max_tail_chars: int = DEFAULT_SEMANTIC_MAX_TAIL_CHARS,
         context_composer: ProductionContextComposer | None = None,
+        proactive_runtime_factory: RuntimeFactory | None = None,
     ) -> None:
+        proactive_enabled = read_proactive_smoke_from_environment()
+        proactive_idle_s = read_proactive_idle_from_environment()
         if close_timeout_s <= 0:
             raise ValueError("close_timeout_s must be positive")
         if type(tool_enabled) is not bool:
@@ -463,6 +524,64 @@ class DiscordTextEdge:
             attach_http_trace(resolved_client, diagnostics)
         self._client = resolved_client
         self._semantic_streaming = semantic_streaming
+        tool_factories: dict[int, DiscordToolSessionFactory] = {}
+        self._tool_factories: weakref.WeakSet[DiscordToolSessionFactory] = weakref.WeakSet()
+
+        proactive: DiscordProactivePresence | None = None
+        proactive_application = None
+        proactive_factory: DiscordToolSessionFactory | None = None
+        proactive_engine = None
+        if proactive_enabled:
+            proactive_factory_ref: list[DiscordProactivePresence | None] = [None]
+            if proactive_runtime_factory is None:
+                prebound_factory = DiscordToolSessionFactory(
+                    None,
+                    channel_resolver=lambda: (
+                        None
+                        if proactive_factory_ref[0] is None
+                        else proactive_factory_ref[0].channel_for_send()
+                    ),
+                    availability=lambda: (
+                        False
+                        if proactive_factory_ref[0] is None
+                        else proactive_factory_ref[0].can_send()
+                    ),
+                    send_authorizer=lambda: (
+                        False
+                        if proactive_factory_ref[0] is None
+                        else proactive_factory_ref[0].claim_send()
+                    ),
+                    loop_resolver=lambda: (
+                        None
+                        if proactive_factory_ref[0] is None
+                        else proactive_factory_ref[0].event_loop()
+                    ),
+                )
+                prebound_factory.bind_scope("runtime")
+                proactive_model = cast(
+                    RunAwareConversationRuntime,
+                    ModelRuntimeV3(tool_session_factory=prebound_factory),
+                )
+            else:
+                prebound_factory = None
+                proactive_model = cast(RunAwareConversationRuntime, proactive_runtime_factory())
+            proactive_state = MindState()
+            proactive = DiscordProactivePresence(
+                proactive_model,
+                proactive_state,
+                idle_timeout_s=proactive_idle_s,
+            )
+            proactive_factory_ref[0] = proactive
+            proactive_application, proactive_factory = create_proactive_application(
+                proactive,
+                factory=prebound_factory,
+            )
+            proactive.bind_application(proactive_application)
+            proactive_engine = LocalCognitionEngine(
+                proactive_model,
+                proactive.history_for_trigger,
+            )
+        self._proactive = proactive
         self._environment = _DiscordEnvironment(
             client=resolved_client,
             message_filter=message_filter,
@@ -474,10 +593,8 @@ class DiscordTextEdge:
             semantic_streaming=semantic_streaming,
             semantic_lookahead_s=semantic_lookahead_s,
             semantic_max_tail_chars=semantic_max_tail_chars,
+            proactive_target_binder=None if proactive is None else proactive.bind_target,
         )
-
-        tool_factories: dict[int, DiscordToolSessionFactory] = {}
-        self._tool_factories: weakref.WeakSet[DiscordToolSessionFactory] = weakref.WeakSet()
 
         def route_runtime_factory(route_key: tuple[str, str]) -> ConversationRuntime:
             channel = self._environment.channel_for_subject(route_key[1])
@@ -517,11 +634,33 @@ class DiscordTextEdge:
             session_configurator=configure_tool_runtime if tool_enabled else None,
             context_composer=context_composer,
             close_timeout_s=close_timeout_s,
+            user_turn_completion_hook=(
+                None if proactive is None else proactive.on_user_turn_completed
+            ),
         )
-        self._runtime = LilavelRuntime(
-            event_router=self._router,
-            shutdown_timeout=close_timeout_s,
-        )
+        if proactive is None:
+            self._runtime = LilavelRuntime(
+                event_router=self._router,
+                shutdown_timeout=close_timeout_s,
+            )
+        else:
+            assert proactive_application is not None
+            self._runtime = LilavelRuntime(
+                event_router=self._router,
+                presence=proactive,
+                cognition_engine=proactive_engine,
+                mind_state=proactive.mind_state,
+                proposal_application_coordinator=proactive_application,
+                ambient_speech_mode=proactive_application.ambient_speech_mode,
+                speech_context_resolver=proactive.resolve_speech_context,
+                shutdown_timeout=close_timeout_s,
+            )
+            proactive.bind_runtime(
+                lambda: self._runtime.state,
+                lambda: self._runtime.semantic_actor.user_work_active_or_queued,
+            )
+        if proactive_factory is not None:
+            self._tool_factories.add(proactive_factory)
         self._runtime.register_environment(self._environment)
         self._environment.set_reactive_step(self._runtime.reactive_step)
         self._start_lock = asyncio.Lock()
@@ -584,6 +723,25 @@ class DiscordTextEdge:
                 }
             )
         return tuple(snapshots)
+
+    @property
+    def proactive_smoke_enabled(self) -> bool:
+        return self._proactive is not None
+
+    @property
+    def proactive_target_bound(self) -> bool:
+        return self._proactive is not None and self._proactive.target_bound
+
+    @property
+    def proactive_target_disabled(self) -> bool:
+        return self._proactive is not None and self._proactive.target_disabled
+
+    @property
+    def proactive_timer_active(self) -> bool:
+        return self._proactive is not None and self._proactive.idle_timer_active
+
+    def proactive_evidence(self) -> tuple[DiscordProactiveEvidence, ...]:
+        return () if self._proactive is None else self._proactive.evidence()
 
     async def start(self, token: str | None = None) -> None:
         self._environment.set_token(token)

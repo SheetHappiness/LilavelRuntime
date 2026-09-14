@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable
 from typing import Any, Final
 
 import discord
@@ -58,8 +59,22 @@ class _DiscordSendMessageExecutor:
     submission fence does not schedule a request.
     """
 
-    def __init__(self, channel: Any, loop: asyncio.AbstractEventLoop) -> None:
-        self._channel = channel
+    def __init__(
+        self,
+        channel: Any,
+        loop: asyncio.AbstractEventLoop | None,
+        *,
+        channel_resolver: Callable[[], Any | None] | None = None,
+        availability: Callable[[], bool] | None = None,
+        send_authorizer: Callable[[], bool] | None = None,
+        loop_resolver: Callable[[], asyncio.AbstractEventLoop | None] | None = None,
+    ) -> None:
+        if channel_resolver is not None and channel is not None:
+            raise ValueError("channel and channel_resolver are mutually exclusive")
+        self._channel_resolver = channel_resolver or (lambda: channel)
+        self._availability = availability
+        self._loop_resolver = loop_resolver
+        self._send_authorizer = send_authorizer
         self._loop = loop
         self._attempts = 0
         self._attempts_lock = threading.Lock()
@@ -97,11 +112,59 @@ class _DiscordSendMessageExecutor:
                 effect=ToolEffect.NONE,
             )
 
+        if self._availability is not None:
+            try:
+                available = self._availability()
+            except BaseException:
+                available = False
+            if not available:
+                return ToolResult(
+                    call.call_id,
+                    ToolResultStatus.FAILED,
+                    None,
+                    reason_code="discord_preflight_failed",
+                    effect=ToolEffect.NONE,
+                )
+        try:
+            channel = self._channel_resolver()
+        except BaseException:
+            channel = None
+        if channel is None:
+            return ToolResult(
+                call.call_id,
+                ToolResultStatus.FAILED,
+                None,
+                reason_code="discord_preflight_failed",
+                effect=ToolEffect.NONE,
+            )
+        if self._send_authorizer is not None:
+            try:
+                authorized = self._send_authorizer()
+            except BaseException:
+                authorized = False
+            if not authorized:
+                return ToolResult(
+                    call.call_id,
+                    ToolResultStatus.FAILED,
+                    None,
+                    reason_code="discord_preflight_failed",
+                    effect=ToolEffect.NONE,
+                )
+
+        loop = self._resolved_loop()
+        if loop is None or loop.is_closed():
+            return ToolResult(
+                call.call_id,
+                ToolResultStatus.FAILED,
+                None,
+                reason_code="discord_preflight_failed",
+                effect=ToolEffect.NONE,
+            )
         completed = threading.Event()
         outcome: list[object] = []
-        coroutine = self._settle_send(text, outcome, completed)
+        coroutine = self._settle_send(channel, text, outcome, completed)
         try:
-            asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            asyncio.run_coroutine_threadsafe(coroutine, loop)
         except RuntimeError:
             coroutine.close()
             return ToolResult(
@@ -145,22 +208,31 @@ class _DiscordSendMessageExecutor:
             effect=ToolEffect.CONFIRMED,
         )
 
-    async def _send(self, text: str) -> Any:
+    def _resolved_loop(self) -> asyncio.AbstractEventLoop | None:
+        if self._loop_resolver is not None:
+            try:
+                return self._loop_resolver()
+            except BaseException:
+                return None
+        return self._loop
+
+    async def _send(self, channel: Any, text: str) -> Any:
         with self._attempts_lock:
             self._attempts += 1
-        return await self._channel.send(
+        return await channel.send(
             content=text,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
     async def _settle_send(
         self,
+        channel: Any,
         text: str,
         outcome: list[object],
         completed: threading.Event,
     ) -> None:
         try:
-            outcome.append(await self._send(text))
+            outcome.append(await self._send(channel, text))
         except BaseException as error:
             # The worker consumes this typed boundary immediately; no raw
             # exception is returned as tool output or evidence.
@@ -197,19 +269,33 @@ class DiscordToolSessionFactory:
 
     def __init__(
         self,
-        channel: Any,
-        loop: asyncio.AbstractEventLoop,
+        channel: Any | None,
+        loop: asyncio.AbstractEventLoop | None = None,
         *,
         executor_deadline: float = DEFAULT_TOOL_EXECUTOR_DEADLINE,
         containment_deadline: float = 1.0,
+        channel_resolver: Callable[[], Any | None] | None = None,
+        availability: Callable[[], bool] | None = None,
+        send_authorizer: Callable[[], bool] | None = None,
+        loop_resolver: Callable[[], asyncio.AbstractEventLoop | None] | None = None,
     ) -> None:
         self._channel = channel
+        self._channel_resolver = channel_resolver or (lambda: channel)
+        self._availability = availability
         self._loop = loop
+        self._loop_resolver = loop_resolver
         self._trusted_scope_id: str | None = None
         self._lock = threading.Lock()
         self._executor_deadline = executor_deadline
         self._containment_deadline = containment_deadline
-        executor = _DiscordSendMessageExecutor(channel, loop)
+        executor = _DiscordSendMessageExecutor(
+            channel,
+            loop,
+            channel_resolver=channel_resolver,
+            availability=availability,
+            send_authorizer=send_authorizer,
+            loop_resolver=loop_resolver,
+        )
         self._registry = ApplicationToolRegistry(
             [
                 ToolBinding(
@@ -263,10 +349,18 @@ class DiscordToolSessionFactory:
     def _is_available(self, correlation: ToolBatchCorrelation) -> bool:
         with self._lock:
             scope_matches = self._trusted_scope_id == correlation.context.scope_id
+        try:
+            dynamic_available = self._availability is None or self._availability()
+            channel = self._channel_resolver()
+            loop = self._resolved_loop()
+        except BaseException:
+            return False
         return (
             scope_matches
-            and not self._loop.is_closed()
-            and callable(getattr(self._channel, "send", None))
+            and loop is not None
+            and not loop.is_closed()
+            and dynamic_available
+            and callable(getattr(channel, "send", None))
         )
 
     def _authorize(self, correlation: ToolBatchCorrelation, call: ToolCall) -> ToolAuthorization:
@@ -274,11 +368,25 @@ class DiscordToolSessionFactory:
             scope_matches = self._trusted_scope_id == correlation.context.scope_id
         if not scope_matches:
             return ToolAuthorization.DENIED
+        if self._availability is not None:
+            try:
+                if not self._availability():
+                    return ToolAuthorization.UNAVAILABLE
+            except BaseException:
+                return ToolAuthorization.UNAVAILABLE
         # The schema is the first fence; this second check prevents a future
         # executor caller from smuggling a destination into this binding.
         if call.arguments is None or set(call.arguments) != {"text"}:
             return ToolAuthorization.DENIED
         return ToolAuthorization.ALLOWED
+
+    def _resolved_loop(self) -> asyncio.AbstractEventLoop | None:
+        if self._loop_resolver is not None:
+            try:
+                return self._loop_resolver()
+            except BaseException:
+                return None
+        return self._loop
 
 
 __all__ = [
