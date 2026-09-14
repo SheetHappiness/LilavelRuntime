@@ -153,6 +153,15 @@ omission count, and outcome. It never records raw user, observation,
 intention, frame, source, or model content. Default ambient speech rollout
 remains `OFF`.
 
+The opt-in PROACTIVE-V0 composition binds a runtime-owned capability resolver
+to the same builder. Only when the smoke mode is enabled and its trusted
+one-to-one target is valid does it add the bounded, provider-neutral
+`TEMPORAL_RECONSIDERATION` fact to `USER_RESPONSE` and the relevant
+`INTERNAL_APPRAISAL` request. The fact describes one-shot idle reconsideration,
+one current runtime-owned intention, the configured idle interval, valid
+silence, and runtime validation of any eventual speech. It grants no effect
+authority and carries no destination or Discord identifier.
+
 ## AWARE-V1-C context projection
 
 The existing runtime-owned `PeripheralAwarenessBuffer` can contribute one
