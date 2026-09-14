@@ -33,6 +33,7 @@ from .awareness import (
     AwarenessScope,
     PeripheralAwarenessBuffer,
 )
+from .awareness_sources import AwarenessSourceResolver
 from .context import (
     AwarenessContext,
     ContextAvailability,
@@ -208,6 +209,11 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
         """Bind the existing runtime buffer to this composition path once."""
 
         self._builder.bind_awareness_resolver(PeripheralAwarenessContextResolver(buffer))
+
+    def bind_awareness_source_resolver(self, resolver: AwarenessSourceResolver) -> None:
+        """Bind the read-only explicit-reference source seam for awareness."""
+
+        self._builder.bind_awareness_source_resolver(resolver)
 
     def bind_awareness_scope(self, context_scope_id: str, scope: AwarenessScope) -> None:
         """Bind one runtime-owned exact scope to an existing Core session."""

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from .attention import DeterministicAttentionCognitionGate
 from .awareness import PeripheralAwarenessBuffer
+from .awareness_sources import ObservationWindowAwarenessSourceResolver
 from .cognition_episode import CognitionEpisodeRunner
 from .context_builder import (
     ContextFrameBuilder,
@@ -191,6 +192,9 @@ class LilavelRuntime:
         self._state = RuntimeState.NEW
         self._queue: asyncio.Queue[Observation] = asyncio.Queue(maxsize=event_queue_size)
         self._observation_window = ObservationWindow(observation_window_size)
+        awareness_source_resolver = ObservationWindowAwarenessSourceResolver(
+            self._observation_window
+        )
         self._event_router = event_router
         self._conversation_executor = ConversationExecutionAdapter(event_router)
         self._presence = presence
@@ -214,6 +218,13 @@ class LilavelRuntime:
                 self._awareness_buffer,
                 scope_id=self._semantic_actor.scope_id,
             )
+        bind_router_source_resolver = getattr(
+            self._event_router,
+            "bind_awareness_source_resolver",
+            None,
+        )
+        if callable(bind_router_source_resolver):
+            bind_router_source_resolver(awareness_source_resolver)
         self._cognition_gate = configured_gate
         if type(self._cognition_gate) is DeterministicAttentionCognitionGate:
             self._cognition_gate.bind_awareness_buffer(
@@ -281,11 +292,17 @@ class LilavelRuntime:
                     if temporal_coordinator is not None
                     else None
                 ),
-                awareness_resolver=PeripheralAwarenessContextResolver(self._awareness_buffer),
+                awareness_resolver=PeripheralAwarenessContextResolver(
+                    self._awareness_buffer,
+                    source_resolver=awareness_source_resolver,
+                ),
             )
         else:
             context_builder.bind_awareness_resolver(
-                PeripheralAwarenessContextResolver(self._awareness_buffer)
+                PeripheralAwarenessContextResolver(
+                    self._awareness_buffer,
+                    source_resolver=awareness_source_resolver,
+                )
             )
             self._context_builder = context_builder
         self._temporal_host = (

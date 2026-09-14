@@ -52,6 +52,7 @@ from .awareness_eval import (
     evaluate_awareness_b_corpus,
     evaluate_awareness_corpus,
 )
+from .awareness_sources import AwarenessSourceResolver, ObservationWindowAwarenessSourceResolver
 from .cognition_episode import CognitionEpisodeRunner
 from .cognition_model import (
     AMBIENT_INTERVENTION_CONTROL_GUIDANCE,
@@ -70,6 +71,9 @@ from .cognition_model import (
 )
 from .context import (
     MAX_AWARENESS_CONTEXT_NOTES,
+    MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE,
+    MAX_AWARENESS_SOURCE_TEXT_CHARS,
+    MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS,
     MAX_CONTEXT_CAPABILITIES,
     MAX_CONTEXT_INTENTIONS,
     MAX_CONTEXT_LABEL_BYTES,
@@ -82,6 +86,7 @@ from .context import (
     ActivityKind,
     AwarenessContext,
     AwarenessContextNote,
+    AwarenessSourceMaterial,
     CapabilityContext,
     CapabilityId,
     CapabilityProjection,
@@ -766,6 +771,7 @@ __all__ = [
     "ContextFrame",
     "AwarenessContext",
     "AwarenessContextNote",
+    "AwarenessSourceMaterial",
     "ContextProjection",
     "ContextProvenance",
     "ContextPurpose",
@@ -785,6 +791,9 @@ __all__ = [
     "MAX_CONTEXT_PROJECTION_BYTES",
     "MAX_CONTEXT_REASON_BYTES",
     "MAX_CONTEXT_SOURCE_REFS",
+    "MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE",
+    "MAX_AWARENESS_SOURCE_TEXT_CHARS",
+    "MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS",
     "ParticipantRef",
     "ParticipantRole",
     "SocialContextView",
@@ -794,6 +803,7 @@ __all__ = [
     "CapabilityResolution",
     "CapabilityResolver",
     "AwarenessContextResolver",
+    "AwarenessSourceResolver",
     "ContextBuildRequest",
     "ContextBuilderError",
     "ContextClock",
@@ -807,6 +817,7 @@ __all__ = [
     "InteractionResolver",
     "MindStateIntentionResolver",
     "PeripheralAwarenessContextResolver",
+    "ObservationWindowAwarenessSourceResolver",
     "SocialResolution",
     "SocialResolver",
     "SourceRefResolver",

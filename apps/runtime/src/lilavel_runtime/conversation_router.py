@@ -26,6 +26,7 @@ from lilavel_core import (
 from lilavel_core.production_cognition import create_conversation
 
 from .awareness import AwarenessScope, PeripheralAwarenessBuffer
+from .awareness_sources import AwarenessSourceResolver
 from .cognition_model import DispositionPlanner
 from .context_builder import ContextFrameBuilder
 from .context_integration import ProductionContextComposer
@@ -217,6 +218,11 @@ class CoreConversationRouter:
             raise ValueError("router is already bound to another awareness scope")
         self._context_composer.bind_awareness_buffer(buffer)
         self._awareness_scope_id = scope_id
+
+    def bind_awareness_source_resolver(self, resolver: AwarenessSourceResolver) -> None:
+        """Bind the runtime-owned local source resolver to Core context assembly."""
+
+        self._context_composer.bind_awareness_source_resolver(resolver)
 
     async def route(self, observation: Observation, execute: ActionExecutor) -> None:
         if self._closing:

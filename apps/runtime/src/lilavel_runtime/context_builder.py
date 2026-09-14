@@ -21,8 +21,12 @@ from .awareness import (
     AwarenessScope,
     PeripheralAwarenessBuffer,
 )
+from .awareness_sources import AwarenessSourceResolver
 from .context import (
     MAX_AWARENESS_CONTEXT_NOTES,
+    MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE,
+    MAX_AWARENESS_SOURCE_TEXT_CHARS,
+    MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS,
     MAX_CONTEXT_CAPABILITIES,
     MAX_CONTEXT_INTENTIONS,
     MAX_CONTEXT_LABEL_BYTES,
@@ -31,6 +35,7 @@ from .context import (
     ActivityKind,
     AwarenessContext,
     AwarenessContextNote,
+    AwarenessSourceMaterial,
     CapabilityContext,
     CapabilityId,
     CapabilityProjection,
@@ -375,16 +380,30 @@ class _UnknownTemporalResolver:
 class PeripheralAwarenessContextResolver:
     """Project active buffer metadata into the bounded context domain."""
 
-    def __init__(self, buffer: PeripheralAwarenessBuffer) -> None:
+    def __init__(
+        self,
+        buffer: PeripheralAwarenessBuffer,
+        *,
+        source_resolver: AwarenessSourceResolver | None = None,
+    ) -> None:
         if type(buffer) is not PeripheralAwarenessBuffer:
             raise TypeError("buffer must be a PeripheralAwarenessBuffer")
+        if source_resolver is not None and not callable(getattr(source_resolver, "resolve", None)):
+            raise TypeError("source_resolver must provide resolve")
         self._buffer = buffer
+        self._source_resolver = source_resolver
 
     @property
     def buffer(self) -> PeripheralAwarenessBuffer:
         """Return the existing runtime-owned buffer dependency."""
 
         return self._buffer
+
+    @property
+    def source_resolver(self) -> AwarenessSourceResolver | None:
+        """Return the optional explicit-reference source resolver."""
+
+        return self._source_resolver
 
     def resolve(self, scope: AwarenessScope) -> AwarenessContext:
         """Read exactly ``scope`` without changing awareness lifecycle state."""
@@ -402,13 +421,62 @@ class PeripheralAwarenessContextResolver:
             raise ContextProviderError("awareness buffer returned a non-tuple snapshot")
         if not active:
             return AwarenessContext(ContextAvailability.KNOWN_EMPTY)
-        notes = tuple(
-            _project_awareness_note(note) for note in active[:MAX_AWARENESS_CONTEXT_NOTES]
+        notes: list[AwarenessContextNote] = []
+        remaining_chars = MAX_AWARENESS_TOTAL_SOURCE_TEXT_CHARS
+        for note in active[:MAX_AWARENESS_CONTEXT_NOTES]:
+            material, consumed_chars = _resolve_awareness_source_material(
+                note,
+                self._source_resolver,
+                remaining_chars,
+            )
+            notes.append(_project_awareness_note(note, source_material=material))
+            remaining_chars -= consumed_chars
+        return AwarenessContext(ContextAvailability.KNOWN, tuple(notes))
+
+
+def _resolve_awareness_source_material(
+    note: AwarenessNote,
+    resolver: AwarenessSourceResolver | None,
+    remaining_chars: int,
+) -> tuple[tuple[AwarenessSourceMaterial, ...], int]:
+    if resolver is None or remaining_chars <= 0:
+        return (), 0
+    resolved: list[AwarenessSourceMaterial] = []
+    consumed_chars = 0
+    for source_ref in note.source_refs[:MAX_AWARENESS_SOURCE_ITEMS_PER_NOTE]:
+        try:
+            material = resolver.resolve(source_ref)
+            if material is None:
+                continue
+            if type(material) is not AwarenessSourceMaterial:
+                return (), 0
+            if material.source_ref != source_ref:
+                return (), 0
+            text = material.text[:MAX_AWARENESS_SOURCE_TEXT_CHARS]
+        except Exception:
+            return (), 0
+        available_chars = remaining_chars - consumed_chars
+        if available_chars <= 0:
+            break
+        text = text[:available_chars]
+        if not text:
+            continue
+        resolved.append(
+            AwarenessSourceMaterial(
+                source_ref=material.source_ref,
+                source_kind=material.source_kind,
+                text=text,
+            )
         )
-        return AwarenessContext(ContextAvailability.KNOWN, notes)
+        consumed_chars += len(text)
+    return tuple(resolved), consumed_chars
 
 
-def _project_awareness_note(note: AwarenessNote) -> AwarenessContextNote:
+def _project_awareness_note(
+    note: AwarenessNote,
+    *,
+    source_material: tuple[AwarenessSourceMaterial, ...] = (),
+) -> AwarenessContextNote:
     if type(note) is not AwarenessNote:
         raise ContextProviderError("awareness buffer returned an invalid note")
     if note.status is not AwarenessNoteStatus.ACTIVE:
@@ -420,6 +488,7 @@ def _project_awareness_note(note: AwarenessNote) -> AwarenessContextNote:
         occurrence_count=note.occurrence_count,
         first_seen_at=note.admitted_at,
         last_seen_at=note.last_seen_at or note.admitted_at,
+        source_material=source_material,
     )
 
 
@@ -668,10 +737,23 @@ class ContextFrameBuilder:
             and type(resolver) is PeripheralAwarenessContextResolver
             and self._awareness.buffer is resolver.buffer
         ):
+            self._awareness = resolver
             return
         if self._awareness is not None and self._awareness is not resolver:
             raise ValueError("context builder is already bound to another awareness resolver")
         self._awareness = resolver
+
+    def bind_awareness_source_resolver(self, resolver: AwarenessSourceResolver) -> None:
+        """Attach an explicit-reference source resolver to the bound buffer view."""
+
+        if not callable(getattr(resolver, "resolve", None)):
+            raise TypeError("source_resolver must provide resolve")
+        if type(self._awareness) is not PeripheralAwarenessContextResolver:
+            raise ValueError("context builder has no bound peripheral awareness resolver")
+        self._awareness = PeripheralAwarenessContextResolver(
+            self._awareness.buffer,
+            source_resolver=resolver,
+        )
 
     def _resolve_environment(
         self, purpose: ContextPurpose, request: ContextBuildRequest
