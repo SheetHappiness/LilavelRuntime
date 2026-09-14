@@ -62,6 +62,7 @@ class CognitionReasonCode(StrEnum):
     AMBIENT_CONTEXT = "ambient_context"
     NOT_ADDRESSED = "not_addressed"
     LOW_RELEVANCE = "low_relevance"
+<<<<<<< HEAD
     RESPONSE_OBLIGATION = "response_obligation"
     NO_RESPONSE_OBLIGATION = "no_response_obligation"
     STALE_CONTEXT = "stale_context"
@@ -73,6 +74,13 @@ class CognitionReasonCode(StrEnum):
     CONSTRAINT_FORGOTTEN = "constraint_forgotten"
     DISCUSSION_STUCK = "discussion_stuck"
     UNIQUE_INFORMATION = "unique_information"
+=======
+    SIMPLE_REQUEST = "simple_request"
+    HIGH_SOCIAL_STAKES = "high_social_stakes"
+    MULTIPLE_PLAUSIBLE_MOVES = "multiple_plausible_moves"
+    INTERVENTION_UNCERTAIN = "intervention_uncertain"
+    REVERSIBLE_ASSUMPTION = "reversible_assumption"
+>>>>>>> codex/cog-v1-c
 
 
 MAX_COGNITION_REASON_CODES = 8
