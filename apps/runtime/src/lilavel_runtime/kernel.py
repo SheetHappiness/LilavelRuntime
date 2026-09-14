@@ -15,6 +15,7 @@ from .cognition_episode import CognitionEpisodeRunner
 from .context_builder import (
     ContextFrameBuilder,
     MindStateIntentionResolver,
+    PeripheralAwarenessContextResolver,
     TemporalCoordinatorResolver,
 )
 from .contracts import (
@@ -207,6 +208,12 @@ class LilavelRuntime:
         self._awareness_buffer = awareness_buffer or PeripheralAwarenessBuffer()
         if type(self._awareness_buffer) is not PeripheralAwarenessBuffer:
             raise TypeError("awareness_buffer must be a PeripheralAwarenessBuffer")
+        bind_router_awareness = getattr(self._event_router, "bind_awareness_buffer", None)
+        if callable(bind_router_awareness):
+            bind_router_awareness(
+                self._awareness_buffer,
+                scope_id=self._semantic_actor.scope_id,
+            )
         self._cognition_gate = configured_gate
         if type(self._cognition_gate) is DeterministicAttentionCognitionGate:
             self._cognition_gate.bind_awareness_buffer(
@@ -263,17 +270,24 @@ class LilavelRuntime:
             )
         self._mind_executor = mind_executor
         self._temporal_coordinator = temporal_coordinator
-        self._context_builder = context_builder or ContextFrameBuilder(
-            clock=temporal_coordinator,
-            intention_resolver=(
-                MindStateIntentionResolver(mind_state) if mind_state is not None else None
-            ),
-            temporal_resolver=(
-                TemporalCoordinatorResolver(temporal_coordinator)
-                if temporal_coordinator is not None
-                else None
-            ),
-        )
+        if context_builder is None:
+            self._context_builder = ContextFrameBuilder(
+                clock=temporal_coordinator,
+                intention_resolver=(
+                    MindStateIntentionResolver(mind_state) if mind_state is not None else None
+                ),
+                temporal_resolver=(
+                    TemporalCoordinatorResolver(temporal_coordinator)
+                    if temporal_coordinator is not None
+                    else None
+                ),
+                awareness_resolver=PeripheralAwarenessContextResolver(self._awareness_buffer),
+            )
+        else:
+            context_builder.bind_awareness_resolver(
+                PeripheralAwarenessContextResolver(self._awareness_buffer)
+            )
+            self._context_builder = context_builder
         self._temporal_host = (
             TemporalHost(temporal_coordinator, self.submit_cognition)
             if temporal_coordinator is not None

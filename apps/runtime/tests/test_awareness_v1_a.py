@@ -306,8 +306,8 @@ def test_awareness_owner_has_no_generation_effect_persistence_or_context_authori
         token not in source + module_source.casefold()
         for token in ("modelrequest", "conversationstore", "sqlite", "discord", "toolcall")
     )
-    assert "awareness" not in composer_source
-    assert "awareness" not in {field.casefold() for field in frame_fields}
+    assert "generate(" not in composer_source
+    assert "awareness" in {field.casefold() for field in frame_fields}
     imports = {
         node.module
         for node in ast.walk(ast.parse(module_source))

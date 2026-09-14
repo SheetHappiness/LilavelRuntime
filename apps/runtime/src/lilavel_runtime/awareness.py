@@ -679,9 +679,18 @@ class PeripheralAwarenessBuffer:
     def snapshot_active(
         self, scope: AwarenessScope, *, now: datetime | None = None
     ) -> tuple[AwarenessNote, ...]:
-        """Explicit future-projection seam for active awareness only."""
+        """Read one exact active scope without lifecycle mutation.
 
-        return self.snapshot(scope, now=now)
+        Unlike the general lifecycle ``snapshot`` operation, this seam is used
+        by context projection. It filters expired records in the returned
+        immutable view but does not compact records or append evidence.
+        """
+
+        if type(scope) is not AwarenessScope:
+            raise TypeError("scope must be an AwarenessScope")
+        current = self._now() if now is None else _validated_now(now)
+        with self._lock:
+            return self._active_snapshot(scope, now=current)
 
     def count(self, scope: AwarenessScope, *, now: datetime | None = None) -> int:
         """Return the current bounded active count for one exact scope."""
@@ -908,13 +917,17 @@ class PeripheralAwarenessBuffer:
                 self._supersession_index.pop(supersession_index_key, None)
         return note.note_id
 
-    def _active_snapshot(self, scope: AwarenessScope) -> tuple[AwarenessNote, ...]:
+    def _active_snapshot(
+        self, scope: AwarenessScope, *, now: datetime | None = None
+    ) -> tuple[AwarenessNote, ...]:
         return tuple(
             sorted(
                 (
                     note
                     for note in self._notes.values()
-                    if note.scope == scope and note.status is AwarenessNoteStatus.ACTIVE
+                    if note.scope == scope
+                    and note.status is AwarenessNoteStatus.ACTIVE
+                    and (now is None or note.expires_at > now)
                 ),
                 key=_note_order_key,
             )

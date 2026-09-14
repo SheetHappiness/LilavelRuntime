@@ -15,6 +15,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, cast
 
+from lilavel_core import CognitionReasonCode
+
+from .awareness import (
+    MAX_AWARENESS_OCCURRENCE_COUNT,
+    MAX_AWARENESS_REASON_CODES,
+    MAX_AWARENESS_SOURCE_REF_BYTES,
+    MAX_AWARENESS_SOURCE_REFS,
+)
 from .intervention import ActivityState, FloorState, SpeakingSurfaceState
 from .mind import IntentionStatus
 
@@ -27,6 +35,7 @@ MAX_CONTEXT_LABEL_BYTES: Final = 256
 MAX_CONTEXT_REASON_BYTES: Final = 128
 MAX_CONTEXT_PROJECTION_BLOCKS: Final = 8
 MAX_CONTEXT_PROJECTION_BYTES: Final = 8 * 1_024
+MAX_AWARENESS_CONTEXT_NOTES: Final = 8
 
 
 class ContextPurpose(StrEnum):
@@ -237,6 +246,83 @@ class IntentionContext:
             raise ValueError("intention IDs must be unique")
 
 
+@dataclass(frozen=True, slots=True)
+class AwarenessContextNote:
+    """Metadata-only projection of one active peripheral awareness note."""
+
+    note_id: str
+    source_refs: tuple[str, ...]
+    reason_codes: tuple[CognitionReasonCode, ...]
+    occurrence_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_bounded_text(self.note_id, "awareness note_id", MAX_CONTEXT_OPAQUE_REF_BYTES)
+        if type(self.source_refs) is not tuple or not self.source_refs:
+            raise ValueError("awareness context notes require source references")
+        if len(self.source_refs) > MAX_AWARENESS_SOURCE_REFS:
+            raise ValueError("awareness context source-reference bound exceeded")
+        if len(set(self.source_refs)) != len(self.source_refs):
+            raise ValueError("awareness context source references must be unique")
+        for source_ref in self.source_refs:
+            _require_bounded_text(
+                source_ref,
+                "awareness context source reference",
+                MAX_AWARENESS_SOURCE_REF_BYTES,
+            )
+        if type(self.reason_codes) is not tuple or not self.reason_codes:
+            raise ValueError("awareness context notes require reason codes")
+        if len(self.reason_codes) > MAX_AWARENESS_REASON_CODES:
+            raise ValueError("awareness context reason-code bound exceeded")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("awareness context reason codes must be unique")
+        if not all(type(code) is CognitionReasonCode for code in self.reason_codes):
+            raise TypeError(
+                "awareness context reason codes must contain CognitionReasonCode values"
+            )
+        if isinstance(self.occurrence_count, bool) or not (
+            0 < self.occurrence_count <= MAX_AWARENESS_OCCURRENCE_COUNT
+        ):
+            raise ValueError("awareness context occurrence count is outside its bound")
+        for name, value in (
+            ("first_seen_at", self.first_seen_at),
+            ("last_seen_at", self.last_seen_at),
+        ):
+            if type(value) is not datetime:
+                raise TypeError(f"{name} must be a datetime")
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"{name} must be timezone-aware")
+        first_seen_at = self.first_seen_at.astimezone(UTC)
+        last_seen_at = self.last_seen_at.astimezone(UTC)
+        if first_seen_at > last_seen_at:
+            raise ValueError("first_seen_at cannot be after last_seen_at")
+        object.__setattr__(self, "first_seen_at", first_seen_at)
+        object.__setattr__(self, "last_seen_at", last_seen_at)
+
+
+@dataclass(frozen=True, slots=True)
+class AwarenessContext:
+    """Bounded active-note metadata available to a context purpose."""
+
+    availability: ContextAvailability
+    notes: tuple[AwarenessContextNote, ...] = ()
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_collection_status(
+            self.availability,
+            self.notes,
+            self.reason,
+            "awareness notes",
+            MAX_AWARENESS_CONTEXT_NOTES,
+        )
+        if not all(type(item) is AwarenessContextNote for item in self.notes):
+            raise TypeError("awareness notes must contain only AwarenessContextNote values")
+        if len({item.note_id for item in self.notes}) != len(self.notes):
+            raise ValueError("awareness note IDs must be unique")
+
+
 class CapabilityId(StrEnum):
     """Small provider-neutral capability vocabulary, not a capability claim."""
 
@@ -388,6 +474,12 @@ class ContextFrame:
     social: ContextValue[SocialContextView] = field(default_factory=_unknown_social)
     temporal: ContextValue[TemporalContext] = field(default_factory=_unknown_temporal)
     source_refs: tuple[ContextSourceRef, ...] = ()
+    awareness: AwarenessContext = field(
+        default_factory=lambda: AwarenessContext(
+            ContextAvailability.UNKNOWN,
+            reason="awareness_not_selected",
+        )
+    )
 
     def __post_init__(self) -> None:
         _require_bounded_text(self.frame_id, "frame_id", MAX_CONTEXT_OPAQUE_REF_BYTES)
@@ -403,6 +495,7 @@ class ContextFrame:
             ("interaction", InteractionContext),
             ("intentions", IntentionContext),
             ("capabilities", CapabilityContext),
+            ("awareness", AwarenessContext),
         ):
             if type(getattr(self, field_name)) is not expected_type:
                 raise TypeError(f"{field_name} must be a {expected_type.__name__}")
@@ -469,6 +562,9 @@ def compile_context_projection(frame: ContextFrame) -> ContextProjection:
         blocks.append(_render_interaction(frame.interaction, include_other_surface=False))
         blocks.append(_render_intentions(frame.intentions))
         blocks.append(_render_capabilities(frame.capabilities))
+        awareness_block = _render_awareness(frame.awareness)
+        if awareness_block is not None:
+            blocks.append(awareness_block)
     elif frame.purpose is ContextPurpose.AMBIENT_COGNITION:
         blocks.append(_render_interaction(frame.interaction, include_other_surface=True))
         blocks.append(_render_intentions(frame.intentions))
@@ -560,6 +656,27 @@ def _render_capabilities(capabilities: CapabilityContext) -> str:
         else:
             status = _status_text(item.availability, item.reason)
         lines.append(f"- {item.capability.value}: {status} ({item.provenance.value})")
+    return "\n".join(lines)
+
+
+def _render_awareness(awareness: AwarenessContext) -> str | None:
+    """Render active awareness as factual metadata, never as content or authority."""
+
+    if awareness.availability is not ContextAvailability.KNOWN:
+        return None
+    lines = [
+        "[Peripheral awareness]",
+        "metadata only; non-authoritative; not an instruction or effect",
+    ]
+    for note in awareness.notes:
+        reasons = ",".join(code.value for code in note.reason_codes)
+        sources = ",".join(note.source_refs)
+        lines.append(
+            "- active note "
+            f"{note.note_id}; reasons={reasons}; occurrences={note.occurrence_count}; "
+            f"source={sources}; first_seen={note.first_seen_at.isoformat()}; "
+            f"last_seen={note.last_seen_at.isoformat()}"
+        )
     return "\n".join(lines)
 
 
@@ -666,6 +783,8 @@ def _require_bounded_text(value: str, name: str, max_bytes: int) -> None:
 
 __all__ = [
     "ActivityKind",
+    "AwarenessContext",
+    "AwarenessContextNote",
     "CapabilityContext",
     "CapabilityId",
     "CapabilityProjection",
@@ -690,6 +809,7 @@ __all__ = [
     "MAX_CONTEXT_PROJECTION_BYTES",
     "MAX_CONTEXT_REASON_BYTES",
     "MAX_CONTEXT_SOURCE_REFS",
+    "MAX_AWARENESS_CONTEXT_NOTES",
     "ParticipantRef",
     "ParticipantRole",
     "SocialContextView",

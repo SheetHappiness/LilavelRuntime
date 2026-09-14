@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from lilavel_core import (
@@ -28,14 +28,25 @@ from lilavel_core.sidecar_protocol import (
     MAX_GUIDANCE_BYTES,
 )
 
+from .awareness import (
+    MAX_AWARENESS_NOTES_TOTAL,
+    AwarenessScope,
+    PeripheralAwarenessBuffer,
+)
 from .context import (
+    AwarenessContext,
+    ContextAvailability,
     ContextProjection,
     ContextProvenance,
     ContextPurpose,
     ContextSourceRef,
     compile_context_projection,
 )
-from .context_builder import ContextBuildRequest, ContextFrameBuilder
+from .context_builder import (
+    ContextBuildRequest,
+    ContextFrameBuilder,
+    PeripheralAwarenessContextResolver,
+)
 from .contracts import CognitionEpisode, CognitionTriggerSource
 
 MAX_CONTEXT_ASSEMBLY_EVIDENCE = 256
@@ -58,6 +69,10 @@ class ContextAssemblyEvidence:
     omitted_block_count: int = 0
     truncation_count: int = 0
     outcome: ContextAssemblyOutcome = "omitted"
+    awareness_availability: ContextAvailability = ContextAvailability.UNKNOWN
+    awareness_note_count: int = 0
+    awareness_block_present: bool = False
+    awareness_omitted_by_budget: bool = False
 
     def __post_init__(self) -> None:
         if type(self.purpose) is not ContextPurpose:
@@ -78,6 +93,14 @@ class ContextAssemblyEvidence:
                 raise ValueError(f"{name} must be non-negative")
         if self.outcome not in {"injected", "omitted", "failed"}:
             raise ValueError("invalid context assembly outcome")
+        if type(self.awareness_availability) is not ContextAvailability:
+            raise TypeError("awareness_availability must be a ContextAvailability")
+        if isinstance(self.awareness_note_count, bool) or self.awareness_note_count < 0:
+            raise ValueError("awareness_note_count must be non-negative")
+        if type(self.awareness_block_present) is not bool:
+            raise TypeError("awareness_block_present must be a bool")
+        if type(self.awareness_omitted_by_budget) is not bool:
+            raise TypeError("awareness_omitted_by_budget must be a bool")
 
 
 ContextRequestFactory = Callable[[ContextPurpose, str, object], ContextBuildRequest]
@@ -112,12 +135,29 @@ def production_context_request_factory(
         if trigger.source is CognitionTriggerSource.TEMPORAL and len(trigger.source_refs) >= 4
         else ()
     )
+    awareness_scope = _episode_awareness_scope(owner)
     return ContextBuildRequest(
         scope_id=scope_id,
         relevant_intention_ids=relevant_intention_ids,
         wake_intent_ref=trigger.wake_intent_id,
         source_refs=source_refs,
+        awareness_scope=awareness_scope,
     )
+
+
+def _episode_awareness_scope(episode: CognitionEpisode) -> AwarenessScope | None:
+    """Derive one exact awareness scope only from a single-scope episode."""
+
+    observations = episode.context.observations
+    if not observations:
+        return None
+    scopes = tuple(
+        AwarenessScope.from_observation(episode.scope_id, observation)
+        for observation in observations
+    )
+    if any(scope != scopes[0] for scope in scopes[1:]):
+        return None
+    return scopes[0]
 
 
 def request_context_bytes(request: ModelRequest) -> int:
@@ -150,6 +190,7 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
         self._builder = builder
         self._request_factory = request_factory or _default_request_factory
         self._evidence: deque[ContextAssemblyEvidence] = deque(maxlen=evidence_capacity)
+        self._awareness_scopes: dict[str, AwarenessScope] = {}
         self._operating_block = compile_operating_canon(LILAVEL_OPERATING_CANON_V1)[0]
 
     @property
@@ -162,6 +203,28 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
         """Return bounded content-free request assembly evidence."""
 
         return tuple(self._evidence)
+
+    def bind_awareness_buffer(self, buffer: PeripheralAwarenessBuffer) -> None:
+        """Bind the existing runtime buffer to this composition path once."""
+
+        self._builder.bind_awareness_resolver(PeripheralAwarenessContextResolver(buffer))
+
+    def bind_awareness_scope(self, context_scope_id: str, scope: AwarenessScope) -> None:
+        """Bind one runtime-owned exact scope to an existing Core session."""
+
+        if type(scope) is not AwarenessScope:
+            raise TypeError("scope must be an AwarenessScope")
+        if type(context_scope_id) is not str or not context_scope_id.strip():
+            raise ValueError("context_scope_id must be non-empty text")
+        if len(context_scope_id.encode("utf-8")) > 128:
+            raise ValueError("context_scope_id exceeds its bound")
+        if (
+            context_scope_id not in self._awareness_scopes
+            and len(self._awareness_scopes) >= MAX_AWARENESS_NOTES_TOTAL
+        ):
+            oldest = next(iter(self._awareness_scopes))
+            del self._awareness_scopes[oldest]
+        self._awareness_scopes[context_scope_id] = scope
 
     def compose(
         self,
@@ -210,6 +273,9 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
             request = self._request_factory(purpose, scope_id, owner)
             if type(request) is not ContextBuildRequest:
                 raise TypeError("context request factory returned an invalid request")
+            bound_scope = self._awareness_scopes.get(scope_id)
+            if bound_scope is not None and request.awareness_scope is None:
+                request = replace(request, awareness_scope=bound_scope)
             frame = self._builder.build(purpose, request)
             projection = compile_context_projection(frame)
         except Exception:
@@ -222,8 +288,12 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
                 request_input_bytes=input_bytes,
                 existing_guidance=guidance,
                 outcome="failed",
+                awareness_availability=ContextAvailability.UNAVAILABLE,
             )
             return ()
+
+        awareness = frame.awareness
+        awareness_block = _awareness_block_in(projection)
 
         fitted, omitted = _fit_projection(
             projection,
@@ -244,6 +314,7 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
                 history_bytes=history_bytes,
                 request_input_bytes=input_bytes,
                 existing_guidance=guidance,
+                awareness=awareness,
                 omitted_block_count=omitted or len(projection.blocks),
                 outcome="omitted",
             )
@@ -257,6 +328,8 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
             history_bytes=history_bytes,
             request_input_bytes=input_bytes,
             existing_guidance=guidance,
+            awareness=awareness,
+            awareness_block_present=awareness_block in fitted if awareness_block else False,
             omitted_block_count=omitted,
             outcome="injected",
         )
@@ -272,9 +345,20 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
         history_bytes: int,
         request_input_bytes: int,
         existing_guidance: tuple[str, ...] = (),
+        awareness: AwarenessContext | None = None,
+        awareness_block_present: bool = False,
+        awareness_availability: ContextAvailability = ContextAvailability.UNKNOWN,
+        awareness_omitted_by_budget: bool = False,
         omitted_block_count: int = 0,
         outcome: ContextAssemblyOutcome,
     ) -> None:
+        if awareness is not None:
+            awareness_availability = awareness.availability
+            awareness_omitted_by_budget = (
+                awareness.availability is ContextAvailability.KNOWN
+                and bool(awareness.notes)
+                and not awareness_block_present
+            )
         self._evidence.append(
             ContextAssemblyEvidence(
                 purpose=purpose,
@@ -289,6 +373,10 @@ class ProductionContextComposer(ConversationContextGuidanceComposer):
                 + sum(len(block.encode("utf-8")) for block in blocks),
                 omitted_block_count=omitted_block_count,
                 outcome=outcome,
+                awareness_availability=awareness_availability,
+                awareness_note_count=0 if awareness is None else len(awareness.notes),
+                awareness_block_present=awareness_block_present,
+                awareness_omitted_by_budget=awareness_omitted_by_budget,
             )
         )
 
@@ -332,6 +420,15 @@ def _block_kind(block: str) -> str:
 
     first_line = block.split("\n", 1)[0]
     return first_line.strip("[]").strip().lower().replace(" ", "_")
+
+
+def _awareness_block_in(projection: ContextProjection) -> str | None:
+    """Return the optional awareness block without exposing its content."""
+
+    for block in projection.blocks:
+        if _block_kind(block) == "peripheral_awareness":
+            return block
+    return None
 
 
 __all__ = [

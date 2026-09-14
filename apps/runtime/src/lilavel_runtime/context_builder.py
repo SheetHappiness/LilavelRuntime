@@ -15,13 +15,22 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Protocol
 
+from .awareness import (
+    AwarenessNote,
+    AwarenessNoteStatus,
+    AwarenessScope,
+    PeripheralAwarenessBuffer,
+)
 from .context import (
+    MAX_AWARENESS_CONTEXT_NOTES,
     MAX_CONTEXT_CAPABILITIES,
     MAX_CONTEXT_INTENTIONS,
     MAX_CONTEXT_LABEL_BYTES,
     MAX_CONTEXT_OPAQUE_REF_BYTES,
     MAX_CONTEXT_SOURCE_REFS,
     ActivityKind,
+    AwarenessContext,
+    AwarenessContextNote,
     CapabilityContext,
     CapabilityId,
     CapabilityProjection,
@@ -84,6 +93,7 @@ class ContextBuildRequest:
     wake_intent_ref: str | None = None
     source_refs: tuple[ContextSourceRef, ...] = ()
     temporal_continuation: bool = False
+    awareness_scope: AwarenessScope | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.scope_id, "scope_id", MAX_CONTEXT_OPAQUE_REF_BYTES)
@@ -114,6 +124,8 @@ class ContextBuildRequest:
                 raise ValueError("untrusted source references cannot enter a build request")
         if type(self.temporal_continuation) is not bool:
             raise TypeError("temporal_continuation must be a bool")
+        if self.awareness_scope is not None and type(self.awareness_scope) is not AwarenessScope:
+            raise TypeError("awareness_scope must be an AwarenessScope")
 
 
 class EnvironmentResolver(Protocol):
@@ -307,6 +319,12 @@ class SourceRefResolver(Protocol):
     ) -> tuple[ContextSourceRef, ...]: ...
 
 
+class AwarenessContextResolver(Protocol):
+    """Resolve one exact runtime-owned awareness scope read-only."""
+
+    def resolve(self, scope: AwarenessScope) -> AwarenessContext: ...
+
+
 class _UnknownEnvironmentResolver:
     def resolve(self, purpose: ContextPurpose, request: ContextBuildRequest) -> EnvironmentContext:
         del purpose, request
@@ -352,6 +370,57 @@ class _UnknownTemporalResolver:
             ContextAvailability.UNKNOWN,
             reason="wake_relation_not_established",
         )
+
+
+class PeripheralAwarenessContextResolver:
+    """Project active buffer metadata into the bounded context domain."""
+
+    def __init__(self, buffer: PeripheralAwarenessBuffer) -> None:
+        if type(buffer) is not PeripheralAwarenessBuffer:
+            raise TypeError("buffer must be a PeripheralAwarenessBuffer")
+        self._buffer = buffer
+
+    @property
+    def buffer(self) -> PeripheralAwarenessBuffer:
+        """Return the existing runtime-owned buffer dependency."""
+
+        return self._buffer
+
+    def resolve(self, scope: AwarenessScope) -> AwarenessContext:
+        """Read exactly ``scope`` without changing awareness lifecycle state."""
+
+        if type(scope) is not AwarenessScope:
+            raise TypeError("scope must be an AwarenessScope")
+        try:
+            active = self._buffer.snapshot_active(scope)
+        except Exception:
+            return AwarenessContext(
+                ContextAvailability.UNAVAILABLE,
+                reason="awareness_buffer_unavailable",
+            )
+        if type(active) is not tuple:
+            raise ContextProviderError("awareness buffer returned a non-tuple snapshot")
+        if not active:
+            return AwarenessContext(ContextAvailability.KNOWN_EMPTY)
+        notes = tuple(
+            _project_awareness_note(note) for note in active[:MAX_AWARENESS_CONTEXT_NOTES]
+        )
+        return AwarenessContext(ContextAvailability.KNOWN, notes)
+
+
+def _project_awareness_note(note: AwarenessNote) -> AwarenessContextNote:
+    if type(note) is not AwarenessNote:
+        raise ContextProviderError("awareness buffer returned an invalid note")
+    if note.status is not AwarenessNoteStatus.ACTIVE:
+        raise ContextProviderError("awareness buffer returned a non-active note")
+    return AwarenessContextNote(
+        note_id=note.note_id,
+        source_refs=note.source_refs,
+        reason_codes=note.reason_codes,
+        occurrence_count=note.occurrence_count,
+        first_seen_at=note.admitted_at,
+        last_seen_at=note.last_seen_at or note.admitted_at,
+    )
 
 
 class MindStateIntentionResolver:
@@ -472,6 +541,7 @@ class ContextFrameBuilder:
         social_resolver: SocialResolver | None = None,
         temporal_resolver: TemporalResolver | None = None,
         source_ref_resolver: SourceRefResolver | None = None,
+        awareness_resolver: AwarenessContextResolver | None = None,
     ) -> None:
         self._clock = clock or _utc_now
         self._environment = environment_resolver or _UnknownEnvironmentResolver()
@@ -481,6 +551,7 @@ class ContextFrameBuilder:
         self._social = social_resolver or _UnknownSocialResolver()
         self._temporal = temporal_resolver or _UnknownTemporalResolver()
         self._source_refs = source_ref_resolver
+        self._awareness = awareness_resolver
         for name, resolver in (
             ("environment_resolver", self._environment),
             ("interaction_resolver", self._interaction),
@@ -495,6 +566,8 @@ class ContextFrameBuilder:
             getattr(self._source_refs, "resolve", None)
         ):
             raise TypeError("source_ref_resolver must provide resolve")
+        if self._awareness is not None and not callable(getattr(self._awareness, "resolve", None)):
+            raise TypeError("awareness_resolver must provide resolve")
 
     def build(self, purpose: ContextPurpose, request: ContextBuildRequest) -> ContextFrame:
         """Build a bounded frame without mutating any source owner."""
@@ -524,6 +597,10 @@ class ContextFrameBuilder:
         temporal: ContextValue[TemporalContext] = ContextValue(
             ContextAvailability.UNKNOWN,
             reason="temporal_state_not_selected",
+        )
+        awareness = AwarenessContext(
+            ContextAvailability.UNKNOWN,
+            reason="awareness_not_selected",
         )
 
         if purpose in {
@@ -556,6 +633,9 @@ class ContextFrameBuilder:
         if purpose is ContextPurpose.AMBIENT_COGNITION:
             social = self._resolve_social(purpose, request)
 
+        if purpose is ContextPurpose.USER_RESPONSE:
+            awareness = self._resolve_awareness(request)
+
         if purpose is ContextPurpose.TEMPORAL_WAKE or (
             purpose is ContextPurpose.USER_RESPONSE and request.temporal_continuation
         ):
@@ -575,7 +655,23 @@ class ContextFrameBuilder:
             social=social,
             temporal=temporal,
             source_refs=source_refs,
+            awareness=awareness,
         )
+
+    def bind_awareness_resolver(self, resolver: AwarenessContextResolver) -> None:
+        """Bind the runtime-owned awareness resolver before request execution."""
+
+        if not callable(getattr(resolver, "resolve", None)):
+            raise TypeError("awareness_resolver must provide resolve")
+        if (
+            type(self._awareness) is PeripheralAwarenessContextResolver
+            and type(resolver) is PeripheralAwarenessContextResolver
+            and self._awareness.buffer is resolver.buffer
+        ):
+            return
+        if self._awareness is not None and self._awareness is not resolver:
+            raise ValueError("context builder is already bound to another awareness resolver")
+        self._awareness = resolver
 
     def _resolve_environment(
         self, purpose: ContextPurpose, request: ContextBuildRequest
@@ -717,6 +813,34 @@ class ContextFrameBuilder:
                 reconsideration_reason=resolution.reason or "wake_relation_not_established",
             ),
         )
+
+    def _resolve_awareness(self, request: ContextBuildRequest) -> AwarenessContext:
+        scope = request.awareness_scope
+        if scope is None:
+            return AwarenessContext(
+                ContextAvailability.UNKNOWN,
+                reason="awareness_scope_not_established",
+            )
+        if self._awareness is None:
+            return AwarenessContext(
+                ContextAvailability.UNAVAILABLE,
+                reason="awareness_resolver_not_configured",
+            )
+        try:
+            value = self._awareness.resolve(scope)
+        except Exception:
+            return AwarenessContext(
+                ContextAvailability.UNAVAILABLE,
+                reason="awareness_resolver_failed",
+            )
+        if type(value) is not AwarenessContext:
+            raise ContextProviderError("awareness resolver returned an invalid value")
+        if (
+            value.availability is ContextAvailability.KNOWN
+            and len(value.notes) > MAX_AWARENESS_CONTEXT_NOTES
+        ):
+            raise ContextProviderError("awareness resolver exceeded the note bound")
+        return value
 
     def _resolve_source_refs(
         self, purpose: ContextPurpose, request: ContextBuildRequest
@@ -943,6 +1067,7 @@ def _validate_resolution_status(
 __all__ = [
     "CapabilityResolution",
     "CapabilityResolver",
+    "AwarenessContextResolver",
     "ContextBuildRequest",
     "ContextBuilderError",
     "ContextClock",
@@ -955,6 +1080,7 @@ __all__ = [
     "IntentionResolver",
     "InteractionResolver",
     "MindStateIntentionResolver",
+    "PeripheralAwarenessContextResolver",
     "SocialResolution",
     "SocialResolver",
     "SourceRefResolver",

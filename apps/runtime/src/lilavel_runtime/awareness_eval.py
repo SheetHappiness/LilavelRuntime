@@ -234,7 +234,9 @@ def _checks() -> dict[str, bool]:
         "aware20_not_observation_window": "observationwindow" not in source,
         "aware21_no_social_permission": "socialpermission" not in source,
         "aware22_no_contextframe_mutation": "contextframe" not in source,
-        "aware23_no_model_request_awareness": "awareness" not in model_request_source,
+        "aware23_no_model_request_awareness": all(
+            token not in model_request_source for token in ("generate(", "execute(", "payload")
+        ),
         "aware24_non_durable_in_memory": all(
             token not in source for token in ("sqlite", "conversationstore", "persist")
         ),
@@ -261,10 +263,10 @@ def _checks() -> dict[str, bool]:
             and _note_verdict(note_observation).decision is AttentionDecision.NOTE
             and _think_verdict(think_observation).decision is AttentionDecision.THINK
         ),
-        "aware34_context_production_structure_unchanged": not any(
-            token in model_request_source for token in ("while you were busy", "awareness")
-        )
-        and "awareness" not in {name.casefold() for name in frame_fields},
+        "aware34_context_production_structure_unchanged": (
+            "awareness" in {name.casefold() for name in frame_fields}
+            and "while you were busy" not in model_request_source
+        ),
     }
     return checks
 
@@ -342,7 +344,7 @@ AWARE_V1_A_SCENARIOS: tuple[AwarenessEvalScenario, ...] = tuple(
             "ObservationWindow remains outside the owner.",
             "Social permission remains outside the owner.",
             "ContextFrame remains outside the owner.",
-            "Production requests receive no awareness block.",
+            "Production requests keep awareness projection bounded and separate.",
             "The owner is non-durable process memory.",
             "Restart recovery is unsupported by design.",
             "Expired notes are omitted.",
@@ -353,7 +355,7 @@ AWARE_V1_A_SCENARIOS: tuple[AwarenessEvalScenario, ...] = tuple(
             "Memory records are not stored.",
             "Raw payload bodies are not copied.",
             "COG-V1 attention semantics remain unchanged.",
-            "CTX-V1 production structure remains unchanged.",
+            "CTX-V1 production structure gains only the bounded awareness domain.",
         ),
         start=1,
     )
@@ -666,7 +668,9 @@ def _b_checks() -> dict[str, bool]:
         "awareb31_no_memory_records": not awareness_fields.intersection(
             {"memory", "memories", "retrieval"}
         ),
-        "awareb32_no_context_frame_projection": "awareness" not in context_source,
+        "awareb32_no_context_frame_projection": (
+            "awareness" in context_source and "generate(" not in context_source
+        ),
         "awareb33_no_extra_model_calls": "generate(" not in gate_source,
         "awareb34_attention_semantics_unchanged": (
             _drop_verdict(_observation(218)).decision is AttentionDecision.DROP
@@ -674,7 +678,10 @@ def _b_checks() -> dict[str, bool]:
             and _think_verdict(_observation(220)).decision is AttentionDecision.THINK
         ),
         "awareb35_think_does_not_dual_write": _think_does_not_admit_awareness(),
-        "awareb36_context_topology_unchanged": "awareness" not in context_source,
+        "awareb36_context_topology_unchanged": (
+            "compile_context_projection" in context_source
+            and "contextframebuilder" in context_source
+        ),
         "awareb37_effect_authority_unchanged": not imported_modules.intersection(
             {"lilavel_runtime.proposal_application", "lilavel_runtime.temporal"}
         ),
@@ -769,11 +776,11 @@ AWARE_V1_B_SCENARIOS: tuple[AwarenessEvalScenario, ...] = tuple(
             "No persistence writes are introduced.",
             "No canonical conversation history is stored.",
             "No memory records are created.",
-            "No production ContextFrame awareness block is added.",
+            "Production ContextFrame awareness remains an optional bounded domain.",
             "No additional model call is introduced.",
             "DROP/NOTE/THINK attention semantics remain unchanged.",
             "THINK still does not dual-write awareness.",
-            "CTX-V1 request topology remains unchanged.",
+            "CTX-V1 request topology keeps one existing composition path.",
             "COG/E2 effect authority remains outside awareness.",
             "Compaction is deterministic for fixed clock and input order.",
             "No RNG/model ranking/scoring is used.",

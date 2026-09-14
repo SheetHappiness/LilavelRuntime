@@ -25,6 +25,7 @@ from lilavel_core import (
 )
 from lilavel_core.production_cognition import create_conversation
 
+from .awareness import AwarenessScope, PeripheralAwarenessBuffer
 from .cognition_model import DispositionPlanner
 from .context_builder import ContextFrameBuilder
 from .context_integration import ProductionContextComposer
@@ -170,6 +171,7 @@ class CoreConversationRouter:
         self._context_composer = context_composer or ProductionContextComposer(
             ContextFrameBuilder()
         )
+        self._awareness_scope_id: str | None = None
         if planner_factory is None:
 
             def default_planner_factory(runtime: ConversationRuntime) -> DispositionPlanner:
@@ -204,6 +206,18 @@ class CoreConversationRouter:
         session = self._sessions.get((environment, subject))
         return None if session is None else session.core.history
 
+    def bind_awareness_buffer(self, buffer: PeripheralAwarenessBuffer, *, scope_id: str) -> None:
+        """Bind runtime-owned awareness to the existing Core composition path."""
+
+        if type(buffer) is not PeripheralAwarenessBuffer:
+            raise TypeError("buffer must be a PeripheralAwarenessBuffer")
+        if type(scope_id) is not str or not scope_id.strip():
+            raise ValueError("awareness scope_id must be non-empty text")
+        if self._awareness_scope_id is not None and self._awareness_scope_id != scope_id:
+            raise ValueError("router is already bound to another awareness scope")
+        self._context_composer.bind_awareness_buffer(buffer)
+        self._awareness_scope_id = scope_id
+
     async def route(self, observation: Observation, execute: ActionExecutor) -> None:
         if self._closing:
             return
@@ -226,6 +240,15 @@ class CoreConversationRouter:
                 await self._execute(execute, PRESENTATION_OPEN, event.event_id)
                 presentation_open = True
                 session = await self._session_for(route_key)
+                if self._awareness_scope_id is not None:
+                    self._context_composer.bind_awareness_scope(
+                        session.core.scope_id,
+                        AwarenessScope(
+                            self._awareness_scope_id,
+                            event.source.environment,
+                            subject,
+                        ),
+                    )
                 run = session.core.prepare_turn(text, supersede=True)
                 resolution = await session.disposition_resolver.resolve(session.core, run)
                 self._active_runs.add(run)

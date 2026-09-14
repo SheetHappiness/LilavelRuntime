@@ -301,8 +301,8 @@ def test_note_lifecycle_has_no_cognition_path_or_production_context_projection()
 
     from lilavel_runtime import ContextFrame, ProductionContextComposer
 
-    assert "awareness" not in __import__("inspect").getsource(ProductionContextComposer).casefold()
-    assert "awareness" not in {
+    assert "generate(" not in __import__("inspect").getsource(ProductionContextComposer).casefold()
+    assert "awareness" in {
         field.name.casefold() for field in ContextFrame.__dataclass_fields__.values()
     }
 
