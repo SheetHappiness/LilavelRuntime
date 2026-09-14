@@ -43,23 +43,12 @@ from .conversation import (
     RuntimeEvidenceRecord,
     RuntimeGeneration,
 )
-<<<<<<< HEAD
 from .deliberation import (
     MAX_DELIBERATION_CONTEXT_MESSAGES,
     DeliberationContext,
     DeliberationDecision,
     DeliberationPolicy,
 )
-from .operating import (
-    LILAVEL_OPERATING_CANON_V1,
-    MAX_OPERATING_CANON_BYTES,
-    MAX_OPERATING_CANON_LAWS,
-    MAX_OPERATING_LAW_BYTES,
-    OperatingCanon,
-    OperatingLaw,
-    OperatingPrinciple,
-    compile_operating_canon,
-=======
 from .disposition import (
     DeliberativeDispositionPolicy,
     DeterministicFastDispositionPolicy,
@@ -79,7 +68,16 @@ from .disposition import (
     route_disposition,
     select_disposition_route,
     validate_disposition_decision,
->>>>>>> codex/cog-v1-c
+)
+from .operating import (
+    LILAVEL_OPERATING_CANON_V1,
+    MAX_OPERATING_CANON_BYTES,
+    MAX_OPERATING_CANON_LAWS,
+    MAX_OPERATING_LAW_BYTES,
+    OperatingCanon,
+    OperatingLaw,
+    OperatingPrinciple,
+    compile_operating_canon,
 )
 from .persistence import (
     SCHEMA_VERSION,
@@ -173,12 +171,10 @@ __all__ = [
     "CanonicalMessage",
     "CognitionPolicyDecision",
     "CognitionReasonCode",
-<<<<<<< HEAD
     "DeliberationContext",
     "DeliberationDecision",
     "DeliberationPolicy",
     "DispositionCandidate",
-=======
     "DeliberativeDispositionPolicy",
     "DeterministicFastDispositionPolicy",
     "DispositionCase",
@@ -192,7 +188,6 @@ __all__ = [
     "DispositionRoutingEvidence",
     "DispositionSource",
     "FakeDeliberativeDispositionPolicy",
->>>>>>> codex/cog-v1-c
     "ConversationStore",
     "EvidenceRecord",
     "GenerationAccepted",
@@ -269,20 +264,16 @@ __all__ = [
     "DialogueExample",
     "WorkingState",
     "ResponseDisposition",
-<<<<<<< HEAD
     "TurnBehavior",
     "TurnBehaviorResolution",
     "TurnBehaviorResolutionOutcome",
     "TurnBehaviorSource",
-=======
     "SelectiveDispositionPolicy",
     "choose_disposition_route",
->>>>>>> codex/cog-v1-c
     "compile_guidance",
     "compile_planner_guidance",
     "default_turn_behavior",
     "LILAVEL_CHARACTER_V0",
-<<<<<<< HEAD
     "LILAVEL_OPERATING_CANON_V1",
     "MAX_OPERATING_CANON_BYTES",
     "MAX_OPERATING_CANON_LAWS",
@@ -291,9 +282,7 @@ __all__ = [
     "OperatingLaw",
     "OperatingPrinciple",
     "compile_operating_canon",
-=======
     "route_disposition",
     "select_disposition_route",
     "validate_disposition_decision",
->>>>>>> codex/cog-v1-c
 ]
