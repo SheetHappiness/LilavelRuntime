@@ -10,7 +10,7 @@ diagnostics evidence. Live provider/Discord verification remains
 
 - Expected baseline: `337148b820470ca3a46b9f512b014876febecfde`
 - Preflight HEAD: `337148b820470ca3a46b9f512b014876febecfde`
-- Implementation SHA: recorded at phase close
+- Implementation SHA: `f0ca68d8f900031a0f8fd98e90b4f2121092c070`
 - Push: not performed
 
 ## Implemented truth
@@ -44,12 +44,17 @@ idle interval, diagnostics flag, and `cognition_tools_exposed=false`.
 
 - Real `ModelRuntimeV3` + committed V3 fixture proof rejects any provider
   generation request containing tools, while a validated SPEAK proposal still
-  exposes the application factory and sends exactly once: **PASS** — focused
-  proactive suite.
+  exposes the application factory and sends exactly once: **PASS** —
+  `uv run --locked pytest tests/test_proactive_smoke.py` (23 passed).
 - Existing one-shot, single-target, USER-preemption, effect-time revalidation,
   unknown-delivery, and canonical-history isolation tests: **PASS** — focused
-  proactive and runtime cognition/presence suites.
+  proactive and runtime cognition/presence suites (17 cognition evidence
+  matrix tests; 73 focused cognition/intervention/application tests).
 - Strict Ruff, format, and Pyright for modified packages: **PASS**.
+- Full deterministic packages: **PASS** — Discord 118 passed/10 existing
+  deprecation warnings, Runtime 393 passed, Core 195 passed/4 skipped,
+  Contracts 7 passed, and model sidecar 94 passed.
+- Repository docs, architecture, and whitespace guards: **PASS**.
 - Live provider + Discord send: **UNVERIFIED**; no credentials or live service
   were used.
 
