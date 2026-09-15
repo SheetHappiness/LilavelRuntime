@@ -10,7 +10,7 @@ shaped Discord effect path. Live provider/Discord verification remains
 
 - Expected baseline: `af71acf58effd354a9ba98a06b5ea4bc65fa309`
 - Preflight HEAD: `af71acf58effd354a9ba98a06b5ea4bc65fa309`
-- Implementation SHA: recorded at implementation commit
+- Implementation SHA: `c775e44`
 - Closeout SHA: recorded at documentation closeout commit
 - Push: not performed
 
