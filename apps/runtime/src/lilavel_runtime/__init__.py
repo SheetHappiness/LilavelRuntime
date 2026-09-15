@@ -308,6 +308,7 @@ from .mind import (
     MAX_PROJECTED_SELF_ACTION_TEXT_BYTES,
     MAX_RECENT_SELF_ACTIONS,
     MAX_SELF_ACTION_TEXT_BYTES,
+    IntentionKind,
     IntentionStatus,
     MindIntention,
     MindProjection,
@@ -351,6 +352,11 @@ from .presence import (
     PresenceWakePolicy,
     WakeAfterIdleOpportunitiesPolicy,
     parse_mind_appraisal,
+)
+from .proactive_eval import (
+    PROACTIVE_V0_R3_APPRAISAL_CASES,
+    ProactiveR3AppraisalCase,
+    ProactiveR3Expected,
 )
 from .proposal_application import (
     MAX_APPLICATION_FENCES,
@@ -625,6 +631,7 @@ __all__ = [
     "MAX_RECENT_SELF_ACTIONS",
     "MAX_SELF_ACTION_TEXT_BYTES",
     "MAX_PRESENCE_TEXT_BYTES",
+    "IntentionKind",
     "IntentionStatus",
     "MindAppraisal",
     "MindAppraisalAction",
@@ -689,6 +696,9 @@ __all__ = [
     "SpeechPermissionContextResolver",
     "SpeechRevalidationEvidence",
     "SpeechRevalidationStatus",
+    "PROACTIVE_V0_R3_APPRAISAL_CASES",
+    "ProactiveR3AppraisalCase",
+    "ProactiveR3Expected",
     "RuntimeFailed",
     "RuntimeNotRunning",
     "RuntimePresence",

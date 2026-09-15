@@ -23,6 +23,13 @@ class IntentionStatus(StrEnum):
     EXPRESSED = "expressed"
 
 
+class IntentionKind(StrEnum):
+    """The bounded semantic class of one runtime-owned intention."""
+
+    INITIATIVE = "initiative"
+    DEFERRED_COMMITMENT = "deferred_commitment"
+
+
 class MindStateDeltaKind(StrEnum):
     """The narrow runtime command vocabulary accepted by MindState."""
 
@@ -53,6 +60,7 @@ class MindStateDelta:
     text: str
     user_message_id: str
     assistant_message_id: str
+    intention_kind: IntentionKind = IntentionKind.INITIATIVE
 
     def __post_init__(self) -> None:
         if self.kind is not MindStateDeltaKind.CREATE_INTENTION:
@@ -60,6 +68,8 @@ class MindStateDelta:
         _require_text(self.text, "text", MAX_INTENTION_TEXT_BYTES)
         _require_text(self.user_message_id, "user_message_id", 128)
         _require_text(self.assistant_message_id, "assistant_message_id", 128)
+        if type(self.intention_kind) is not IntentionKind:
+            raise TypeError("intention_kind must be an IntentionKind")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +80,7 @@ class MindIntention:
     text: str
     user_message_id: str
     assistant_message_id: str
+    kind: IntentionKind = IntentionKind.INITIATIVE
     status: IntentionStatus = IntentionStatus.ACTIVE
 
     def __post_init__(self) -> None:
@@ -77,6 +88,8 @@ class MindIntention:
         _require_text(self.text, "text", MAX_INTENTION_TEXT_BYTES)
         _require_text(self.user_message_id, "user_message_id", 128)
         _require_text(self.assistant_message_id, "assistant_message_id", 128)
+        if type(self.kind) is not IntentionKind:
+            raise TypeError("kind must be an IntentionKind")
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +265,7 @@ class MindState:
                         text=delta.text,
                         user_message_id=delta.user_message_id,
                         assistant_message_id=delta.assistant_message_id,
+                        kind=delta.intention_kind,
                     )
                 )
                 retained.append(created[-1])
@@ -266,10 +280,13 @@ class MindState:
         *,
         user_message_id: str,
         assistant_message_id: str,
+        kind: IntentionKind = IntentionKind.INITIATIVE,
     ) -> MindIntention | None:
         _require_text(text, "text", MAX_INTENTION_TEXT_BYTES)
         _require_text(user_message_id, "user_message_id", 128)
         _require_text(assistant_message_id, "assistant_message_id", 128)
+        if type(kind) is not IntentionKind:
+            raise TypeError("kind must be an IntentionKind")
         with self._lock:
             if len(self._intentions) >= self._intentions_capacity:
                 evictable = next(
@@ -290,6 +307,7 @@ class MindState:
                 text=text,
                 user_message_id=user_message_id,
                 assistant_message_id=assistant_message_id,
+                kind=kind,
             )
             self._intentions.append(intention)
             self._version += 1
@@ -333,6 +351,7 @@ __all__ = [
     "MAX_PROJECTED_SELF_ACTION_TEXT_BYTES",
     "MAX_RECENT_SELF_ACTIONS",
     "MAX_SELF_ACTION_TEXT_BYTES",
+    "IntentionKind",
     "IntentionStatus",
     "MindStateApplyError",
     "MindStateCapacityExceeded",

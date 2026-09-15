@@ -35,6 +35,7 @@ from lilavel_runtime import (
     FreshnessBucket,
     FreshnessClass,
     HandlingState,
+    IntentionKind,
     IntentionStatus,
     MindExecutionResult,
     MindExecutionStatus,
@@ -79,6 +80,7 @@ _SAFE_DIAGNOSTIC_KINDS = frozenset(
         "idle_generation_failed",
         "idle_ineligible",
         "idle_parse_invalid",
+        "idle_parse_fulfill",
         "idle_parse_speak",
         "idle_parse_stay_silent",
         "intention_absent",
@@ -104,6 +106,7 @@ _SAFE_DIAGNOSTIC_RESULTS = frozenset(
         "confirmed",
         "denied",
         "failed",
+        "fulfillment_not_proposed",
         "invalid",
         "no_change",
         "none",
@@ -212,6 +215,7 @@ class _IdleAttempt:
     user_epoch: int
     subject: str
     intention_id: str
+    intention_kind: IntentionKind
     trigger_id: str
     send_claimed: bool = False
     speech_evidence_before: int = 0
@@ -438,6 +442,7 @@ class DiscordProactivePresence:
             (APPRAISAL_REASON, "invalid"): "appraisal_parse_invalid",
             (IDLE_REASON, "speak"): "idle_parse_speak",
             (IDLE_REASON, "stay_silent"): "idle_parse_stay_silent",
+            (IDLE_REASON, "fulfill"): "idle_parse_fulfill",
             (IDLE_REASON, "invalid"): "idle_parse_invalid",
         }
         parse_result = evidence.result
@@ -488,7 +493,9 @@ class DiscordProactivePresence:
             intervention_budget=budget,
             handling=HandlingState.UNRESOLVED if intention_live else HandlingState.UNKNOWN,
             sensitivity=SocialSensitivity.ORDINARY,
-            response_obligation=False,
+            response_obligation=eligible
+            and active_intention is not None
+            and active_intention.kind is IntentionKind.DEFERRED_COMMITMENT,
             continuity_current=eligible,
         )
 
@@ -725,7 +732,7 @@ class DiscordProactivePresence:
             eligible = False
         if intention is not None and intention.intention_id != intention_id:
             eligible = False
-        if not eligible or submitter is None:
+        if not eligible or submitter is None or intention is None:
             self._record("idle_ineligible")
             return
 
@@ -745,6 +752,7 @@ class DiscordProactivePresence:
                 user_epoch,
                 subject,
                 intention_id,
+                intention.kind,
                 trigger.trigger_id,
                 speech_evidence_before=(
                     len(self._application.speech_evidence()) if self._application is not None else 0
@@ -788,7 +796,10 @@ class DiscordProactivePresence:
             )
         )
         if silence:
-            self._record("silence")
+            if attempt.intention_kind is IntentionKind.DEFERRED_COMMITMENT:
+                self._record("idle_ineligible", "fulfillment_not_proposed")
+            else:
+                self._record("silence")
         else:
             evidence = self._latest_speech_evidence(attempt)
             if evidence is not None and evidence.revalidation is SpeechRevalidationStatus.DENIED:
@@ -799,12 +810,14 @@ class DiscordProactivePresence:
                     self._record("send_unknown")
                 elif getattr(evidence.effect, "value", None) == "confirmed":
                     self._record("send_confirmed")
+                    self._consume_confirmed_attempt(attempt, result)
                 else:
                     self._record("send_failed", getattr(evidence.effect, "value", None))
             elif evidence is not None and getattr(evidence.effect, "value", None) == "unknown":
                 self._record("send_unknown")
             elif evidence is not None and getattr(evidence.effect, "value", None) == "confirmed":
                 self._record("send_confirmed")
+                self._consume_confirmed_attempt(attempt, result)
             elif evidence is not None:
                 self._record("send_failed", getattr(evidence.effect, "value", None))
             else:
@@ -817,6 +830,17 @@ class DiscordProactivePresence:
         with self._lock:
             if self._idle_attempt is attempt:
                 self._idle_attempt = None
+
+    def _consume_confirmed_attempt(self, attempt: _IdleAttempt, result: object) -> None:
+        if not isinstance(result, MindExecutionResult):
+            return
+        text = result.applied_action_text
+        if not isinstance(text, str) or not text.strip():
+            return
+        intention = self._mind_state.active_intention()
+        if intention is None or intention.intention_id != attempt.intention_id:
+            return
+        self._mind_state.mark_expressed(intention.intention_id, text)
 
     def _latest_speech_evidence(self, attempt: _IdleAttempt) -> Any | None:
         application = self._application

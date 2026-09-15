@@ -63,7 +63,8 @@ environment. These are application actions, not model-selected tools.
 - `CognitionEpisodeRunner` serializes one episode per runtime scope, invokes
   only an effect-free `CognitionEngine`, and returns a `CognitionOutcome` only
   after strict candidate validation. `StateProposal` is currently limited to
-  creating a typed intention; `ActionProposal` is limited to speak/silence
+  creating a typed intention whose bounded semantic kind is either
+  `initiative` or `deferred_commitment`; `ActionProposal` is limited to speak/silence
   intent and has no destination, permission, scope, or executor authority.
   `TemporalProposal` is similarly inert: it carries only a bounded reason,
   optional intention reference, and timezone-aware requested `not_before`.
@@ -161,6 +162,16 @@ one-to-one target is valid does it add the bounded, provider-neutral
 one current runtime-owned intention, the configured idle interval, valid
 silence, and runtime validation of any eventual speech. It grants no effect
 authority and carries no destination or Discord identifier.
+
+PROACTIVE-V0-R3 keeps that intention kind in the provider-neutral `MindState`.
+Appraisal may classify an accepted, still-unfulfilled USER-requested future
+action as `deferred_commitment`; all other created intentions are
+`initiative`. An idle wake for an initiative keeps the existing silence-biased
+`speak`/`stay_silent` contract. An idle wake for a due deferred commitment
+guides cognition to return internal `fulfill` text, which is still compiled to
+the ordinary inert `SPEAK` proposal. Runtime-owned due state supplies the
+trusted response-obligation fact at effect time; the model never selects a
+destination or bypasses `ProposalApplicationCoordinator`.
 
 ## AWARE-V1-C context projection
 

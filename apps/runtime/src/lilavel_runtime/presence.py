@@ -43,7 +43,13 @@ from .contracts import (
     CognitionTriggerSource,
 )
 from .conversation_adapter import ConversationExecutionAdapter, ConversationExecutionResult
-from .mind import MAX_INTENTION_TEXT_BYTES, MindIntention, MindProjection, MindState
+from .mind import (
+    MAX_INTENTION_TEXT_BYTES,
+    IntentionKind,
+    MindIntention,
+    MindProjection,
+    MindState,
+)
 from .mind_convergence import MindExecutionResult
 from .proposal_application import MindStateProvenance
 from .semantic_actor import SemanticAdmission, SemanticCancellationToken
@@ -62,17 +68,25 @@ APPRAISAL_CONTROL_GUIDANCE: Final[tuple[str, ...]] = (
     "This is a transient internal mind appraisal, not a user turn.",
     "Do not speak, call tools, write conversation history, or create memory.",
     'Return exactly one JSON object: {"action":"no_change"} or '
-    '{"action":"create_intention","text":"..."}. '
+    '{"action":"create_intention","kind":"initiative|deferred_commitment",'
+    '"text":"..."}. '
     "Review the complete latest canonical user and assistant turn. The assistant "
     "message is evidence of what Lilavel already did, not just background context.",
     "An unfinished user situation is not automatically an unfinished Lilavel "
     "intention. Create at most one short intention only when a concrete future "
-    "action for Lilavel remains after this turn, was not already performed in the "
-    "assistant response, and could add new value later.",
-    "Do not create an intention to repeat, paraphrase, or re-deliver advice, a "
-    "reminder, an explanation, or a follow-up question already given. Do not "
-    "create one merely because the topic may continue or because there is no "
-    "specific future Lilavel action. Otherwise return no_change.",
+    "action for Lilavel remains after this turn and could add new value later.",
+    "Use kind=deferred_commitment only when the USER requested that concrete "
+    "future Lilavel action, the assistant clearly accepted or committed to it in "
+    "this completed turn, the action was not fulfilled in this assistant turn, "
+    "and the currently surfaced runtime capability can still fulfill it. An "
+    "acknowledgment or promise is not fulfillment of the future action.",
+    "Use kind=initiative for a discretionary runtime idea that is not an accepted "
+    "USER commitment. Do not create a deferred commitment merely because a "
+    "future topic exists, the user may return later, Lilavel has an idea, or the "
+    "assistant used future tense casually.",
+    "A reminder or follow-up actually delivered in this assistant turn is no_change. "
+    "Do not create an intention to repeat, paraphrase, or re-deliver it. Otherwise "
+    "return no_change.",
 )
 AUTONOMOUS_CONTROL_GUIDANCE: Final[tuple[str, ...]] = (
     "This is a transient, noncanonical idle cognition opportunity.",
@@ -363,6 +377,7 @@ class MindAppraisalAction(StrEnum):
 class MindAppraisal:
     action: MindAppraisalAction
     text: str | None = None
+    intention_kind: IntentionKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,16 +404,32 @@ def parse_mind_appraisal(raw: str) -> MindAppraisal:
         return MindAppraisal(MindAppraisalAction.NO_CHANGE)
     action = parsed["action"]
     text = parsed.get("text")
+    intention_kind = parsed.get("kind")
     if action == MindAppraisalAction.NO_CHANGE.value and set(parsed) == {"action"}:
         return MindAppraisal(MindAppraisalAction.NO_CHANGE)
     if (
         action == MindAppraisalAction.CREATE_INTENTION.value
-        and set(parsed) == {"action", "text"}
+        and set(parsed) in ({"action", "kind", "text"}, {"action", "text"})
         and isinstance(text, str)
         and text.strip()
         and len(text.encode("utf-8")) <= MAX_INTENTION_TEXT_BYTES
     ):
-        return MindAppraisal(MindAppraisalAction.CREATE_INTENTION, text.strip())
+        if set(parsed) == {"action", "kind", "text"}:
+            if not isinstance(intention_kind, str):
+                return MindAppraisal(MindAppraisalAction.NO_CHANGE)
+            try:
+                parsed_kind = IntentionKind(intention_kind)
+            except ValueError:
+                return MindAppraisal(MindAppraisalAction.NO_CHANGE)
+        else:
+            # The standalone P5-B1 parser is retained for compatibility with
+            # its deprecated callers.  The canonical MIND parser is strict.
+            parsed_kind = IntentionKind.INITIATIVE
+        return MindAppraisal(
+            MindAppraisalAction.CREATE_INTENTION,
+            text.strip(),
+            parsed_kind,
+        )
     return MindAppraisal(MindAppraisalAction.NO_CHANGE)
 
 
@@ -991,6 +1022,7 @@ class PersistentPresenceRuntime:
                 outcome.appraisal.text,
                 user_message_id=run.user_message_id,
                 assistant_message_id=run.assistant_message_id,
+                kind=outcome.appraisal.intention_kind or IntentionKind.INITIATIVE,
             )
             if intention is not None:
                 self._record(

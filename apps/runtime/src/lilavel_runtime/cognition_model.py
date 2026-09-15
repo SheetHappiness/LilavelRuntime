@@ -59,7 +59,7 @@ from .contracts import (
     StateProposalKind,
     TemporalProposal,
 )
-from .mind import MAX_INTENTION_TEXT_BYTES
+from .mind import MAX_INTENTION_TEXT_BYTES, IntentionKind
 
 MAX_COGNITION_RESULT_BYTES = 4_096
 MAX_APPRAISAL_CONTEXT_MESSAGES = 12
@@ -136,23 +136,35 @@ APPRAISAL_CONTROL_GUIDANCE: tuple[str, ...] = (
     "This is a transient internal mind appraisal, not a user turn.",
     "Do not speak, call tools, write conversation history, or create memory.",
     'Return exactly one JSON object: {"action":"no_change"} or '
-    '{"action":"create_intention","text":"..."}.',
+    '{"action":"create_intention","kind":"initiative|deferred_commitment","text":"..."}.',
     "Review the complete latest canonical user and assistant turn. The assistant "
     "message is evidence of what Lilavel already did, not just background context.",
     "An unfinished user situation is not automatically an unfinished Lilavel "
     "intention. Create at most one short intention only when a concrete future "
-    "action for Lilavel remains after this turn, was not already performed in the "
-    "assistant response, and could add new value later.",
-    "Do not create an intention to repeat, paraphrase, or re-deliver advice, a "
-    "reminder, an explanation, or a follow-up question already given. Do not "
-    "create one merely because the topic may continue or because there is no "
-    "specific future Lilavel action. Otherwise return no_change.",
+    "action for Lilavel remains after this turn and could add new value later.",
+    "Use kind=deferred_commitment only when the USER requested that concrete "
+    "future Lilavel action, the assistant clearly accepted or committed to it in "
+    "this completed turn, the action was not fulfilled in this assistant turn, "
+    "and the currently surfaced runtime capability can still fulfill it. An "
+    "acknowledgment or promise is not fulfillment of the future action.",
+    "Use kind=initiative for a discretionary runtime idea that is not an accepted "
+    "USER commitment. Do not create a deferred commitment merely because a "
+    "future topic exists, the user may return later, Lilavel has an idea, or the "
+    "assistant used future tense casually.",
+    "A reminder or follow-up actually delivered in this assistant turn is no_change. "
+    "Do not create an intention to repeat, paraphrase, or re-deliver it. Otherwise "
+    "return no_change.",
 )
 
 IDLE_CONTROL_GUIDANCE: tuple[str, ...] = (
     "This is a transient, noncanonical idle cognition opportunity.",
     "Act only on the specific runtime-owned intention supplied in this request.",
-    'Return exactly one JSON object: {"action":"speak","text":"..."} or {"action":"stay_silent"}.',
+    "For an ordinary initiative, return exactly one JSON object: "
+    '{"action":"speak","text":"..."} or {"action":"stay_silent"}.',
+    "For a due deferred commitment, this is fulfillment of an already accepted "
+    "USER commitment, not a decision about whether the commitment should exist. "
+    'Return exactly one JSON object: {"action":"fulfill","text":"..."}. '
+    "Produce the smallest appropriate fulfillment utterance.",
     "Do not answer a current user turn or emit ordinary assistant text.",
 )
 
@@ -215,6 +227,7 @@ class CognitionParseOutcome(StrEnum):
     CREATE_INTENTION = "create_intention"
     SPEAK = "speak"
     STAY_SILENT = "stay_silent"
+    FULFILL = "fulfill"
     INVALID = "invalid"
 
 
@@ -915,6 +928,7 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
 
     async def run(self, episode: CognitionEpisode) -> object:
         trigger = episode.trigger
+        idle_intention_kind: IntentionKind | None = None
         if trigger.source is CognitionTriggerSource.EXTERNAL:
             # The direct-message route is owned by ConversationCore/USER and
             # must never be silently converted into ambient cognition.
@@ -968,10 +982,18 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
             )
             if intention is None:
                 return CognitionCandidate()
+            idle_intention_kind = intention.kind
             stable_guidance = (*build_stable_runtime_guidance(), *IDLE_CONTROL_GUIDANCE)
             request = ModelRequest(
                 prompt=(
-                    f"Runtime-owned active intention (context, not a user turn):\n{intention.text}"
+                    (
+                        "Runtime-owned due deferred commitment for fulfillment "
+                        "(context, not a user turn):\n"
+                        if intention.kind is IntentionKind.DEFERRED_COMMITMENT
+                        else "Runtime-owned active initiative intention "
+                        "(context, not a user turn):\n"
+                    )
+                    + intention.text
                 ),
                 system_prompt=(
                     *stable_guidance,
@@ -1026,7 +1048,11 @@ class LocalCognitionEngine(_ScopedModelGenerationMixin):
         if trigger.source is CognitionTriggerSource.TEMPORAL:
             candidate = parse_ambient_intervention_candidate(raw)
             return CognitionCandidate() if candidate is None else candidate.to_cognition_candidate()
-        candidate, parse_outcome = _parse_candidate_with_outcome(raw, trigger.reason)
+        candidate, parse_outcome = _parse_candidate_with_outcome(
+            raw,
+            trigger.reason,
+            idle_intention_kind=idle_intention_kind,
+        )
         if is_proactive_reason:
             self._record_cognition_evidence(
                 trigger.trigger_id,
@@ -1214,7 +1240,10 @@ async def _collect_generation(handle: RuntimeGeneration) -> tuple[object, ...]:
 
 
 def _parse_candidate_with_outcome(
-    raw: str, reason: str
+    raw: str,
+    reason: str,
+    *,
+    idle_intention_kind: IntentionKind | None = None,
 ) -> tuple[CognitionCandidate, CognitionParseOutcome]:
     try:
         if len(raw.encode("utf-8")) > MAX_COGNITION_RESULT_BYTES:
@@ -1236,18 +1265,33 @@ def _parse_candidate_with_outcome(
         if action == "no_change" and set(parsed) == {"action"}:
             return CognitionCandidate(), CognitionParseOutcome.NO_CHANGE
         text = parsed.get("text")
+        intention_kind = parsed.get("kind")
+        legacy_initiative_shape = set(parsed) == {"action", "text"}
         if (
             action == "create_intention"
-            and set(parsed) == {"action", "text"}
+            and set(parsed) in ({"action", "kind", "text"}, {"action", "text"})
             and isinstance(text, str)
             and text.strip()
             and _fits_utf8(text, MAX_INTENTION_TEXT_BYTES)
         ):
             try:
+                if legacy_initiative_shape:
+                    # Existing R1/R2 fixtures used the pre-R3 shape.  Keep
+                    # that compatibility interpretation bounded to initiative;
+                    # deferred commitments require the explicit kind field.
+                    parsed_kind = IntentionKind.INITIATIVE
+                else:
+                    if not isinstance(intention_kind, str):
+                        return CognitionCandidate(), CognitionParseOutcome.INVALID
+                    parsed_kind = IntentionKind(intention_kind)
                 return (
                     CognitionCandidate(
                         state_proposals=(
-                            StateProposal(StateProposalKind.CREATE_INTENTION, text.strip()),
+                            StateProposal(
+                                StateProposalKind.CREATE_INTENTION,
+                                text.strip(),
+                                parsed_kind,
+                            ),
                         )
                     ),
                     CognitionParseOutcome.CREATE_INTENTION,
@@ -1256,7 +1300,27 @@ def _parse_candidate_with_outcome(
                 pass
         return CognitionCandidate(), CognitionParseOutcome.INVALID
 
-    if reason == IDLE_REASON:
+    if reason == IDLE_REASON and idle_intention_kind is IntentionKind.DEFERRED_COMMITMENT:
+        text = parsed.get("text")
+        if (
+            action == "fulfill"
+            and set(parsed) == {"action", "text"}
+            and isinstance(text, str)
+            and text.strip()
+            and _fits_utf8(text, MAX_ACTION_PROPOSAL_CONTENT_BYTES)
+        ):
+            try:
+                return (
+                    CognitionCandidate(
+                        action_proposals=(ActionProposal(ActionProposalKind.SPEAK, text.strip()),)
+                    ),
+                    CognitionParseOutcome.FULFILL,
+                )
+            except (TypeError, ValueError, UnicodeEncodeError):
+                pass
+        return CognitionCandidate(), CognitionParseOutcome.INVALID
+
+    if reason == IDLE_REASON and idle_intention_kind is IntentionKind.INITIATIVE:
         if action == "stay_silent" and set(parsed) == {"action"}:
             try:
                 return (

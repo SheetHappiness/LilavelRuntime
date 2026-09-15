@@ -312,6 +312,22 @@ proposal application coordinator retains the trusted Discord effect factory,
 and opt-in stderr diagnostics remain content-free. They do not imply live
 provider selection or live Discord delivery.
 
+The focused PROACTIVE-V0-R3 deferred-commitment proofs can be rerun with:
+
+```powershell
+Set-Location apps/runtime
+uv run --locked pytest tests/test_proactive_r3.py
+Set-Location apps/discord-adapter
+uv run --locked pytest tests/test_proactive_smoke.py -q
+```
+
+They prove the explicit `initiative`/`deferred_commitment` appraisal contract,
+bounded MindState storage and Core provenance, fulfillment-only due cognition,
+initiative silence, inert action/destination boundaries, one-shot application,
+and the trusted Discord effect path. The evaluation cases are deterministic
+review fixtures; provider classification quality and live deferred delivery
+remain `UNVERIFIED`.
+
 ### Shared protocol boundary
 
 Run both the Core and model-sidecar command sets when validating the shared

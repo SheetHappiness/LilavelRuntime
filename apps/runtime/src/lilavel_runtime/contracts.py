@@ -21,7 +21,7 @@ from lilavel_core import (
     WorkingState,
 )
 
-from .mind import MAX_INTENTION_TEXT_BYTES, MindStateSnapshot
+from .mind import MAX_INTENTION_TEXT_BYTES, IntentionKind, MindStateSnapshot
 
 __all__ = [
     "ActionExecutor",
@@ -47,6 +47,7 @@ __all__ = [
     "EventSource",
     "EventSubmitter",
     "EventTrust",
+    "IntentionKind",
     "JsonValue",
     "NeverWakePolicy",
     "NO_COGNITION",
@@ -440,11 +441,14 @@ class StateProposal:
 
     kind: StateProposalKind
     text: str
+    intention_kind: IntentionKind = IntentionKind.INITIATIVE
 
     def __post_init__(self) -> None:
         if type(self.kind) is not StateProposalKind:
             raise TypeError("kind must be a StateProposalKind")
         _require_bounded_text(self.text, "text", MAX_INTENTION_TEXT_BYTES)
+        if type(self.intention_kind) is not IntentionKind:
+            raise TypeError("intention_kind must be an IntentionKind")
         object.__setattr__(self, "text", self.text.strip())
 
 

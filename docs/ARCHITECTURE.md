@@ -45,7 +45,9 @@ CLI's `local-cli` Core session. MIND-1F-E keeps only narrow local-surface
 presence plumbing and deterministic idle-opportunity production; internal
 appraisal and idle cognition enter the actor as `INTERNAL` `NON_USER` work.
 MIND-0 adds bounded in-memory intentions
-and recent self-actions to the local CLI only; it adds no general scheduler,
+and recent self-actions to the local CLI only; PROACTIVE-V0-R3 gives each
+intention the bounded `initiative`/`deferred_commitment` semantic class and
+keeps due fulfillment on the runtime-owned wake path. It adds no general scheduler,
 attention loop, world model, durable memory, or arbitrary model-selected tool
 authority. MIND-1C adds an effect-free, runtime-owned bounded cognition
 episode seam whose successful result is an inert proposal set; MIND-1D owns
@@ -1166,6 +1168,20 @@ same `SemanticActor(NON_USER)`, `CognitionEpisodeRunner`, and
 `ProposalApplicationCoordinator` path. `SPEAK` is resolved against the trusted
 target by the existing text-only application tool and the effect-time social
 guard; `STAY_SILENT` is inert.
+
+PROACTIVE-V0-R3 keeps one bounded semantic kind with each intention:
+`initiative` or `deferred_commitment`. Appraisal may select
+`deferred_commitment` only for a concrete USER-requested future action that the
+assistant accepted, did not fulfill in the completed turn, and can still fulfill
+through the surfaced capability. An initiative wake retains silence-biased
+`speak`/`stay_silent` cognition. A runtime-owned due wake for a deferred
+commitment asks cognition for internal `fulfill` text, which maps to the
+existing inert `ActionProposal(SPEAK)` rather than expanding external action
+vocabulary. The trusted effect-time resolver supplies response-obligation /
+continuity semantics only for that due deferred commitment; destination,
+freshness, floor, budget, safety, routing, and one-shot effect validation remain
+runtime-owned. Confirmed speech consumes the opportunity and denied, failed,
+unknown, cancelled, or invalid outcomes do not retry automatically.
 
 When the smoke mode is enabled and a trusted target is bound, the production
 `ContextFrame` composition adds one bounded runtime-declared

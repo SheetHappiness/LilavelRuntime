@@ -436,6 +436,54 @@ def test_successful_turn_reuses_appraisal_idle_actor_and_trusted_dm(
     asyncio.run(scenario())
 
 
+def test_due_deferred_commitment_uses_fulfillment_cognition_and_one_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_enabled(monkeypatch)
+    cognition = _CognitionRuntime()
+    user = _UserRuntime()
+    edge = _edge(cognition, user)
+
+    async def scenario() -> None:
+        channel = FakeChannel("deferred-target")
+        await edge.handle_message(
+            FakeInboundMessage("deferred-message", channel, FakeUser("human"), "remind me")
+        )
+        await _wait_until(lambda: len(user.generations) == 1)
+        _finish(user.generations[0], "Understood; I will remind you after the delay.")
+        await _wait_until(lambda: len(cognition.generations) == 1)
+        _finish(
+            cognition.generations[0],
+            '{"action":"create_intention","kind":"deferred_commitment",'
+            '"text":"send the accepted reminder"}',
+        )
+
+        await asyncio.sleep(0.2)
+        assert len(cognition.generations) == 1
+        assert [item["content"] for item in channel.sends] == [
+            "Understood; I will remind you after the delay."
+        ]
+
+        await _wait_until(lambda: len(cognition.generations) == 2, timeout=2.5)
+        assert "due deferred commitment" in str(cognition.requests[1].prompt)
+        _finish(cognition.generations[1], '{"action":"fulfill","text":"your reminder"}')
+        await _wait_until(
+            lambda: any(item.kind == "send_confirmed" for item in edge.proactive_evidence())
+        )
+        assert [item["content"] for item in channel.sends] == [
+            "Understood; I will remind you after the delay.",
+            "your reminder",
+        ]
+        assert [item.kind for item in edge.proactive_evidence()].count("send_confirmed") == 1
+        assert any(item.kind == "idle_parse_fulfill" for item in edge.proactive_evidence())
+        await asyncio.sleep(1.1)
+        assert len(cognition.generations) == 2
+        assert len(channel.sends) == 2
+        await edge.close()
+
+    asyncio.run(scenario())
+
+
 def test_same_subject_rebinding_refreshes_channel_without_disabling_proactive_speech(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

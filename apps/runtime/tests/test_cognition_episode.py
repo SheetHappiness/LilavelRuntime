@@ -143,7 +143,7 @@ async def test_state_proposal_is_typed_but_mind_state_remains_unchanged() -> Non
     assert outcome.state_proposals == (proposal,)
     assert state.snapshot() == before
     assert state.version == before.version
-    assert {field.name for field in fields(proposal)} == {"kind", "text"}
+    assert {field.name for field in fields(proposal)} == {"kind", "text", "intention_kind"}
 
 
 @pytest.mark.asyncio

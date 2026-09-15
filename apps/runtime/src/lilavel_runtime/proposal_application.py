@@ -276,7 +276,11 @@ def _proposal_digest(outcome: CognitionOutcome) -> str:
         "trigger_id": outcome.trigger_id,
         "based_on_state_version": outcome.based_on_state_version,
         "state_proposals": [
-            {"kind": proposal.kind.value, "text": proposal.text}
+            {
+                "kind": proposal.kind.value,
+                "text": proposal.text,
+                "intention_kind": proposal.intention_kind.value,
+            }
             for proposal in outcome.state_proposals
         ],
         "action_proposals": [
@@ -853,6 +857,7 @@ class ProposalApplicationCoordinator:
                     proposal.text,
                     provenance.user_message_id,
                     provenance.assistant_message_id,
+                    proposal.intention_kind,
                 )
             )
         return _PreparedState(tuple(deltas), StateApplicationStatus.APPLIED, None)
